@@ -51,17 +51,16 @@ jobs:
         run: uv run pytest
 
   # The two probe files must stay runnable by the oldest python3 a Pi in the
-  # field carries (Raspbian stretch: 3.5). Compile them with an old grammar
-  # here; the test suite separately refuses f-strings, which 3.5 lacks.
+  # field carries (Raspbian stretch: 3.5). Byte-compile them with a real 3.5
+  # from the python:3.5 image (uv has no 3.7 build for this runner, and 3.7
+  # would not have been the right grammar anyway); the test suite separately
+  # refuses f-strings, which 3.5 lacks.
   probe-old-python:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
-      - uses: astral-sh/setup-uv@v7
-      - name: Install Python 3.7 (the oldest uv offers on this runner)
-        run: uv python install 3.7
-      - name: Byte-compile the probes with the old grammar
+      - name: Byte-compile the probes with python 3.5
         run: >-
-          uv run --python 3.7 --no-project python -W error -m py_compile
-          src/rpi_hwid/probe.py src/rpi_hwid/fpga.py
+          docker run --rm -v "$PWD:/src" -w /src python:3.5-slim
+          python -W error -m py_compile src/rpi_hwid/probe.py src/rpi_hwid/fpga.py
