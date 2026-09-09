@@ -21,8 +21,9 @@ classifiers = [
     "Operating System :: POSIX :: Linux",
     "Topic :: System :: Hardware",
 ]
-# The probe modules themselves (rpi_hwid.probe, rpi_hwid.fpga) are stdlib-only
-# and run on python3 >= 3.5 on the target Pi; this package's own code is 3.11+.
+# The probe modules themselves (rpi_hwid.probe, rpi_hwid.fpga,
+# rpi_hwid.tinytapeout) are stdlib-only and run on python3 >= 3.5 on the
+# target Pi; this package's own code is 3.11+.
 dependencies = []
 
 [project.optional-dependencies]
@@ -75,11 +76,12 @@ extend-exclude = ["src/rpi_hwid/_version.py"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PT", "TC", "C4", "PIE", "RET", "N"]
 
 [tool.ruff.lint.per-file-ignores]
-# The two probe modules are single-file scripts that must run unchanged on a
+# The three probe modules are single-file scripts that must run unchanged on a
 # Pi's python3 3.5 (fed over ssh), so they keep %-formatting, no f-strings,
 # no walrus, and their own small helpers; the modern-syntax rules do not apply.
 "src/rpi_hwid/probe.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
 "src/rpi_hwid/fpga.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
+"src/rpi_hwid/tinytapeout.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
 # The label generator is ported from a proven script and drawn in points and
 # millimetres; its long argument lists read better unwrapped.
 "src/rpi_hwid/labels.py" = ["RUF", "B", "SIM", "C4", "PIE", "RET", "UP031", "UP032"]
@@ -97,7 +99,7 @@ ignore_errors = true
 # the label generator drives reportlab, which ships no stubs. The CLI calls
 # into them, so it may call untyped functions and return what they return.
 [[tool.mypy.overrides]]
-module = ["rpi_hwid.probe", "rpi_hwid.fpga", "rpi_hwid.labels"]
+module = ["rpi_hwid.probe", "rpi_hwid.fpga", "rpi_hwid.tinytapeout", "rpi_hwid.labels"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
