@@ -415,12 +415,20 @@ def draw_rpi(lab, pi):
     d = {"model": pi.model, "memory": pi.memory, "revision": pi.rev}
 
     # --- the spine: the serial's QR, the serial, its caption ---
+    # The 16 digits are set as two columns of eight reading up, so they can
+    # have a 2.5 mm cap height in the room under the QR (one line of 16 at
+    # that size would be longer than the label). The first half is the
+    # left column, as rotated lines stack to the right.
     ser_qr = 6.5 * mm                  # 21 modules at 0.31 mm
-    ser_size = 7
+    ser_size = 10
     lab.qr(PAD, PAD, ser_qr, pi.serial, error="l")
-    lab.rotated(PAD, LABEL_H - PAD, pi.serial, MONO, ser_size)
-    lab.rotated(PAD + ser_size * 0.72 + 0.5 * mm, LABEL_H - PAD, "serial", SANS, CAPTION,
-                color=GREY)
+    half = (len(pi.serial) + 1) // 2
+    col_pitch = ser_size * 0.72 + 0.7 * mm
+    lab.rotated(PAD, LABEL_H - PAD, pi.serial[:half], MONO, ser_size)
+    lab.rotated(PAD + col_pitch, LABEL_H - PAD, pi.serial[half:], MONO, ser_size)
+    ser_len = max(lab.width(pi.serial[:half], MONO, ser_size),
+                  lab.width(pi.serial[half:], MONO, ser_size))
+    lab.rotated(PAD, LABEL_H - PAD - ser_len - 1 * mm, "serial", SANS, CAPTION, color=GREY)
     x = PAD + ser_qr + 1.5 * mm
 
     # --- two columns ---
