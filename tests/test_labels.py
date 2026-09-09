@@ -76,6 +76,9 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "00:e0:4c:36:0b:0a", "b8:27:eb:02:a3:24",         # zero with bonnet
         "98:fe:54:13:f5:75",                              # acorn host
         "00:0e:c6:82:b5:e1",                              # the dongle
+        # the Pi serials, as Code 128 up the spine of each Pi label
+        "d88100008543dc30", "000000004fe3e7e4", "10000000ce8e3593",
+        "000000005157f671", "c36b093f773d46b8",
     }
     assert got == want
 
