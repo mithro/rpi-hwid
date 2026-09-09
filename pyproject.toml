@@ -24,8 +24,6 @@ dependencies = []
 [project.optional-dependencies]
 # rpi-hwid labels: the PDF, its QR codes, and the SVG marks
 labels = ["reportlab>=4", "segno>=1.6", "svglib>=1.5", "pillow>=10"]
-# rpi-hwid labels --check: decode every QR on the rendered sheets
-check = ["zxing-cpp>=2", "pillow>=10"]
 
 [project.urls]
 Homepage = "https://github.com/mithro/rpi-hwid"

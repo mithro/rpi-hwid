@@ -853,10 +853,6 @@ name = "rpi-hwid"
 source = { editable = "." }
 
 [package.optional-dependencies]
-check = [
-    { name = "pillow" },
-    { name = "zxing-cpp" },
-]
 labels = [
     { name = "pillow" },
     { name = "reportlab" },
@@ -879,14 +875,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "pillow", marker = "extra == 'check'", specifier = ">=10" },
     { name = "pillow", marker = "extra == 'labels'", specifier = ">=10" },
     { name = "reportlab", marker = "extra == 'labels'", specifier = ">=4" },
     { name = "segno", marker = "extra == 'labels'", specifier = ">=1.6" },
     { name = "svglib", marker = "extra == 'labels'", specifier = ">=1.5" },
-    { name = "zxing-cpp", marker = "extra == 'check'", specifier = ">=2" },
 ]
-provides-extras = ["check", "labels"]
+provides-extras = ["labels"]
 
 [package.metadata.requires-dev]
 dev = [
