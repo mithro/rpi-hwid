@@ -19,8 +19,6 @@ Around that probe:
 - a **label generator** that turns the documents into sticker sheets carrying
   only what cannot change: serial numbers, MAC addresses, Device DNA.
 
-![A sheet of labels rendered from the test fixtures](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sheet.png)
-
 ## Contents
 
 - [Install](#install)
@@ -280,11 +278,17 @@ found on the header (and the EEPROM UUID when there is one), and each
 soldered-down MAC gets its own QR. The layout is always the same, so a
 stack of them reads at a glance.
 
-| | |
-|---|---|
-| ![Pi 5, bare header](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5.png) | ![Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5-poe-hat.png) |
-| ![Pi 4 with a Digilent Pmod HAT Adaptor](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4-pmod-hat.png) | ![Pi 3B+; the wlan MAC is derived from the eth MAC](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi3bplus.png) |
-| ![Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi-zero-w-bonnet.png) | |
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5.png" alt="Pi 5, bare header" width="49%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5-poe-hat.png" alt="Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read" width="49%">
+</p>
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4-pmod-hat.png" alt="Pi 4 with a Digilent Pmod HAT Adaptor" width="49%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi3bplus.png" alt="Pi 3B+; the wlan MAC is derived from the eth MAC" width="49%">
+</p>
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi-zero-w-bonnet.png" alt="Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC" width="49%">
+</p>
 
 The Zero W's wired port comes from the bonnet, so its MAC is printed as
 the eth MAC. On a 3B+ or a Zero the wlan MAC follows from the eth MAC (the
@@ -297,17 +301,19 @@ immutable identifier full width with a QR: Device DNA where read, the
 Digilent serial and flash part on an Arty, and a line to write the DNA on
 when it has not been read yet.
 
-| | | |
-|---|---|---|
-| ![NeTV2](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png) | ![Arty A7-35T](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/arty.png) | ![Acorn CLE-215+, DNA not yet read](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png) |
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png" alt="NeTV2" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/arty.png" alt="Arty A7-35T" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png" alt="Acorn CLE-215+, DNA not yet read" width="32%">
+</p>
 
 **USB network adapters.** The descriptors (USB version and speed, driver,
 VID:PID) and the MAC, full width with a QR, so a dongle can be matched to
 a DHCP lease from across the room.
 
-| |
-|---|
-| ![ASIX AX88179 USB 3.0 gigabit adapter](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png) |
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png" alt="ASIX AX88179 USB 3.0 gigabit adapter" width="49%">
+</p>
 
 The package ships the Raspberry Pi raspberry (a trademark of Raspberry Pi
 Ltd, used only to mark hardware that is a Raspberry Pi) and the
