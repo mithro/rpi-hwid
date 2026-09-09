@@ -8,8 +8,12 @@ dynamic = ["version"]
 description = "Raspberry Pi hardware identity: what a Pi wears, what powers it, which FPGA board it hosts, and print-ready labels for all of it."
 readme = "README.md"
 requires-python = ">=3.11"
-license = "Apache-2.0"
-license-files = ["LICENSE"]
+# PEP 621 table form, not PEP 639's `license = "Apache-2.0"` plus
+# `license-files = [...]`: Debian bookworm's hatchling 1.12 rejects the latter
+# ("Field `project.license-files` must be a table") and the deb is built with
+# it. Current hatchling still accepts this form, and LICENSE is included
+# without license-files.
+license = { text = "Apache-2.0" }
 authors = [{ name = "Tim Ansell", email = "me@mith.ro" }]
 keywords = ["raspberry-pi", "hat", "poe", "fpga", "labels", "inventory"]
 classifiers = [
