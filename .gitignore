@@ -35,7 +35,10 @@ htmlcov/
 *.changes
 /debian/.debhelper/
 /debian/files
-/debian/python3-netgear-switch-library/
+/debian/*.debhelper
+/debian/*.substvars
+/debian/python3-rpi-hwid/
+/.pybuild/
 /debian/debhelper-build-stamp
 
 # Project-local scratch

@@ -1,0 +1,45 @@
+Source: rpi-hwid
+Section: python
+Priority: optional
+Maintainer: Tim 'mithro' Ansell <me@mith.ro>
+Build-Depends: debhelper-compat (= 13),
+               dh-python,
+               pybuild-plugin-pyproject,
+               python3-all,
+               python3-hatchling,
+               python3-hatch-vcs,
+               python3-setuptools-scm,
+Standards-Version: 4.7.0
+Homepage: https://github.com/mithro/rpi-hwid
+Vcs-Git: https://github.com/mithro/rpi-hwid.git
+Vcs-Browser: https://github.com/mithro/rpi-hwid
+Rules-Requires-Root: no
+
+Package: python3-rpi-hwid
+Architecture: all
+Depends: python3 (>= 3.11),
+         ${python3:Depends},
+         ${misc:Depends}
+Recommends: i2c-tools,
+            openssh-client,
+            python3-reportlab,
+            python3-segno,
+            python3-svglib,
+            python3-pil,
+            fonts-dejavu-core
+Suggests: openfpgaloader
+Provides: rpi-hwid
+Description: Raspberry Pi hardware identity probe, collector and label generator
+ rpi-hwid answers, from the Pi itself, what a Raspberry Pi is wearing on its
+ header, what powers it, and which network interfaces are soldered down:
+ HAT ID EEPROMs (including the ones the firmware never reads), the Pi 5's own
+ verdict on its USB-C supply, the PMIC's input and RTC-cell voltages, the fan
+ header and the USB tree. A separate module identifies an attached FPGA board
+ (NeTV2, Acorn, Arty). A collector runs both over ssh across a fleet, one JSON
+ document per host, and a label generator turns the documents into Avery
+ L7160 sticker sheets carrying serial numbers, MACs and Device DNA.
+ .
+ The probe on the Pi wants i2c-tools and passwordless sudo; the collector
+ needs an ssh client; the label generator needs python3-reportlab,
+ python3-segno, python3-svglib and python3-pil (all Recommends). Reading an
+ FPGA's IDCODE and Device DNA over JTAG needs openFPGALoader.

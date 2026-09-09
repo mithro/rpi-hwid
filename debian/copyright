@@ -1,0 +1,26 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: rpi-hwid
+Upstream-Contact: Tim Ansell <me@mith.ro>
+Source: https://github.com/mithro/rpi-hwid
+
+Files: *
+Copyright: 2026 Tim Ansell
+License: Apache-2.0
+
+Files: src/rpi_hwid/artwork/usb.svg
+Copyright: none (public domain)
+License: public-domain
+ The USB trident, from Wikimedia Commons File:USB_icon.svg, released into
+ the public domain by its author per the Commons file page.
+
+Files: src/rpi_hwid/artwork/raspberry-pi.svg
+Copyright: Raspberry Pi Ltd
+License: trademark
+ The Raspberry Pi raspberry is a trademark of Raspberry Pi Ltd. It is drawn
+ only on the label of hardware that is a Raspberry Pi, to identify it; see
+ https://www.raspberrypi.com/trademark-rules/ and
+ src/rpi_hwid/artwork/README.md.
+
+License: Apache-2.0
+ On Debian systems, the complete text of the Apache License Version 2.0
+ can be found in '/usr/share/common-licenses/Apache-2.0'.

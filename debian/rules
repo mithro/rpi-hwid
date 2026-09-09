@@ -1,0 +1,18 @@
+#!/usr/bin/make -f
+
+# Build the rpi_hwid Python package with dh-python/pybuild straight from
+# pyproject.toml (hatchling backend). The upstream version is normally derived
+# from git by hatch-vcs, but during the .deb build there may be no VCS context
+# in the unpacked source, so we pin it to the changelog version (set by
+# packaging/deb-version.py) through SETUPTOOLS_SCM_PRETEND_VERSION. dpkg source
+# format is native, so the changelog version has no Debian revision to strip.
+export PYBUILD_NAME = rpi_hwid
+export SETUPTOOLS_SCM_PRETEND_VERSION = $(shell dpkg-parsechangelog -SVersion)
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+# The test suite renders a PDF and decodes its QR codes with zxing, which is
+# not in Debian; it runs in the CI test job, not during packaging.
+override_dh_auto_test:
+	:
