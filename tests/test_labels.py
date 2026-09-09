@@ -76,6 +76,9 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "00:e0:4c:36:0b:0a", "b8:27:eb:02:a3:24",         # zero with bonnet
         "98:fe:54:13:f5:75",                              # acorn host
         "00:0e:c6:82:b5:e1",                              # the dongle
+        # the Pi serials, as a small QR at the top of each Pi label's spine
+        "d88100008543dc30", "000000004fe3e7e4", "10000000ce8e3593",
+        "000000005157f671", "c36b093f773d46b8",
     }
     assert got == want
 
@@ -91,3 +94,28 @@ def test_list_and_names_cli(data_dir, capsys):
     assert "arty-hawk" in out
     assert cli_main(["revision", "c04170"]) == 0
     assert "Raspberry Pi 5, 4 GB, Rev 1.0" in capsys.readouterr().out
+
+
+def test_awkward_records_still_fit(docs, tmp_path, monkeypatch):
+    """A Pi with no raspberry artwork (the QR size falls back to the title
+    block's height) and a three-board HAT line (elided at the size floor)
+    render without overflowing; `fit` cuts rather than runs off."""
+    from dataclasses import replace
+
+    from reportlab.pdfgen import canvas
+
+    monkeypatch.setattr(
+        labels, "artwork",
+        lambda name: None if name == "raspberry-pi.svg" else labels.PACKAGE_ARTWORK + "/" + name,
+    )
+    long_hat = ("Waveshare PoE M.2 HAT+ (B)", "Pmod HAT Adaptor", "Google VoiceBonnet")
+    doc = docs["pi-sw2-p47"]
+    doc.summary = replace(doc.summary, header=long_hat)
+    n, sheets = labels.render({"h": doc}, tmp_path / "x.pdf", only=("rpi",))
+    assert (n, sheets) == (1, 1)
+
+    c = canvas.Canvas(str(tmp_path / "y.pdf"))
+    lab = labels.Label(c, 0, 0)
+    size = lab.fit(0, 0, "x" * 200, labels.SANS, 8, 30 * labels.mm)
+    assert size == 5.5  # stopped at the floor, then elided
+    assert lab.width("x" * 200, labels.SANS, 5.5) > 30 * labels.mm
