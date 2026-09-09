@@ -19,7 +19,7 @@ Around that probe:
 - a **label generator** that turns the documents into sticker sheets carrying
   only what cannot change: serial numbers, MAC addresses, Device DNA.
 
-![A sheet of labels rendered from the test fixtures](docs/examples/sheet.png)
+![A sheet of labels rendered from the test fixtures](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sheet.png)
 
 ## Contents
 
@@ -282,9 +282,9 @@ stack of them reads at a glance.
 
 | | |
 |---|---|
-| ![Pi 5, bare header](docs/examples/rpi5.png) | ![Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read](docs/examples/rpi5-poe-hat.png) |
-| ![Pi 4 with a Digilent Pmod HAT Adaptor](docs/examples/rpi4-pmod-hat.png) | ![Pi 3B+; the wlan MAC is derived from the eth MAC](docs/examples/rpi3bplus.png) |
-| ![Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC](docs/examples/rpi-zero-w-bonnet.png) | |
+| ![Pi 5, bare header](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5.png) | ![Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5-poe-hat.png) |
+| ![Pi 4 with a Digilent Pmod HAT Adaptor](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4-pmod-hat.png) | ![Pi 3B+; the wlan MAC is derived from the eth MAC](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi3bplus.png) |
+| ![Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi-zero-w-bonnet.png) | |
 
 The Zero W's wired port comes from the bonnet, so its MAC is printed as
 the eth MAC. On a 3B+ or a Zero the wlan MAC follows from the eth MAC (the
@@ -299,7 +299,7 @@ when it has not been read yet.
 
 | | | |
 |---|---|---|
-| ![NeTV2](docs/examples/netv2.png) | ![Arty A7-35T](docs/examples/arty.png) | ![Acorn CLE-215+, DNA not yet read](docs/examples/acorn.png) |
+| ![NeTV2](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png) | ![Arty A7-35T](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/arty.png) | ![Acorn CLE-215+, DNA not yet read](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png) |
 
 **USB network adapters.** The descriptors (USB version and speed, driver,
 VID:PID) and the MAC, full width with a QR, so a dongle can be matched to
@@ -307,15 +307,15 @@ a DHCP lease from across the room.
 
 | |
 |---|
-| ![ASIX AX88179 USB 3.0 gigabit adapter](docs/examples/usb-asix.png) |
+| ![ASIX AX88179 USB 3.0 gigabit adapter](https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png) |
 
-The package ships only artwork it may: the public-domain USB trident. A
-`--artwork DIR` may add `raspberry-pi.svg`, `alphamax.png`, `digilent.png`
-and `netv2.svg`, which are trademarks of their owners (the Raspberry Pi
-logo is on the English Wikipedia file page; the Alphamax and Digilent marks
-are their GitHub organisation avatars). Without them a label sets the
-maker's name in type, as in the images above, which are regenerated from
-the test fixtures by `docs/examples/render.py`.
+The package ships the Raspberry Pi raspberry (a trademark of Raspberry Pi
+Ltd, used only to mark hardware that is a Raspberry Pi) and the
+public-domain USB trident; see `src/rpi_hwid/artwork/README.md` for the
+sources. A `--artwork DIR` may add `alphamax.png`, `digilent.png` and
+`netv2.svg`, which are their owners' marks. Without them a label sets the
+maker's name in type, as in the FPGA images above. The images are
+regenerated from the test fixtures by `docs/examples/render.py`.
 
 ## Using it from Python
 
