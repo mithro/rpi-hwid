@@ -64,3 +64,6 @@ tmp/
 
 # Playwright MCP scratch output
 .playwright-mcp/
+
+# Git worktrees for branches in flight
+/.worktrees/
