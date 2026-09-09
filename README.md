@@ -39,6 +39,14 @@ uv tool install 'rpi-hwid[labels]'     # everything, including the label generat
 pip install rpi-hwid                   # probe, collector, names: no dependencies at all
 ```
 
+Or as a Debian package, on Raspberry Pi OS or Debian bookworm, trixie or
+sid, from the signed apt repository at https://mith.ro/rpi-hwid/ (the page
+has the three-line setup for each suite):
+
+```
+sudo apt install python3-rpi-hwid      # provides the rpi-hwid command
+```
+
 The probe itself is one dependency-free file that runs on any Pi with
 `python3` 3.5 or later, so nothing needs installing on the Pi. Send it over
 ssh with the source on stdin:
@@ -363,8 +371,13 @@ every QR on it with zxing (it needs `pdftoppm` from poppler and a
 monospace font). The two probe files must stay Python 3.5-clean: the tests
 refuse f-strings in them, and CI byte-compiles them with a real 3.5.
 
-Releases are automatic: every green push to `main` publishes to PyPI. See
-[RELEASING.md](RELEASING.md).
+Releases are automatic: every green push to `main` publishes to PyPI and
+rebuilds the apt repository. See [RELEASING.md](RELEASING.md). To build the
+Debian package locally:
+
+```
+docker run --rm -v "$PWD:/src" -w /src debian:bookworm sh packaging/ci-build.sh
+```
 
 ## Origin
 
