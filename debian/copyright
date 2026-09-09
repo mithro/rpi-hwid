@@ -21,6 +21,20 @@ License: trademark
  https://www.raspberrypi.com/trademark-rules/ and
  src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/alphamax.png
+Copyright: Alphamax LLC
+License: trademark
+ The Alphamax "αmax libre video" wordmark, drawn only on the label of a
+ NeTV2, which Alphamax made, to identify it. From the AlphamaxMedia GitHub
+ organisation avatar; see src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/digilent.png
+Copyright: Digilent, Inc.
+License: trademark
+ The Digilent triangle and wordmark, drawn only on the label of an Arty,
+ which Digilent made, to identify it. From the Digilent GitHub organisation
+ avatar; see src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.

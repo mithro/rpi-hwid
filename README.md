@@ -323,13 +323,13 @@ a DHCP lease from across the room.
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png" alt="ASIX AX88179 USB 3.0 gigabit adapter" width="49%">
 </p>
 
-The package ships the Raspberry Pi raspberry (a trademark of Raspberry Pi
-Ltd, used only to mark hardware that is a Raspberry Pi) and the
-public-domain USB trident; see `src/rpi_hwid/artwork/README.md` for the
-sources. A `--artwork DIR` may add `alphamax.png`, `digilent.png` and
-`netv2.svg`, which are their owners' marks. Without them a label sets the
-maker's name in type, as in the FPGA images above. The images are
-regenerated from the test fixtures by `docs/examples/render.py`.
+The package ships the Raspberry Pi raspberry, the Alphamax and Digilent
+marks (each its owner's trademark, drawn only on that maker's own hardware
+to identify it) and the public-domain USB trident; see
+`src/rpi_hwid/artwork/README.md` for the sources. A `--artwork DIR`
+overrides any of them and may add a `netv2.svg`. A board whose maker has no
+mark (SQRL) gets the name in type. The images are regenerated from the test
+fixtures by `docs/examples/render.py`.
 
 ## Using it from Python
 

@@ -19,10 +19,11 @@ slashed zero where one is installed.
 Records come straight from ``rpi-hwid collect`` output (or ``probe --json``
 files): one Pi label per document, one FPGA label per board the probe
 found, one adapter label per removable USB network adapter. Artwork: the
-package ships the Raspberry Pi raspberry and the public-domain USB trident
-(see artwork/README.md); ``--artwork DIR`` may supply ``alphamax.png``,
-``digilent.png`` and ``netv2.svg`` (trademarks of their owners), and a label
-without them uses the maker's name in type.
+package ships the Raspberry Pi raspberry, the Alphamax and Digilent marks
+and the public-domain USB trident (see artwork/README.md, each mark drawn
+only on its owner's hardware); ``--artwork DIR`` overrides any of them and
+may add ``netv2.svg``, and a label whose mark is missing sets the maker's
+name in type.
 """
 
 from __future__ import annotations
@@ -120,16 +121,22 @@ class Label:
         size = self.fitted_size(s, font, size, max_w, min_size)
         return self.text(x, y, s, font, size, color=color)
 
+    CAPTION_GAP = 1.2 * mm
+
     def captioned(self, x_cap, x_val, y, cap, val, val_font, val_size,
                   max_w, cap_size=6):
         """A grey caption and its value on one shared baseline; `y` is the
-        cap-height top of the value. Returns the size the value ended at."""
+        cap-height top of the value. The caption is set flush against the
+        value, right-aligned just left of `x_val`, so the pair reads as one
+        thing; `x_cap` is the left limit of the space it may use. Returns the
+        size the value ended at."""
         size = val_size
         while size > 5.5 and self.width(val, val_font, size) > max_w:
             size -= 0.25
         baseline = y + size * 0.72
-        self.text(x_cap, baseline - cap_size * 0.72, cap, SANS, cap_size,
-                  color=HexColor("#555555"))
+        cap_x = max(x_val - self.CAPTION_GAP, x_cap + self.width(cap, SANS, cap_size))
+        self.text(cap_x, baseline - cap_size * 0.72, cap, SANS, cap_size,
+                  align="right", color=HexColor("#555555"))
         self.text(x_val, y, val, val_font, size)
         return size
 
@@ -201,18 +208,17 @@ class Label:
 
 # --- marks --------------------------------------------------------------------
 #
-# The Raspberry Pi raspberry and the USB trident are real artwork, shipped in
-# artwork/ (see artwork/README.md for where each came from). There is no
-# vector NeTV2 logo to be had, so that mark is drawn here: drop a `netv2.svg`
-# into the --artwork directory and it will be used instead. The Wi-Fi arcs
-# are drawn too, which is simpler than tracking a licence for a three-arc
-# glyph.
+# The Raspberry Pi raspberry, the Alphamax and Digilent marks and the USB
+# trident are real artwork, shipped in artwork/ (see artwork/README.md for
+# where each came from). There is no vector NeTV2 logo to be had, so that
+# mark is drawn here: drop a `netv2.svg` into the --artwork directory and it
+# will be used instead. The Wi-Fi arcs are drawn too, which is simpler than
+# tracking a licence for a three-arc glyph.
 
 
 def artwork(name):
     """A mark's file: the caller's artwork directory first, then the
-    package's own (which ships only what is free to redistribute: the
-    public-domain USB trident). Returns None when neither has it."""
+    package's own. Returns None when neither has it."""
     for d in ([ARTWORK_DIR] if ARTWORK_DIR else []) + [PACKAGE_ARTWORK]:
         path = os.path.join(d, name)
         if os.path.exists(path):
@@ -248,8 +254,8 @@ def mark_digilent(lab, x, y, height):
 
 
 def mark_maker(lab, board, x, y, height):
-    """The board maker's mark, top-left of the text column, when the
-    artwork directory has it; otherwise the maker's name in type."""
+    """The board maker's mark, top-left of the text column; the maker's
+    name in type when there is no mark (SQRL, or a removed file)."""
     w = 0
     if board.kind == "netv2":
         w = mark_alphamax(lab, x, y, height)
@@ -334,7 +340,7 @@ def draw_fpga(lab, board):
     for an Arty its Digilent serial. Bottom, full width: the DNA, or a rule
     to write it on when nobody has read it yet."""
     dna_size = 15
-    dna_h = 5 * mm
+    dna_h = 6 * mm
     body_h = LABEL_H - 2 * PAD - dna_h
     qr_size = min(body_h - 3.5 * mm, 23 * mm)
     ident_str = board.dna or board.serial
@@ -343,36 +349,31 @@ def draw_fpga(lab, board):
 
     x = PAD + qr_size + 3 * mm
     col_w = LABEL_W - PAD - x
-    # a wide mark (Alphamax) at 5 mm, a square one (Digilent) at 6 mm
-    mark_h = 6 * mm if board.kind == "arty" else 5 * mm
-    word_h, die_h, row_h = 8.5 * mm, 2.9 * mm, 3.6 * mm
-    block_h = mark_h + 0.5 * mm + word_h + die_h
-    if board.kind == "arty":
-        block_h += 2 * row_h
-    # The text block is centred on the QR when it is shorter than the QR,
-    # so neither the top nor the bottom of the column is left empty.
-    y = PAD + max(0, (qr_size - block_h) / 2)
+    y = PAD
+    # a wide mark (Alphamax) at 5 mm, a square one (Digilent) at 6.5 mm
+    mark_h = 6.5 * mm if board.kind == "arty" else 5 * mm
     mark_maker(lab, board, x, y, mark_h)
-    y += mark_h + 0.5 * mm
+    y += mark_h + 1 * mm
     word = board.name.split("-", 1)[1] if board.name else board.model.split()[0]
     lab.fit(x, y, word, SANS_BOLD, 24, col_w)
-    y += word_h
+    y += 9.5 * mm
     die = board.part or "die not read"
     lab.fit(x, y, "{}  ·  {}".format(board.model, die), SANS, 8, col_w)
     if board.kind == "arty":
-        y += row_h
+        y += 4 * mm
         lab.captioned(x, x + 7 * mm, y, "S/N", board.serial, MONO, 8.5, col_w - 7 * mm)
-        y += row_h
+        y += 4 * mm
         flash = ("{} 128 Mb".format(board.flash)) if board.flash else "not read"
         # (S25FL128S/127S: one JEDEC id, two parts; the marking tells them apart)
         lab.captioned(x, x + 7 * mm, y, "flash", flash, SANS, 7.5, col_w - 7 * mm)
 
     y = LABEL_H - PAD - dna_h
+    cap_y = y + 0.5 * mm - 6 * 0.72 - 0.9 * mm    # the caption sits 0.9 mm over the DNA
     if board.dna:
-        lab.text(PAD, y - 2.6 * mm, "Device DNA", SANS, 6, color=HexColor("#555555"))
+        lab.text(PAD, cap_y, "Device DNA", SANS, 6, color=HexColor("#555555"))
         lab.fit(PAD, y + 0.5 * mm, board.dna, MONO, dna_size, LABEL_W - 2 * PAD)
     else:
-        lab.fit(PAD, y - 2.6 * mm, "Device DNA, write it in", SANS, 6, qr_size,
+        lab.fit(PAD, cap_y, "Device DNA, write it in", SANS, 6, qr_size,
                 color=HexColor("#555555"))
         lab.text(PAD, y + 0.5 * mm, "0x", MONO, dna_size)
         lab.rule(PAD + 6 * mm, y + dna_h - 0.5 * mm, LABEL_W - 2 * PAD - 6 * mm)
@@ -448,10 +449,10 @@ def draw_rpi(lab, pi):
         mac = macs[kind]
         text, font, size = (mac, MONO, 13) if mac else (reasons[kind], SANS, 8)
         size = lab.fitted_size(text, font, size, col_w)
-        block = 6 * 0.72 + 0.8 * mm + size * 0.72
+        block = 6 * 0.72 + 0.4 * mm + size * 0.72
         cy = y + 0.5 * mm + (qr - block) / 2
         lab.text(tx, cy, kind + " MAC", SANS, 6, color=HexColor("#555555"))
-        cy += 6 * 0.72 + 0.8 * mm
+        cy += 6 * 0.72 + 0.4 * mm
         if mac:
             lab.qr(x, y + 0.5 * mm, qr, mac)
         lab.text(tx, cy, text, font, size)
