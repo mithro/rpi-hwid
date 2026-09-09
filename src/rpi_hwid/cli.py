@@ -72,23 +72,15 @@ def cmd_collect(args: argparse.Namespace) -> int:
     failed = 0
     for r in results:
         if r.ok and r.doc is not None:
-            s = r.doc["verdict"]["summary"]
-            boards = ", ".join(
-                b.get("dna") or b.get("serial") or b["kind"] for b in s.get("fpga", [])
-            )
-            print(f"  {r.host}: {s['model']}; header {s['header'] or 'bare'}; "
-                  f"power {s['power_class']}" + (f"; fpga {boards}" if boards else ""))
+            s = r.doc.summary
+            boards = ", ".join(b.identity or b.kind for b in s.fpga)
+            print(f"  {r.host}: {s.model}; header {list(s.header) or 'bare'}; "
+                  f"power {s.power_class}" + (f"; fpga {boards}" if boards else ""))
         else:
             failed += 1
             print(f"  {r.host}: FAILED ({r.error})")
     print(f"{len(results) - failed} of {len(results)} host(s) written to {args.out}")
     return 1 if failed else 0
-
-
-def cmd_labels(args: argparse.Namespace) -> int:
-    from rpi_hwid import labels
-
-    return labels.main(args.rest)
 
 
 def cmd_name(args: argparse.Namespace) -> int:
@@ -141,10 +133,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_collect)
 
-    p = sub.add_parser("labels", help="print-ready labels from collected data",
-                       add_help=False)
-    p.add_argument("rest", nargs=argparse.REMAINDER)
-    p.set_defaults(func=cmd_labels)
+    sub.add_parser("labels", help="print-ready labels from collected data (rpi-hwid labels -h)",
+                   add_help=False)
 
     p = sub.add_parser("name", help="derived board names")
     p.add_argument("--netv2", nargs="*", metavar="DNA")
@@ -156,6 +146,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("codes", nargs="+")
     p.set_defaults(func=cmd_revision)
 
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "labels":
+        # its own argparse, with its own help; REMAINDER cannot carry options
+        from rpi_hwid import labels
+
+        return int(labels.main(argv[1:]))
     args = ap.parse_args(argv)
     return int(args.func(args))
 

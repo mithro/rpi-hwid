@@ -31,6 +31,7 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import segno
@@ -168,8 +169,8 @@ class Label:
     def svg(self, path, x, y, height):
         """Place an SVG scaled to `height` with its top-left at (x, y);
         returns the width it took."""
-        from svglib.svglib import svg2rlg
         from reportlab.graphics import renderPDF
+        from svglib.svglib import svg2rlg
         d = svg2rlg(path)
         s = height / d.height
         d.width, d.height = d.width * s, d.height * s
@@ -237,13 +238,13 @@ def mark_maker(lab, board, x, y, height):
     """The board maker's mark, top-left of the text column, when the
     artwork directory has it; otherwise the maker's name in type."""
     w = 0
-    if board["kind"] == "netv2":
+    if board.kind == "netv2":
         w = mark_alphamax(lab, x, y, height)
-    elif board["kind"] == "arty":
+    elif board.kind == "arty":
         w = mark_digilent(lab, x, y, height)
     if not w:
-        lab.text(x, y + height * 0.15, board["maker"], SANS_BOLD, height * 0.62)
-        w = lab.width(board["maker"], SANS_BOLD, height * 0.62)
+        lab.text(x, y + height * 0.15, board.maker, SANS_BOLD, height * 0.62)
+        w = lab.width(board.maker, SANS_BOLD, height * 0.62)
     return w
 
 
@@ -313,9 +314,6 @@ def mark_rj45(lab, x, y, height):
 
 # --- the three label designs --------------------------------------------------
 
-
-# --- the three label designs --------------------------------------------------
-
 def draw_fpga(lab, board):
     """One design for every Artix-7 board. Left: a QR of the board's
     identity, the DNA when it is known and otherwise the Digilent serial.
@@ -326,7 +324,7 @@ def draw_fpga(lab, board):
     dna_h = 6 * mm
     body_h = LABEL_H - 2 * PAD - dna_h
     qr_size = min(body_h - 3.5 * mm, 23 * mm)
-    ident_str = board.get("dna") or board.get("serial")
+    ident_str = board.dna or board.serial
     if ident_str:
         lab.qr(PAD, PAD, qr_size, ident_str)
 
@@ -334,26 +332,26 @@ def draw_fpga(lab, board):
     col_w = LABEL_W - PAD - x
     y = PAD
     # a wide mark (Alphamax) at 5 mm, a square one (Digilent) at 6.5 mm
-    mark_h = 6.5 * mm if board["kind"] == "arty" else 5 * mm
+    mark_h = 6.5 * mm if board.kind == "arty" else 5 * mm
     mark_maker(lab, board, x, y, mark_h)
     y += mark_h + 1 * mm
-    word = board["name"].split("-", 1)[1] if board["name"] else board["model"].split()[0]
+    word = board.name.split("-", 1)[1] if board.name else board.model.split()[0]
     lab.fit(x, y, word, SANS_BOLD, 24, col_w)
     y += 9.5 * mm
-    die = board["part"] or "die not read"
-    lab.fit(x, y, "%s  ·  %s" % (board["model"], die), SANS, 8, col_w)
-    if board["kind"] == "arty":
+    die = board.part or "die not read"
+    lab.fit(x, y, "{}  ·  {}".format(board.model, die), SANS, 8, col_w)
+    if board.kind == "arty":
         y += 4 * mm
-        lab.captioned(x, x + 7 * mm, y, "S/N", board["serial"], MONO, 8.5, col_w - 7 * mm)
+        lab.captioned(x, x + 7 * mm, y, "S/N", board.serial, MONO, 8.5, col_w - 7 * mm)
         y += 4 * mm
-        flash = ("%s 128 Mb" % board["flash"]) if board["flash"] else "not read"
+        flash = ("{} 128 Mb".format(board.flash)) if board.flash else "not read"
         # (S25FL128S/127S: one JEDEC id, two parts; the marking tells them apart)
         lab.captioned(x, x + 7 * mm, y, "flash", flash, SANS, 7.5, col_w - 7 * mm)
 
     y = LABEL_H - PAD - dna_h
-    if board.get("dna"):
+    if board.dna:
         lab.text(PAD, y - 2.6 * mm, "Device DNA", SANS, 6, color=HexColor("#555555"))
-        lab.fit(PAD, y + 0.5 * mm, board["dna"], MONO, dna_size, LABEL_W - 2 * PAD)
+        lab.fit(PAD, y + 0.5 * mm, board.dna, MONO, dna_size, LABEL_W - 2 * PAD)
     else:
         lab.fit(PAD, y - 2.6 * mm, "Device DNA, write it in", SANS, 6, qr_size,
                 color=HexColor("#555555"))
@@ -367,9 +365,9 @@ def draw_rpi(lab, pi):
     left edge; model beside the raspberry; a HAT line and its uuid line
     (blank when there is no HAT); an eth row; a wlan row. A row whose MAC is
     not known says why instead of leaving a gap."""
-    d = {"model": pi["model"], "memory": pi["memory"], "revision": pi["rev"]}
+    d = {"model": pi.model, "memory": pi.memory, "revision": pi.rev}
     ser_w = 4.5 * mm
-    lab.rotated(PAD, LABEL_H - PAD, pi["serial"], MONO, 9)
+    lab.rotated(PAD, LABEL_H - PAD, pi.serial, MONO, 9)
     lab.rotated(PAD + 2.9 * mm, LABEL_H - PAD, "serial",
                 SANS, 5.5, color=HexColor("#555555"))
 
@@ -382,14 +380,14 @@ def draw_rpi(lab, pi):
     head_w = LABEL_W - PAD - tx
     lab.fit(tx, y, "Raspberry Pi " + d["model"], SANS_BOLD, 11, head_w)
     lab.fit(tx, y + 4.6 * mm,
-            "%s  ·  Rev %s  ·  rev code %s" % (d["memory"], d["revision"],
-                                                   pi["revision"]), SANS, 6.5, head_w)
+            "{}  ·  Rev {}  ·  rev code {}".format(d["memory"], d["revision"],
+                                                   pi.revision), SANS, 6.5, head_w)
 
     # HAT band: two lines, always present
     y = PAD + logo_h + 1 * mm
-    if pi["header"]:
-        line1 = "; ".join(pi["header"])
-        line2 = ("uuid", pi["hat_uuid"], MONO) if pi.get("hat_uuid") else ("", "", SANS)
+    if pi.header:
+        line1 = "; ".join(pi.header)
+        line2 = ("uuid", pi.hat_uuid, MONO) if pi.hat_uuid else ("", "", SANS)
     else:
         line1 = "none"
         line2 = ("", "", SANS)
@@ -404,14 +402,14 @@ def draw_rpi(lab, pi):
     y += 3.8 * mm
 
     # MAC bands: eth then wlan, always both, fixed height
-    macs = dict(pi["macs"])
+    macs = dict(pi.macs)
     if "eth" not in macs:
         macs["eth"] = None
     if "wlan" not in macs:
         macs["wlan"] = None
     reasons = {
         "eth": "no wired port on this model" if "Zero" in d["model"] else "not read",
-        "wlan": pi.get("wlan_note") or "not read",
+        "wlan": pi.wlan_note or "not read",
     }
     avail = LABEL_H - PAD - y
     row_h = avail / 2
@@ -438,12 +436,12 @@ def draw_usb(lab, dev):
     h = 6.5 * mm
     w = mark_usb(lab, x, y + 1.2 * mm, h * 0.6)
     w += 1.5 * mm
-    if dev["kind"] == "wifi":
+    if dev.kind == "wifi":
         w += mark_wifi(lab, x + w, y, h)
     else:
         w += mark_rj45(lab, x + w, y, h)
     tx = x + w + 2.5 * mm
-    title = dev["title"]
+    title = dev.title
     lab.fit(tx, y + 0.8 * mm, title, SANS_BOLD, 12, LABEL_W - PAD - tx)
     band_top = y + h + 1.5 * mm
 
@@ -452,11 +450,11 @@ def draw_usb(lab, dev):
     band_bottom = LABEL_H - PAD - mac_h - 2 * mm
     qr = band_bottom - band_top
     qx = LABEL_W - PAD - qr
-    lab.qr(qx, band_top, qr, dev["mac"])
+    lab.qr(qx, band_top, qr, dev.mac)
     val_x = x + 9 * mm
     val_w = qx - 2 * mm - val_x
 
-    lines = [(k, v) for k, v in dev["lines"] if v]
+    lines = [(k, v) for k, v in dev.lines if v]
     # The lines are spread so the first one's top sits on the band's top
     # and the last one's baseline on the band's bottom, like the QR.
     val_size = 9
@@ -473,10 +471,7 @@ def draw_usb(lab, dev):
         ly += pitch
 
     y = LABEL_H - PAD - mac_h + 0.5 * mm
-    lab.fit(PAD, y, dev["mac"], MONO, mac_size, LABEL_W - 2 * PAD)
-
-
-# --- assembly -----------------------------------------------------------------
+    lab.fit(PAD, y, dev.mac, MONO, mac_size, LABEL_W - 2 * PAD)
 
 
 # --- records from probe documents --------------------------------------------
@@ -489,69 +484,103 @@ IDCODE_PART = {"0x362d093": "XC7A35T", "0x3631093": "XC7A100T", "0x3636093": "XC
                "0x13631093": "XC7A100T", "0x03636093": "XC7A200T"}
 
 
+@dataclass(frozen=True)
+class PiLabel:
+    """What the Pi label prints, from one document."""
+
+    serial: str
+    revision: str                    # the code, e.g. c04170
+    rev: str                         # "1.0"
+    model: str                       # "5", "3 Model B+"
+    memory: str
+    macs: tuple[tuple[str, str], ...]        # (kind, mac), eth first
+    header: tuple[str, ...]
+    hat_uuid: str | None = None
+    wlan_note: str | None = None
+
+
+@dataclass(frozen=True)
+class FpgaLabel:
+    """What an FPGA board's label prints."""
+
+    kind: str
+    maker: str
+    model: str
+    host: str
+    part: str | None = None
+    name: str | None = None
+    dna: str | None = None
+    serial: str | None = None
+    flash: str | None = None
+
+
+@dataclass(frozen=True)
+class UsbLabel:
+    """What a USB network adapter's label prints."""
+
+    title: str
+    kind: str
+    mac: str
+    vidpid: str
+    host: str
+    lines: tuple[tuple[str, str], ...]
+
+
 def pi_record(doc):
-    """The Pi label's record from a probe document."""
-    s = doc["verdict"]["summary"]
-    rev = decode_revision(s["revision"])
-    macs = [(m["kind"], m["mac"]) for m in s.get("macs", []) if m["kind"] in ("eth", "wlan")]
+    """The Pi label's record from a document."""
+    s = doc.summary
+    rev = decode_revision(s.revision)
+    macs = [(m.kind, m.mac) for m in s.macs if m.kind in ("eth", "wlan")]
     wlan_note = None
     if not any(k == "wlan" for k, _ in macs):
-        derived = derived_wlan_mac(s["serial"], s.get("macs", []))
+        derived = derived_wlan_mac(s.serial, [{"kind": m.kind, "mac": m.mac} for m in s.macs])
         if derived:
             macs.append(("wlan", derived))
         elif rev.is_pi5 or rev.model.startswith("4"):
             wlan_note = "radio disabled, not readable"
     order = {"eth": 0, "wlan": 1}
     macs.sort(key=lambda m: order[m[0]])
-    return {"serial": s["serial"], "rev": rev.revision, "revision": rev.code,
-            "model": rev.model, "memory": rev.memory, "macs": macs,
-            "header": list(s.get("header", [])), "hat_uuid": s.get("hat_uuid"),
-            "wlan_note": wlan_note}
+    return PiLabel(serial=s.serial, revision=rev.code, rev=rev.revision, model=rev.model,
+                   memory=rev.memory, macs=tuple(macs), header=tuple(s.header),
+                   hat_uuid=s.hat_uuid, wlan_note=wlan_note)
 
 
 def fpga_records(docs, pinned_names=None):
     """One record per FPGA board across all documents, named."""
-    boards = []
-    for host in sorted(docs):
-        for b in docs[host]["verdict"]["summary"].get("fpga", []):
-            boards.append(dict(b, host=host))
-    arty_serials = sorted(b["serial"] for b in boards if b["kind"] == "arty" and b.get("serial"))
+    boards = [(host, b) for host in sorted(docs) for b in docs[host].summary.fpga]
+    arty_serials = sorted(b.serial for _h, b in boards if b.kind == "arty" and b.serial)
     arty_names = naming.arty_names(arty_serials, pinned_names)
     out = []
-    for b in boards:
-        maker, model = BOARD_MODEL.get(b["kind"], ("", b["kind"]))
-        part = IDCODE_PART.get(b.get("idcode", ""))
+    for host, b in boards:
+        maker, model = BOARD_MODEL.get(b.kind, ("", b.kind))
+        part = IDCODE_PART.get(b.idcode or "")
         name = None
-        if b["kind"] == "netv2" and b.get("dna"):
-            name = naming.netv2_name(b["dna"])
-        elif b["kind"] == "arty" and b.get("serial"):
-            name = arty_names[b["serial"]]
-        if b["kind"] == "arty" and part:
+        if b.kind == "netv2" and b.dna:
+            name = naming.netv2_name(b.dna)
+        elif b.kind == "arty" and b.serial:
+            name = arty_names[b.serial]
+        if b.kind == "arty" and part:
             model = "Arty A7-" + part[len("XC7A"):]
-        rec = {"kind": b["kind"], "maker": maker, "model": model, "part": part,
-               "name": name, "dna": b.get("dna"), "serial": b.get("serial"),
-               "flash": None, "host": b["host"]}
-        if b.get("flash_jedec"):
+        flash = None
+        if b.flash_jedec:
             # S25FL128S and S25FL127S both answer 0x012018
-            rec["flash"] = ("S25FL128S/127S" if b["flash_jedec"] == "0x012018"
-                            else b["flash_jedec"])
-        out.append(rec)
+            flash = "S25FL128S/127S" if b.flash_jedec == "0x012018" else b.flash_jedec
+        out.append(FpgaLabel(kind=b.kind, maker=maker, model=model, host=host, part=part,
+                             name=name, dna=b.dna, serial=b.serial, flash=flash))
     return out
 
 
 def usb_records(docs):
     out = []
     for host in sorted(docs):
-        for u in docs[host]["verdict"]["summary"].get("usb_net", []):
-            title = " ".join(x for x in (u.get("manufacturer"), u.get("product")) if x) \
-                or u["vidpid"]
-            bcd = (u.get("bcd_usb") or "").strip()
-            speed = USB_SPEED.get(u.get("usb_speed") or "", u.get("usb_speed") or "")
-            out.append({"title": title, "kind": u["kind"], "mac": u["mac"],
-                        "vidpid": u["vidpid"], "host": host,
-                        "lines": [("USB", ("%s %s" % (bcd, speed)).strip()),
-                                  ("driver", u.get("driver") or ""),
-                                  ("VID:PID", u["vidpid"])]})
+        for u in docs[host].summary.usb_net:
+            bcd = (u.bcd_usb or "").strip()
+            speed = USB_SPEED.get(u.usb_speed or "", u.usb_speed or "")
+            out.append(UsbLabel(
+                title=u.title, kind=u.kind, mac=u.mac, vidpid=u.vidpid, host=host,
+                lines=(("USB", ("%s %s" % (bcd, speed)).strip()),
+                       ("driver", u.driver or ""), ("VID:PID", u.vidpid)),
+            ))
     return out
 
 
@@ -560,14 +589,14 @@ def usb_records(docs):
 def all_labels(docs, only, pinned_names=None):
     if "fpga" in only:
         for b in fpga_records(docs, pinned_names):
-            yield b["kind"], b["name"] or b["model"], draw_fpga, b
+            yield b.kind, b.name or b.model, draw_fpga, b
     if "rpi" in only:
         for host in sorted(docs):
             p = pi_record(docs[host])
-            yield "rpi", "Pi %s %s %s" % (p["model"], p["memory"], p["serial"]), draw_rpi, p
+            yield "rpi", f"Pi {p.model} {p.memory} {p.serial}", draw_rpi, p
     if "usb" in only:
         for u in usb_records(docs):
-            yield "usb", "%s %s" % (u["title"], u["mac"]), draw_usb, u
+            yield "usb", f"{u.title} {u.mac}", draw_usb, u
 
 
 def label_origin(index):

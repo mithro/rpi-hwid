@@ -5,16 +5,20 @@ a Pi."""
 from __future__ import annotations
 
 import copy
+import json
 
 import pytest
+
+from rpi_hwid.model import ProbeDocument
 
 
 def _doc(model, serial, revision, header, power_class, fpga, macs, usb_net, rtc, fan, mc):
     return {
         "model": model, "serial": serial, "revision": revision,
         "hat_fw": None, "hat_eeproms": {}, "i2c1": [], "usb": {},
-        "interfaces": [dict(kind=m["kind"], mac=m["mac"], onboard=True, name=m["kind"] + "0",
-                            driver="x", usb=None, speed=None) for m in macs],
+        "interfaces": [{"kind": m["kind"], "mac": m["mac"], "onboard": True,
+                        "name": m["kind"] + "0", "driver": "x", "usb": None, "speed": None}
+                       for m in macs],
         "usb_net": usb_net, "pi5": mc is not None,
         "verdict": {
             "header": header or ["nothing identifiable on the header"],
@@ -70,21 +74,23 @@ ACORN_HOST = _doc(
 )
 
 
+RAW = {
+    "rpi5-netv2": PI5_NETV2,
+    "pi-sw1-p10": POOL_3BPLUS,
+    "pi-sw2-p16": ARTY_HOST,
+    "rpiz-serial": ZERO_BONNET,
+    "pi-sw2-p47": ACORN_HOST,
+}
+
+
 @pytest.fixture
 def docs():
-    return {
-        "rpi5-netv2": copy.deepcopy(PI5_NETV2),
-        "pi-sw1-p10": copy.deepcopy(POOL_3BPLUS),
-        "pi-sw2-p16": copy.deepcopy(ARTY_HOST),
-        "rpiz-serial": copy.deepcopy(ZERO_BONNET),
-        "pi-sw2-p47": copy.deepcopy(ACORN_HOST),
-    }
+    """host -> ProbeDocument, as load_collected would build them."""
+    return {name: ProbeDocument.from_dict(name, copy.deepcopy(raw)) for name, raw in RAW.items()}
 
 
 @pytest.fixture
-def data_dir(tmp_path, docs):
-    import json
-
-    for name, doc in docs.items():
-        (tmp_path / f"{name}.json").write_text(json.dumps(doc))
+def data_dir(tmp_path):
+    for name, raw in RAW.items():
+        (tmp_path / f"{name}.json").write_text(json.dumps(raw))
     return tmp_path

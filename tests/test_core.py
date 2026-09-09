@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
+import pathlib
 import subprocess
 import sys
+import tokenize
 
 import pytest
 
 from rpi_hwid import fpga, names, probe, revision
-from rpi_hwid.collect import load_collected, parse_probe_json, probe_source
+from rpi_hwid.collect import load_collected, probe_source
+from rpi_hwid.model import FpgaBoard, Mac, ProbeDocument, Summary
 
 # --- names ----------------------------------------------------------------------
 
@@ -28,7 +31,7 @@ def test_netv2_names_are_pure_and_decorrelated():
 
 
 def test_netv2_name_rejects_junk():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="not a hex"):
         names.netv2_name("not-hex")
 
 
@@ -66,7 +69,7 @@ def test_decode_revision(code, model, memory, rev):
 
 
 def test_decode_revision_rejects_old_style():
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="old-style"):
         revision.decode_revision("0002")
 
 
@@ -75,8 +78,10 @@ def test_broadcom_macs_from_serial():
     macs = [{"kind": "eth", "mac": "b8:27:eb:e3:e7:e4"}]
     assert revision.derived_wlan_mac("000000004fe3e7e4", macs) == "b8:27:eb:b6:b2:b1"
     # a Pi 5 OUI has no rule; a present wlan needs none
-    assert revision.derived_wlan_mac("d88100008543dc30", [{"kind": "eth", "mac": "2c:cf:67:16:bd:98"}]) is None
-    assert revision.derived_wlan_mac("000000009bc0bdaf", macs + [{"kind": "wlan", "mac": "x"}]) is None
+    pi5 = [{"kind": "eth", "mac": "2c:cf:67:16:bd:98"}]
+    assert revision.derived_wlan_mac("d88100008543dc30", pi5) is None
+    both = [*macs, {"kind": "wlan", "mac": "x"}]
+    assert revision.derived_wlan_mac("000000009bc0bdaf", both) is None
 
 
 # --- probe verdict on captured evidence -------------------------------------------
@@ -216,31 +221,50 @@ def test_fpga_gpio_chain_without_pcie_board_is_a_netv2():
 # --- collector --------------------------------------------------------------------------
 
 
-def test_probe_source_embeds_fpga_and_both_files_run_standalone(tmp_path):
+def test_probe_source_embeds_fpga_and_both_files_run_standalone():
     src = probe_source(fpga=True, jtag=False, flash=False)
     assert src.startswith("RPI_HWID_EMBEDDED = True")
     assert "merge_fpga(_doc" in src
-    # both probes must be plain scripts: no f-strings, compile clean
-    for name in ("probe.py", "fpga.py"):
-        text = probe_source() if name == "probe.py" else fpga.__file__ and open(fpga.__file__).read()
-        assert "f\"" not in text and "f'" not in text
-    r = subprocess.run([sys.executable, "-c", "import py_compile,sys; py_compile.compile(sys.argv[1], doraise=True)",
-                        probe.__file__], capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr
+    # both probes must be plain scripts: no f-strings, compile clean under -W error
+    for module in (probe, fpga):
+        with pathlib.Path(module.__file__).open("rb") as fh:
+            tokens = list(tokenize.tokenize(fh.readline))
+        prefixes = {t.string[:2].lower() for t in tokens if t.type == tokenize.STRING}
+        fstring_starts = [t for t in tokens if tokenize.tok_name[t.type] == "FSTRING_START"]
+        assert not fstring_starts, module.__name__
+        fprefixed = [p for p in prefixes if p.startswith(("f", "rf", "fr")) and p[-1] in "'\""]
+        assert not fprefixed, module.__name__
+        r = subprocess.run(
+            [sys.executable, "-W", "error", "-m", "py_compile", module.__file__],
+            capture_output=True, text=True, check=False,
+        )
+        assert r.returncode == 0, r.stderr
 
 
-def test_parse_probe_json_skips_banner():
-    doc = {"verdict": {"summary": {}}}
-    assert parse_probe_json("Password set for pi\n" + json.dumps(doc)) == doc
-    with pytest.raises(ValueError):
-        parse_probe_json("no json")
-    with pytest.raises(ValueError):
-        parse_probe_json(json.dumps({"x": 1}))
+def test_probe_document_from_json_skips_banner():
+    raw = {"verdict": {"summary": {"model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "s",
+                                   "revision": "a04171", "power_class": "gpio-poe-hat",
+                                   "fpga": [{"kind": "acorn"}],
+                                   "macs": [{"kind": "eth", "mac": "m"}]}}}
+    doc = ProbeDocument.from_json("h", "Password set for pi\n" + json.dumps(raw))
+    assert doc.summary.fpga == (FpgaBoard(kind="acorn"),)
+    assert doc.summary.macs == (Mac("eth", "m"),)
+    assert doc.summary.rtc_battery is None
+    assert doc.summary.to_dict()["fpga"] == [{"kind": "acorn", "serial": None, "dna": None,
+                                              "idcode": None, "flash": None, "flash_jedec": None}]
+    with pytest.raises(ValueError, match="no JSON"):
+        ProbeDocument.from_json("h", "no json")
+    with pytest.raises(ValueError, match=r"verdict\.summary"):
+        ProbeDocument.from_json("h", json.dumps({"x": 1}))
+    with pytest.raises(ValueError, match="does not know"):
+        Summary.from_dict({"model": "m", "serial": "s", "revision": "r",
+                           "power_class": "p", "surprise": 1})
 
 
 def test_load_collected(data_dir):
     docs = load_collected(data_dir)
     assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi-sw2-p16", "rpiz-serial", "pi-sw2-p47"}
+    assert docs["rpi5-netv2"].summary.fpga[0].identity == "0x00742c4e63b9085c"
     (data_dir / "bad.json").write_text("{}")
     with pytest.raises(ValueError, match="not a probe document"):
         load_collected(data_dir)

@@ -20,7 +20,10 @@ the name and the caller's record of (serial, name) pairs is the authority.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Iterable, Iterator
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
 
 NETV2_WORDS = [
     "amber", "basil", "cedar", "delta", "ember", "flint", "grove", "hazel",

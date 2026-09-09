@@ -13,13 +13,17 @@ The output files are the input to ``rpi-hwid labels``.
 
 from __future__ import annotations
 
-import json
 import subprocess
-from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from importlib import resources
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+    from pathlib import Path
+
+from rpi_hwid.model import ProbeDocument
 
 DEFAULT_USERS = ("tim", "pi")
 
@@ -46,22 +50,13 @@ def probe_source(fpga: bool = False, jtag: bool = False, flash: bool = False) ->
 
 @dataclass
 class Result:
+    """One host's outcome: a document, or the reason there is none."""
+
     host: str
     ok: bool
     user: str = ""
-    doc: dict | None = None
+    doc: ProbeDocument | None = None
     error: str = ""
-
-
-def parse_probe_json(stdout: str) -> dict:
-    """The probe's ``--json`` output; a login banner before it is skipped."""
-    start = stdout.find("{")
-    if start < 0:
-        raise ValueError(f"no JSON in probe output: {stdout[-200:]!r}")
-    doc = json.loads(stdout[start:])
-    if "verdict" not in doc or "summary" not in doc["verdict"]:
-        raise ValueError("probe output has no verdict.summary")
-    return doc
 
 
 def probe_host(
@@ -94,9 +89,12 @@ def probe_host(
             return Result(host, False, error="timed out")
         if r.returncode == 0:
             try:
-                return Result(host, True, user, parse_probe_json(r.stdout))
+                doc = ProbeDocument.from_json(target, r.stdout)
             except ValueError as exc:
                 return Result(host, False, user, error=str(exc))
+            doc.collected_by = user
+            doc.evidence["_collected"] = {"host": host, "user": user}
+            return Result(host, True, user, doc)
         last = r.stderr.strip()[-200:]
         if "Permission denied" not in last and "Connection closed" not in last:
             break
@@ -132,20 +130,16 @@ def collect(
             res = fut.result()
             results.append(res)
             if res.ok and res.doc is not None:
-                name = res.host.split("@", 1)[-1].replace("/", "_")
-                res.doc["_collected"] = {"host": res.host, "user": res.user}
-                (out_dir / f"{name}.json").write_text(json.dumps(res.doc, indent=1) + "\n")
+                name = res.doc.host.replace("/", "_")
+                (out_dir / f"{name}.json").write_text(res.doc.to_json())
     return sorted(results, key=lambda r: r.host)
 
 
-def load_collected(data_dir: Path) -> dict[str, dict]:
-    """Every ``*.json`` under `data_dir` as host -> probe document."""
-    docs: dict[str, dict] = {}
+def load_collected(data_dir: Path) -> dict[str, ProbeDocument]:
+    """Every ``*.json`` under `data_dir` as host -> document."""
+    docs: dict[str, ProbeDocument] = {}
     for path in sorted(data_dir.glob("*.json")):
-        doc = json.loads(path.read_text())
-        if "verdict" not in doc or "summary" not in doc["verdict"]:
-            raise ValueError(f"{path}: not a probe document")
-        docs[path.stem] = doc
+        docs[path.stem] = ProbeDocument.from_json(path.stem, path.read_text())
     if not docs:
         raise ValueError(f"no probe documents (*.json) in {data_dir}")
     return docs

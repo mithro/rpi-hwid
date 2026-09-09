@@ -80,7 +80,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PT", "TC", "C4", "PIE", "RET"
 "src/rpi_hwid/fpga.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
 # The label generator is ported from a proven script and drawn in points and
 # millimetres; its long argument lists read better unwrapped.
-"src/rpi_hwid/labels.py" = ["RUF", "B", "SIM", "C4", "PIE", "RET"]
+"src/rpi_hwid/labels.py" = ["RUF", "B", "SIM", "C4", "PIE", "RET", "UP031", "UP032"]
 
 [tool.mypy]
 packages = ["rpi_hwid"]
@@ -92,10 +92,16 @@ module = "rpi_hwid._version"
 ignore_errors = true
 
 # The probe modules are annotation-free on purpose (python 3.5 on the target);
-# the label generator drives reportlab, which ships no stubs.
+# the label generator drives reportlab, which ships no stubs. The CLI calls
+# into them, so it may call untyped functions and return what they return.
 [[tool.mypy.overrides]]
 module = ["rpi_hwid.probe", "rpi_hwid.fpga", "rpi_hwid.labels"]
 ignore_errors = true
+
+[[tool.mypy.overrides]]
+module = "rpi_hwid.cli"
+disallow_untyped_calls = false
+warn_return_any = false
 
 [[tool.mypy.overrides]]
 module = ["reportlab.*", "svglib.*", "segno.*", "PIL.*", "zxingcpp.*"]
