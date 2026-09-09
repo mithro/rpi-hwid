@@ -19,10 +19,10 @@ slashed zero where one is installed.
 Records come straight from ``rpi-hwid collect`` output (or ``probe --json``
 files): one Pi label per document, one FPGA label per board the probe
 found, one adapter label per removable USB network adapter. Artwork: the
-package ships only the public-domain USB trident; ``--artwork DIR`` may
-supply ``raspberry-pi.svg``, ``alphamax.png``, ``digilent.png`` and
-``netv2.svg`` (trademarks of their owners; see the README for sources), and
-a label without them uses the maker's name in type.
+package ships the Raspberry Pi raspberry and the public-domain USB trident
+(see artwork/README.md); ``--artwork DIR`` may supply ``alphamax.png``,
+``digilent.png`` and ``netv2.svg`` (trademarks of their owners), and a label
+without them uses the maker's name in type.
 """
 
 from __future__ import annotations
@@ -189,11 +189,12 @@ class Label:
 
 # --- marks --------------------------------------------------------------------
 #
-# The Raspberry Pi raspberry and the USB trident are real artwork, kept in
-# labels/ (see labels/README.md for where each came from). There is no vector
-# NeTV2 logo to be had, so that mark is drawn here: drop a `netv2.svg` into
-# labels/ and it will be used instead. The Wi-Fi arcs are drawn too, which is
-# simpler than tracking a licence for a three-arc glyph.
+# The Raspberry Pi raspberry and the USB trident are real artwork, shipped in
+# artwork/ (see artwork/README.md for where each came from). There is no
+# vector NeTV2 logo to be had, so that mark is drawn here: drop a `netv2.svg`
+# into the --artwork directory and it will be used instead. The Wi-Fi arcs
+# are drawn too, which is simpler than tracking a licence for a three-arc
+# glyph.
 
 
 def artwork(name):
