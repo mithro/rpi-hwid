@@ -1,6 +1,7 @@
 """The data model: what a probe found, as typed, immutable records.
 
-The probe scripts (``rpi_hwid.probe``, ``rpi_hwid.fpga``) emit plain JSON,
+The probe scripts (``rpi_hwid.probe``, ``rpi_hwid.fpga``,
+``rpi_hwid.tinytapeout``) emit plain JSON,
 because they run on a Pi's python3 3.5 where dataclasses do not exist. Every
 consumer on this side of the wire works with the records here instead, built
 by ``ProbeDocument.from_dict`` from that JSON and written back with
@@ -61,6 +62,25 @@ class FpgaBoard:
 
 
 @dataclass(frozen=True)
+class TinyTapeoutBoard:
+    """A Tiny Tapeout demo board on the Pi's USB, with the chip it carries
+    as its ROM described it."""
+
+    usb_serial: str | None = None      # the demo board's RP2 flash unique id
+    shuttle: str | None = None         # "tt06"; None when no ROM answered
+    chip: str | None = None            # asic | fpga | None
+    repo: str | None = None            # from the chip ROM
+    commit: str | None = None
+    demoboard: str | None = None       # as the SDK detected it: "TT06+"
+    demoboard_version: str | None = None   # what shipped with the kit: "v2.0.1"
+    sdk: str | None = None             # SDK release on the board
+
+    @property
+    def identity(self) -> str | None:
+        return self.usb_serial
+
+
+@dataclass(frozen=True)
 class Summary:
     """The probe's fixed-shape verdict for one Pi."""
 
@@ -71,6 +91,7 @@ class Summary:
     header: tuple[str, ...] = ()
     hat_uuid: str | None = None
     fpga: tuple[FpgaBoard, ...] = ()
+    tinytapeout: tuple[TinyTapeoutBoard, ...] = ()
     macs: tuple[Mac, ...] = ()
     usb_net: tuple[UsbNetAdapter, ...] = ()
     rtc_battery: bool | None = None
@@ -89,6 +110,7 @@ class Summary:
             power_class=d["power_class"],
             header=tuple(d.get("header", ())), hat_uuid=d.get("hat_uuid"),
             fpga=tuple(FpgaBoard(**b) for b in d.get("fpga", ())),
+            tinytapeout=tuple(TinyTapeoutBoard(**b) for b in d.get("tinytapeout", ())),
             macs=tuple(Mac(**m) for m in d.get("macs", ())),
             usb_net=tuple(UsbNetAdapter(**u) for u in d.get("usb_net", ())),
             rtc_battery=d.get("rtc_battery"), fan=d.get("fan"),
@@ -97,7 +119,7 @@ class Summary:
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
-        for key in ("header", "fpga", "macs", "usb_net"):
+        for key in ("header", "fpga", "tinytapeout", "macs", "usb_net"):
             d[key] = list(d[key])
         return d
 
