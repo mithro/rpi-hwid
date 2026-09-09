@@ -55,7 +55,10 @@ def main() -> None:
         page = Image.open(next(Path(tmp).glob("page*.png")))
         page_h = page.height
         for kind, needle, name in EXAMPLES:
-            index = next(i for i, (k, t) in enumerate(titles) if k == kind and needle in t)
+            hits = [i for i, (k, t) in enumerate(titles) if k == kind and needle in t]
+            if len(hits) != 1:
+                raise SystemExit(f"{len(hits)} fixture labels match {kind} {needle!r}, want one")
+            index = hits[0]
             x, y = labels.label_origin(index)
             left, bottom = x * PX, page_h - y * PX
             top, right = bottom - labels.LABEL_H * PX, left + labels.LABEL_W * PX
