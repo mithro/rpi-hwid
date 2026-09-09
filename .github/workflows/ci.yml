@@ -1,0 +1,70 @@
+name: CI
+
+# The same gates as local development (ruff, mypy --strict, pytest with
+# coverage) on every push to main and every pull request. A green run is what
+# "mergeable" means -- and what "releasable" means: publish-pypi.yml is
+# triggered by this workflow COMPLETING on main and proceeds only when it
+# succeeded, so a red push to main is never published. Renaming this workflow
+# breaks that trigger.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # full history so hatch-vcs can derive the version
+
+      - name: Install poppler (pdftoppm, for the label QR check) and a monospace font
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends poppler-utils fonts-dejavu-core
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install the matrix Python
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync all extras and the dev group
+        run: uv sync --all-extras --dev --python ${{ matrix.python-version }}
+
+      - name: Lint (ruff)
+        run: uv run ruff check
+
+      - name: Type-check (mypy --strict)
+        run: uv run mypy
+
+      - name: Tests + coverage gate
+        run: uv run pytest
+
+  # The two probe files must stay runnable by the oldest python3 a Pi in the
+  # field carries (Raspbian stretch: 3.5). Compile them with an old grammar and
+  # refuse f-strings, which 3.5 lacks.
+  probe-old-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+      - name: Install Python 3.7 (the oldest uv offers on this runner)
+        run: uv python install 3.7
+      - name: Byte-compile the probes with the old grammar, and refuse f-strings
+        run: |
+          uv run --python 3.7 --no-project python -W error -m py_compile src/rpi_hwid/probe.py src/rpi_hwid/fpga.py
+          if grep -n -E "(^|[^a-zA-Z_])f['\"]" src/rpi_hwid/probe.py src/rpi_hwid/fpga.py; then
+            echo "f-strings are not available on python 3.5; use %-formatting" >&2
+            exit 1
+          fi

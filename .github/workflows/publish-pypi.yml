@@ -1,0 +1,69 @@
+name: Publish to PyPI
+
+# Every GREEN push to main is a release. The version is derived from git by
+# hatch-vcs (see pyproject.toml): vX.Y at a tag, vX.Y.postN N commits later, so
+# each commit produces a new, unique version -- no manual bump.
+#
+# This workflow is gated on CI: it runs when the "CI" workflow (ruff, mypy,
+# pytest + coverage, the old-python probe check) COMPLETES for a push to main,
+# and the build job only proceeds when that run SUCCEEDED, so a red push to
+# main is never published. The workflow_dispatch path stays for manual re-runs.
+#
+# Publishing uses PyPI Trusted Publishing (OIDC): there is no API token in the
+# repo; the `pypi` environment + trusted publisher are registered (see
+# RELEASING.md).
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    # workflow_run fires on EVERY completion (failure and cancelled included);
+    # only a successful CI run is a release. Dependent jobs inherit the skip.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # A workflow_run checkout defaults to the default branch HEAD, which
+          # may already be PAST the commit CI just validated. Pin to the SHA
+          # CI actually ran on, so the published version is exactly the one
+          # that went green.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0  # full history + tags for hatch-vcs version derivation
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Build sdist + wheel
+        run: uv build
+
+      - name: Show derived version
+        run: ls -1 dist/
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # Trusted Publishing requires an OIDC token and a named environment.
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI (OIDC trusted publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip-existing: true
