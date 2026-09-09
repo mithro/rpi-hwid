@@ -51,8 +51,8 @@ jobs:
         run: uv run pytest
 
   # The two probe files must stay runnable by the oldest python3 a Pi in the
-  # field carries (Raspbian stretch: 3.5). Compile them with an old grammar and
-  # refuse f-strings, which 3.5 lacks.
+  # field carries (Raspbian stretch: 3.5). Compile them with an old grammar
+  # here; the test suite separately refuses f-strings, which 3.5 lacks.
   probe-old-python:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -61,10 +61,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
       - name: Install Python 3.7 (the oldest uv offers on this runner)
         run: uv python install 3.7
-      - name: Byte-compile the probes with the old grammar, and refuse f-strings
-        run: |
-          uv run --python 3.7 --no-project python -W error -m py_compile src/rpi_hwid/probe.py src/rpi_hwid/fpga.py
-          if grep -n -E "(^|[^a-zA-Z_])f['\"]" src/rpi_hwid/probe.py src/rpi_hwid/fpga.py; then
-            echo "f-strings are not available on python 3.5; use %-formatting" >&2
-            exit 1
-          fi
+      - name: Byte-compile the probes with the old grammar
+        run: >-
+          uv run --python 3.7 --no-project python -W error -m py_compile
+          src/rpi_hwid/probe.py src/rpi_hwid/fpga.py
