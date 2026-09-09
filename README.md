@@ -285,8 +285,8 @@ largest thing on the label, each with its own QR. Model, memory and
 revision are decoded from the revision code, and the HAT band names what
 the probe found on the header (and the EEPROM UUID when there is one). The
 serial is a cross-check rather than the identity anyone uses, so it runs
-up the left edge as a Code 128 barcode with the digits beside it. The
-layout is always the same, so a stack of them reads at a glance.
+up the left edge with a small QR of its own at the top. The layout is
+always the same, so a stack of them reads at a glance.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5.png" alt="Pi 5, bare header" width="49%">

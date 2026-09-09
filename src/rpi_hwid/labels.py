@@ -124,27 +124,29 @@ class Label:
         return size
 
     def fit(self, x, y, s, font, size, max_w, min_size=5.5, color=black):
-        """`text`, but shrink the type until `s` fits inside `max_w`."""
+        """`text`, but shrink the type until `s` fits inside `max_w`; a
+        string that still does not fit at `min_size` is cut with an
+        ellipsis rather than run off the label."""
         size = self.fitted_size(s, font, size, max_w, min_size)
+        while len(s) > 1 and self.width(s, font, size) > max_w:
+            s = s[:-2].rstrip() + "…"
         return self.text(x, y, s, font, size, color=color)
 
     CAPTION_GAP = 1.2 * mm
 
     def captioned(self, x_cap, x_val, y, cap, val, val_font, val_size,
-                  max_w, cap_size=6):
+                  max_w, cap_size=CAPTION, min_size=5.5):
         """A grey caption and its value on one shared baseline; `y` is the
         cap-height top of the value. The caption is set flush against the
         value, right-aligned just left of `x_val`, so the pair reads as one
         thing; `x_cap` is the left limit of the space it may use. Returns the
         size the value ended at."""
-        size = val_size
-        while size > 5.5 and self.width(val, val_font, size) > max_w:
-            size -= 0.25
+        size = self.fitted_size(val, val_font, val_size, max_w, min_size)
         baseline = y + size * 0.72
         cap_x = max(x_val - self.CAPTION_GAP, x_cap + self.width(cap, SANS, cap_size))
         self.text(cap_x, baseline - cap_size * 0.72, cap, SANS, cap_size,
                   align="right", color=GREY)
-        self.text(x_val, y, val, val_font, size)
+        self.fit(x_val, y, val, val_font, size, max_w, min_size)
         return size
 
     def rule(self, x, y, w):
@@ -155,27 +157,6 @@ class Label:
         c.setLineWidth(0.5)
         c.line(px, py, px + w, py)
         c.setStrokeColor(black)
-
-    def barcode_up(self, x, y, s, length, bar_h, max_bar=0.5):
-        """A Code 128 of `s` reading upwards, its bars `bar_h` wide (across
-        the label) and the code at most `length` long (up the label), with
-        the bottom-left of its quiet zone at (x, y). The bar width is chosen
-        so the code fills `length`, capped at `max_bar` points. Returns the
-        bar width used."""
-        from reportlab.graphics.barcode import code128
-        probe = code128.Code128(s, barWidth=1, barHeight=bar_h, humanReadable=False,
-                                quiet=True, lquiet=5, rquiet=5)
-        bar = min(max_bar, length / probe.width)
-        code = code128.Code128(s, barWidth=bar, barHeight=bar_h, humanReadable=False,
-                               quiet=True, lquiet=5, rquiet=5)
-        px, py = self.pt(x, y)
-        c = self.c
-        c.saveState()
-        c.translate(px + bar_h, py)
-        c.rotate(90)
-        code.drawOn(c, 0, 0)
-        c.restoreState()
-        return bar
 
     def rotated(self, x, y, s, font, size, color=black):
         """Draw `s` reading upwards, its baseline's left end at (x, y) where
@@ -190,11 +171,11 @@ class Label:
         c.drawString(0, 0, s)
         c.restoreState()
 
-    def qr(self, x, y, size, content):
+    def qr(self, x, y, size, content, error="m"):
         """A QR code whose top-left is (x, y), `size` points square. Error
-        level M and no drawn quiet zone: the label stock is white, and the
-        caller keeps the surrounding area clear."""
-        code = segno.make(content, error="m")
+        level M unless told otherwise, and no drawn quiet zone: the label
+        stock is white, and the caller keeps the surrounding area clear."""
+        code = segno.make(content, error=error)
         matrix = list(code.matrix)
         n = len(matrix)
         module = size / n
@@ -292,8 +273,9 @@ def mark_maker(lab, board, x, y, height):
     if not w:
         # the maker's name in the caption grey, so it labels the word below
         # rather than competing with it as a second heading
-        lab.text(x, y + height * 0.3, board.maker, SANS, height * 0.55, color=GREY)
-        w = lab.width(board.maker, SANS, height * 0.55)
+        size = 2.5 * mm / 0.72              # a 2.5 mm cap height
+        lab.text(x, y + height - 2.5 * mm, board.maker, SANS, size, color=GREY)
+        w = lab.width(board.maker, SANS, size)
     return w
 
 
@@ -382,7 +364,7 @@ def draw_fpga(lab, board):
     x = qr_inset + qr_size + 3 * mm
     col_w = LABEL_W - PAD - x
     y = PAD
-    mark_h = 5 * mm
+    mark_h = 6 * mm if board.kind == "arty" else 5 * mm
     mark_maker(lab, board, x, y, mark_h)
     y += mark_h + 0.5 * mm
     word = board.name.split("-", 1)[1] if board.name else board.model.split()[0]
@@ -410,51 +392,55 @@ def draw_fpga(lab, board):
         lab.text(PAD, cap_y, "Device DNA", SANS, CAPTION, color=GREY)
         lab.fit(PAD, y + 0.5 * mm, board.dna, MONO, dna_size, LABEL_W - 2 * PAD)
     else:
-        # room for a marker: the "0x" and the caption sit 3 mm higher and the
-        # rule stays at the foot, so there is about 7 mm to write in
-        lab.fit(PAD, cap_y - 3 * mm, "Device DNA, write it in", SANS, CAPTION, qr_size,
-                color=GREY)
-        lab.text(PAD, y + 0.5 * mm - 3 * mm, "0x", MONO, dna_size)
-        lab.rule(PAD + 6 * mm, y + dna_h - 0.5 * mm, LABEL_W - 2 * PAD - 6 * mm)
+        # the "0x" sits on the rule at the foot; the space above the rule,
+        # to the right of the QR column, is where the digits get written
+        lab.fit(PAD, cap_y, "Device DNA, write it in", SANS, CAPTION, qr_size, color=GREY)
+        lab.text(PAD, y + 0.5 * mm, "0x", MONO, dna_size)
+        lab.rule(PAD + 6 * mm, y + 0.5 * mm + dna_size * 0.72 + 0.3 * mm,
+                 LABEL_W - 2 * PAD - 6 * mm)
 
 
 def draw_rpi(lab, pi):
     """Every Pi label has the same bands at the same heights, so the eye
     finds each fact in the same place on every board. Up the left edge: a
-    Code 128 of the serial with the serial beside it, a cross-check rather
-    than the identity people use. Then two columns: the raspberry, the HAT
-    and uuid captions and the two MAC QRs on the left, all as wide as a QR;
-    the title, subtitle, HAT line, uuid and MACs on the right, sharing one
-    left edge. The MACs are what people look for, so they are the largest
-    thing on the label. A row whose MAC is not known says why, in grey."""
+    small QR of the serial at the top with the serial reading up to it, a
+    cross-check rather than the identity people use (a 16-character serial
+    is 16 bytes, which the smallest QR holds at error level L; a Code 128 of
+    it cannot reach a printable bar width in a 38 mm spine). Then two
+    columns: the raspberry, the HAT and uuid captions and the two MAC QRs on
+    the left, all as wide as a QR; the title, subtitle, HAT line, uuid and
+    MACs on the right, sharing one left edge. The MACs are what people look
+    for, so they are the largest thing on the label. A row whose MAC is not
+    known says why, in grey."""
     d = {"model": pi.model, "memory": pi.memory, "revision": pi.rev}
 
-    # --- the spine: barcode, serial, caption ---
-    bar_h = 3.6 * mm
+    # --- the spine: the serial's QR, the serial, its caption ---
+    ser_qr = 6.5 * mm                  # 21 modules at 0.31 mm
     ser_size = 7
-    spine_len = LABEL_H - 2 * PAD
-    lab.barcode_up(PAD, LABEL_H - PAD, pi.serial, spine_len, bar_h)
-    ser_x = PAD + bar_h + 0.6 * mm
-    lab.rotated(ser_x, LABEL_H - PAD, pi.serial, MONO, ser_size)
-    # the caption at the top of the run, where the serial leaves room
-    ser_len = lab.width(pi.serial, MONO, ser_size)
-    lab.rotated(ser_x, LABEL_H - PAD - ser_len - 1 * mm, "serial", SANS, CAPTION, color=GREY)
-    x = ser_x + ser_size * 0.72 + 1.5 * mm
+    lab.qr(PAD, PAD, ser_qr, pi.serial, error="l")
+    lab.rotated(PAD, LABEL_H - PAD, pi.serial, MONO, ser_size)
+    lab.rotated(PAD + ser_size * 0.72 + 0.5 * mm, LABEL_H - PAD, "serial", SANS, CAPTION,
+                color=GREY)
+    x = PAD + ser_qr + 1.5 * mm
 
     # --- two columns ---
+    title_h = 8.2 * mm                 # title over subtitle
     hat_rows = 3.2 * mm + 3.4 * mm
     qr_gap = 2 * mm                    # quiet zone between the stacked QRs
     logo = artwork("raspberry-pi.svg")
     aspect = Label.svg_aspect(logo) if logo else 0
-    # qr * aspect (logo) + 0.8 + hat_rows + 0.5 + qr + qr_gap + qr = usable
+    # the header band is the raspberry's height (or the title block's when
+    # there is no raspberry), then the HAT rows, then the two QR rows:
+    # qr * aspect + 0.8 + hat_rows + 0.5 + qr + qr_gap + qr = usable
     usable = LABEL_H - 2 * PAD
-    qr = (usable - 0.8 * mm - hat_rows - 0.5 * mm - qr_gap) / (aspect + 2)
+    rest = usable - 0.8 * mm - hat_rows - 0.5 * mm - qr_gap
+    qr = min(rest / (aspect + 2), (rest - title_h) / 2)
     logo_h = qr * aspect
-    tx = x + qr + 2 * mm
+    tx = x + qr + 1.5 * mm
     col_w = LABEL_W - PAD - tx
     if logo:
         mark_rpi(lab, x, PAD, logo_h)
-    y = PAD + max(0, (logo_h - 8.2 * mm) / 2)
+    y = PAD + max(0, (logo_h - title_h) / 2)
     lab.fit(tx, y, "Raspberry Pi " + d["model"], SANS_BOLD, 11, col_w)
     lab.fit(tx, y + 4.6 * mm,
             "{}  ·  Rev {}  ·  rev code {}".format(d["memory"], d["revision"],
@@ -462,7 +448,7 @@ def draw_rpi(lab, pi):
 
     # HAT band: the HAT line, then the uuid line centred in the rest of the
     # band (regular weight: bold mono at 6 pt fills in under toner)
-    y = PAD + max(logo_h, 8.2 * mm) + 0.8 * mm
+    y = PAD + max(logo_h, title_h) + 0.8 * mm
     band_top = y
     if pi.header:
         line1 = "; ".join(pi.header)
@@ -472,7 +458,8 @@ def draw_rpi(lab, pi):
     y += 3.2 * mm
     if pi.hat_uuid:
         uuid_y = y + (3.4 * mm - 6.5 * 0.72) / 2
-        lab.captioned(x, tx, uuid_y, "uuid", pi.hat_uuid, MONO_REGULAR, 6.5, col_w)
+        lab.captioned(x, tx, uuid_y, "uuid", pi.hat_uuid, MONO_REGULAR, 6.5, col_w,
+                      min_size=5)
     y = band_top + hat_rows
 
     # MAC bands: eth then wlan, always both, fixed height
@@ -486,12 +473,13 @@ def draw_rpi(lab, pi):
         "wlan": pi.wlan_note or "not read",
     }
     cap_gap = 0.7 * mm
+    mac_size = lab.fitted_size("00:00:00:00:00:00", MONO, 13, col_w)
+    block = CAPTION * 0.72 + cap_gap + mac_size * 0.72
     for kind in ("eth", "wlan"):
         mac = macs[kind]
-        text, font, size, colour = ((mac, MONO, 13, black) if mac
+        text, font, size, colour = ((mac, MONO, mac_size, black) if mac
                                     else (reasons[kind], SANS, 8, GREY))
         size = lab.fitted_size(text, font, size, col_w)
-        block = CAPTION * 0.72 + cap_gap + size * 0.72
         cy = y + 0.5 * mm + (qr - block) / 2
         lab.text(tx, cy, kind + " MAC", SANS, CAPTION, color=GREY)
         cy += CAPTION * 0.72 + cap_gap
