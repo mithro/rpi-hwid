@@ -1,0 +1,98 @@
+name: Debian packages + apt repo
+
+# Rolling release: every GREEN push to main builds python3-rpi-hwid for Debian
+# bookworm, trixie and sid and republishes a signed flat apt repository on
+# GitHub Pages (https://mith.ro/rpi-hwid/) through mithro/apt-repo-action,
+# like the other mithro apt-repo projects. The package is Architecture: all
+# (pure Python), so one build per suite on the default runner serves every
+# architecture, arm64 and armhf Raspberry Pis included. The version is
+# git-derived (X.Y at a vX.Y tag, X.Y.postN after it), identical to the wheel's.
+#
+# bookworm is built because the Raspberry Pi OS netboot images this is for are
+# still bookworm.
+#
+# Gated on CI exactly like publish-pypi.yml: triggered when the "CI" workflow
+# completes for main, and build-deb only proceeds when that run succeeded, so a
+# red commit never reaches the apt repo. workflow_dispatch stays for re-runs;
+# pull requests build to validate the packaging but never publish.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+  pull_request:
+
+# Least privilege by default: only the publish job below raises this, and only
+# for itself. actions:read stays here because the build job's workflow_run
+# gating reads the triggering run's conclusion.
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build-deb:
+    # workflow_run fires on every completion (failure/cancelled too); only a
+    # successful CI run is a release. publish-apt inherits the skip via needs.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'pull_request' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [bookworm, trixie, sid]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Pin to the SHA CI validated, not the default-branch HEAD (which a
+          # workflow_run checkout would otherwise use and may already be past).
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0  # full history + tags so deb-version.py can describe
+
+      - name: Build package in debian:${{ matrix.suite }}
+        run: |
+          docker run --rm \
+            -v "${PWD}:/src" -w /src \
+            docker.io/library/debian:${{ matrix.suite }} \
+            sh packaging/ci-build.sh
+
+      - name: Install the package in a clean debian:${{ matrix.suite }} and run it
+        run: |
+          docker run --rm \
+            -v "${PWD}/built-debs:/debs:ro" \
+            docker.io/library/debian:${{ matrix.suite }} \
+            sh -ec 'apt-get update -q && apt-get install -y -q --no-install-recommends /debs/*.deb
+                    rpi-hwid revision c04170
+                    rpi-hwid name --netv2 0x00742c4e63b9085c
+                    python3 -c "import rpi_hwid.probe, rpi_hwid.fpga, rpi_hwid.model"'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: debs-${{ matrix.suite }}
+          path: built-debs/
+
+  publish-apt:
+    # Scoped to this job alone. A job calling a reusable workflow sets the
+    # maximum permissions available to it, so the elevated Pages scopes stay
+    # here rather than applying to the whole workflow.
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    # Build on PRs to validate, but never publish from one: that would
+    # overwrite the live repository with unreviewed packages.
+    if: github.event_name != 'pull_request'
+    needs: build-deb
+    uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@main
+    with:
+      suites: "bookworm trixie sid"
+      # Pure Python: one Architecture: all deb serves every architecture.
+      architectures: "all"
+      origin: rpi-hwid
+      description: "Raspberry Pi hardware identity: probe, collector and labels"
+      keyring-name: rpi-hwid.gpg
+    secrets:
+      gpg-private-key: ${{ secrets.APT_GPG_PRIVATE_KEY }}

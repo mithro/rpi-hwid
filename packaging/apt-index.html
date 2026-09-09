@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>rpi-hwid apt repository</title></head>
+<body>
+<h1>rpi-hwid apt repository</h1>
+<p>Debian packages of
+<a href="https://github.com/mithro/rpi-hwid">rpi-hwid</a>: a Raspberry Pi
+hardware identity probe (what a Pi wears on its header, what powers it, which
+network interfaces are soldered down, which FPGA board it hosts), a collector
+that runs it over ssh across a fleet, and a generator for print-ready labels.
+Rolling release &mdash; every green push to <code>main</code> publishes a new
+version. Built for Debian bookworm, trixie and sid; the package is
+architecture <code>all</code> (pure Python), so it installs on any Raspberry
+Pi OS or Debian machine.</p>
+
+<p>The package is <code>python3-rpi-hwid</code>, which also provides the
+<code>rpi-hwid</code> command. Pick the suite matching your system
+(<code>. /etc/os-release; echo $VERSION_CODENAME</code>); Raspberry Pi OS
+follows Debian's codenames.</p>
+
+<h2>Setup (Debian / Raspberry Pi OS bookworm)</h2>
+<pre>
+sudo install -d -m0755 /etc/apt/keyrings
+curl -fsSL https://mith.ro/rpi-hwid/rpi-hwid.gpg | gpg --dearmor \
+  | sudo tee /etc/apt/keyrings/rpi-hwid.gpg > /dev/null
+
+echo "deb [signed-by=/etc/apt/keyrings/rpi-hwid.gpg] https://mith.ro/rpi-hwid/bookworm/ ./" \
+  | sudo tee /etc/apt/sources.list.d/rpi-hwid.list
+
+sudo apt update
+sudo apt install python3-rpi-hwid
+</pre>
+
+<h2>Setup (Debian trixie)</h2>
+<pre>
+sudo install -d -m0755 /etc/apt/keyrings
+curl -fsSL https://mith.ro/rpi-hwid/rpi-hwid.gpg | gpg --dearmor \
+  | sudo tee /etc/apt/keyrings/rpi-hwid.gpg > /dev/null
+
+echo "deb [signed-by=/etc/apt/keyrings/rpi-hwid.gpg] https://mith.ro/rpi-hwid/trixie/ ./" \
+  | sudo tee /etc/apt/sources.list.d/rpi-hwid.list
+
+sudo apt update
+sudo apt install python3-rpi-hwid
+</pre>
+
+<h2>Setup (Debian sid)</h2>
+<pre>
+sudo install -d -m0755 /etc/apt/keyrings
+curl -fsSL https://mith.ro/rpi-hwid/rpi-hwid.gpg | gpg --dearmor \
+  | sudo tee /etc/apt/keyrings/rpi-hwid.gpg > /dev/null
+
+echo "deb [signed-by=/etc/apt/keyrings/rpi-hwid.gpg] https://mith.ro/rpi-hwid/sid/ ./" \
+  | sudo tee /etc/apt/sources.list.d/rpi-hwid.list
+
+sudo apt update
+sudo apt install python3-rpi-hwid
+</pre>
+
+<p>The published key is ASCII-armoured, which is why the setup pipes it
+through <code>gpg --dearmor</code>: apt only accepts an armoured keyring
+when the file is named <code>.asc</code>.</p>
+</body>
+</html>
