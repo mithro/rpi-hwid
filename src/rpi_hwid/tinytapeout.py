@@ -138,17 +138,25 @@ def shuttle_info(shuttle):
             "demoboard_silk": row[3], "demoboard_version": row[4], "url": row[5]}
 
 
-def shuttle_title(shuttle):
-    """'tt06' -> 'Tiny Tapeout 6', 'ttihp25a' -> 'Tiny Tapeout IHP 25a',
-    'ttgf0p2' -> 'Tiny Tapeout GF 0.2': the site's own naming."""
+def _split_shuttle(shuttle):
+    """'ttihp25a' -> ('ihp', '25a'); None for a name not starting 'tt'."""
     s = (shuttle or "").lower()
     if not s.startswith("tt"):
-        return shuttle or ""
+        return None
     rest = s[2:]
     i = 0
     while i < len(rest) and rest[i].isalpha():
         i += 1
-    foundry, run = rest[:i], rest[i:]
+    return rest[:i], rest[i:]
+
+
+def shuttle_title(shuttle):
+    """'tt06' -> 'Tiny Tapeout 6', 'ttihp25a' -> 'Tiny Tapeout IHP 25a',
+    'ttgf0p2' -> 'Tiny Tapeout GF 0.2': the site's own naming."""
+    parts = _split_shuttle(shuttle)
+    if parts is None:
+        return shuttle or ""
+    foundry, run = parts
     head, dot, tail = run.replace("p", ".").partition(".")
     run = (head.lstrip("0") or "0") + dot + tail if head else run
     parts = ["Tiny Tapeout"]
@@ -159,15 +167,18 @@ def shuttle_title(shuttle):
     return " ".join(parts)
 
 
+def shuttle_short(shuttle):
+    """'tt06' -> 'TT06', 'ttihp25a' -> 'TTIHP25a', 'ttgf0p3' -> 'TTGF0p3':
+    the short names the chips list uses."""
+    parts = _split_shuttle(shuttle)
+    if parts is None:
+        return (shuttle or "").upper()
+    return "TT" + parts[0].upper() + parts[1]
+
+
 def shuttle_pdk(shuttle):
-    s = (shuttle or "").lower()
-    if not s.startswith("tt"):
-        return None
-    rest = s[2:]
-    i = 0
-    while i < len(rest) and rest[i].isalpha():
-        i += 1
-    return PDK.get(rest[:i])
+    parts = _split_shuttle(shuttle)
+    return PDK.get(parts[0]) if parts else None
 
 
 def read(path):
