@@ -70,6 +70,9 @@ import subprocess
 import sys
 import uuid
 
+# Prefix for every absolute path read; the tests point it at a fake tree.
+ROOT = ""
+
 
 def sh(args, timeout=15):
     """Run a fixed argument list (never a shell) and return its stdout."""
@@ -135,9 +138,9 @@ def eeprom_decode(blob):
 def id_bus_scan():
     """Find HAT EEPROMs on the ID bus, enabling it at runtime if needed."""
     enabled_here = False
-    if not os.path.exists("/dev/i2c-0"):
+    if not os.path.exists(ROOT + "/dev/i2c-0"):
         sh(["sudo", "dtparam", "i2c_vc=on"])
-        enabled_here = os.path.exists("/dev/i2c-0")
+        enabled_here = os.path.exists(ROOT + "/dev/i2c-0")
         if not enabled_here:
             return {}
     found = {}
@@ -159,7 +162,7 @@ ONBOARD_DRIVERS = ("macb", "bcmgenet", "brcmfmac", "lan78xx")
 def net_interfaces():
     """Every non-loopback interface: name, MAC, driver, whether onboard."""
     out = []
-    for p in sorted(glob.glob("/sys/class/net/*")):
+    for p in sorted(glob.glob(ROOT + "/sys/class/net/*")):
         name = os.path.basename(p)
         if name == "lo":
             continue
@@ -167,7 +170,9 @@ def net_interfaces():
             if os.path.exists(p + "/device/driver") else None
         dev = os.path.realpath(p + "/device") if os.path.exists(p + "/device") else ""
         usb_dev = None
-        m = re.search(r"/usb\d+/(\d+-[\d.]+)(?::|/|$)", dev)
+        # the interface directory is "<device>:<config>.<iface>"; the device
+        # is what carries the descriptors (a hub in between is not it)
+        m = re.search(r"/(\d+-[\d.]+):\d+\.\d+(?:/|$)", dev)
         if m:
             usb_dev = m.group(1)
         onboard = drv in ONBOARD_DRIVERS
@@ -186,7 +191,7 @@ def usb_net_adapters(ifaces):
     for i in ifaces:
         if i["onboard"] or not i["usb"]:
             continue
-        p = "/sys/bus/usb/devices/" + i["usb"]
+        p = ROOT + "/sys/bus/usb/devices/" + i["usb"]
         out.append({
             "iface": i["name"], "mac": i["mac"], "driver": i["driver"],
             "vidpid": "%s:%s" % (read(p + "/idVendor"), read(p + "/idProduct")),
@@ -197,27 +202,38 @@ def usb_net_adapters(ifaces):
     return out
 
 
+def parse_i2cdetect(text):
+    """Addresses that answered, from i2cdetect's grid: each row is
+    "R0: xx xx -- ..." and only the cells after the colon count."""
+    found = []
+    for line in text.split("\n"):
+        if ":" not in line:
+            continue
+        for cell in line.split(":", 1)[1].split():
+            if re.match(r"^[0-7][0-9a-f]$", cell):
+                found.append(cell)
+    return sorted(set(found))
+
+
 # --- collect ------------------------------------------------------------------
 
 def collect():
     d = {}
-    d["model"] = read("/proc/device-tree/model") or ""
-    d["serial"] = read("/proc/device-tree/serial-number")
-    m = re.search(r"^Revision\s*:\s*(\S+)", read("/proc/cpuinfo") or "", re.M)
+    d["model"] = read(ROOT + "/proc/device-tree/model") or ""
+    d["serial"] = read(ROOT + "/proc/device-tree/serial-number")
+    m = re.search(r"^Revision\s*:\s*(\S+)", read(ROOT + "/proc/cpuinfo") or "", re.M)
     d["revision"] = m.group(1) if m else None
     d["hat_fw"] = None
-    if os.path.isdir("/proc/device-tree/hat"):
-        d["hat_fw"] = {k: read("/proc/device-tree/hat/" + k)
+    if os.path.isdir(ROOT + "/proc/device-tree/hat"):
+        d["hat_fw"] = {k: read(ROOT + "/proc/device-tree/hat/" + k)
                        for k in ("vendor", "product", "product_id", "product_ver", "uuid")}
     d["hat_eeproms"] = id_bus_scan()
-    if os.path.exists("/dev/i2c-1"):
-        r = sh(["sudo", "i2cdetect", "-y", "1"])
-        d["i2c1"] = sorted(set(re.findall(r"\b([0-7][0-9a-f])\b", "\n".join(r.split("\n")[1:])))
-                           - set("%02x" % x for x in range(0, 0x80, 0x10)))
+    if os.path.exists(ROOT + "/dev/i2c-1"):
+        d["i2c1"] = parse_i2cdetect(sh(["sudo", "i2cdetect", "-y", "1"]))
     else:
         d["i2c1"] = None
     usb = {}
-    for p in glob.glob("/sys/bus/usb/devices/*"):
+    for p in glob.glob(ROOT + "/sys/bus/usb/devices/*"):
         v, pr = read(p + "/idVendor"), read(p + "/idProduct")
         if v:
             usb[os.path.basename(p)] = "%s:%s" % (v, pr)
@@ -238,9 +254,9 @@ def collect():
     pi5 = "Pi 5" in d["model"]
     d["pi5"] = pi5
     if pi5:
-        d["max_current_ma"] = dt_u32("/proc/device-tree/chosen/power/max_current")
+        d["max_current_ma"] = dt_u32(ROOT + "/proc/device-tree/chosen/power/max_current")
         try:
-            with open("/proc/device-tree/chosen/power/usbpd_power_data_objects", "rb") as f:
+            with open(ROOT + "/proc/device-tree/chosen/power/usbpd_power_data_objects", "rb") as f:
                 raw = f.read()
             pdos = [struct.unpack_from(">I", raw, i)[0] for i in range(0, len(raw) - 3, 4)]
             d["usbpd_pdos"] = ["0x%08x" % x for x in pdos if x]
@@ -251,9 +267,9 @@ def collect():
         d["ext5v_v"] = float(m.group(1)) if m else None
         m = re.search(r"BATT_V volt\(\d+\)=([0-9.]+)V", adc)
         d["rtc_batt_v"] = float(m.group(1)) if m else None
-        d["fan_dt"] = read("/proc/device-tree/cooling_fan/status")
+        d["fan_dt"] = read(ROOT + "/proc/device-tree/cooling_fan/status")
         d["fan_rpm"] = None
-        for h in glob.glob("/sys/class/hwmon/hwmon*"):
+        for h in glob.glob(ROOT + "/sys/class/hwmon/hwmon*"):
             if read(h + "/name") == "pwmfan":
                 d["fan_rpm"] = int(read(h + "/fan1_input") or 0)
     return d
@@ -348,6 +364,17 @@ def summary(d, header, power):
         pclass = "undetermined"
     macs = [{"kind": i["kind"], "mac": i["mac"]} for i in d.get("interfaces", [])
             if i["onboard"] and i["kind"] in ("eth", "wlan")]
+    usb_net = list(d.get("usb_net", []))
+    # Waveshare's PoE-ETH-USB-HUB-HAT gives a Zero its wired port: that
+    # RTL8152 (port 4 of the bonnet's hub) is the Pi's eth, not a dongle.
+    bonnet_ports = [r + ".4" for r, v in d["usb"].items()
+                    if v == "1a40:0101" and "." not in r and "-" in r
+                    and d["usb"].get(r + ".4") == "0bda:8152"]
+    by_iface = {i["name"]: i for i in d.get("interfaces", [])}
+    for u in list(usb_net):
+        if by_iface.get(u["iface"], {}).get("usb") in bonnet_ports:
+            macs.insert(0, {"kind": "eth", "mac": u["mac"]})
+            usb_net.remove(u)
     hat_uuid = None
     if d["hat_fw"] and d["hat_fw"].get("uuid"):
         hat_uuid = d["hat_fw"]["uuid"]
@@ -356,7 +383,7 @@ def summary(d, header, power):
     return {
         "model": d["model"], "serial": d["serial"], "revision": d["revision"],
         "header": items, "hat_uuid": hat_uuid, "power_class": pclass,
-        "macs": macs, "usb_net": d.get("usb_net", []),
+        "macs": macs, "usb_net": usb_net,
         "rtc_battery": ((d.get("rtc_batt_v") or 0) > 1.0) if d["pi5"] else None,
         "fan": (d.get("fan_dt") == "okay") if d["pi5"] else None,
         "max_current_ma": d.get("max_current_ma") if d["pi5"] else None,

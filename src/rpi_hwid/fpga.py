@@ -36,6 +36,9 @@ import re
 import subprocess
 import sys
 
+# Prefix for every absolute path read; the tests point it at a fake tree.
+ROOT = ""
+
 
 def sh(args, timeout=15):
     """Run a fixed argument list (never a shell) and return its stdout."""
@@ -59,7 +62,7 @@ def pcie_devices():
     """Every PCIe endpoint that is not a bridge, with its BAR sizes from
     sysfs `resource` (start end flags per line) -- never a mapping."""
     out = []
-    for p in sorted(glob.glob("/sys/bus/pci/devices/*")):
+    for p in sorted(glob.glob(ROOT + "/sys/bus/pci/devices/*")):
         cls = read(p + "/class") or ""
         if cls.startswith("0x0604"):        # PCI-PCI bridge: the root port
             continue
@@ -80,7 +83,7 @@ def pcie_devices():
 
 def ftdi_devices():
     out = []
-    for p in sorted(glob.glob("/sys/bus/usb/devices/*")):
+    for p in sorted(glob.glob(ROOT + "/sys/bus/usb/devices/*")):
         if read(p + "/idVendor") == "0403":
             out.append({"path": os.path.basename(p), "id": "0403:" + (read(p + "/idProduct") or ""),
                         "manufacturer": read(p + "/manufacturer"), "product": read(p + "/product"),
