@@ -13,6 +13,7 @@ The output files are the input to ``rpi-hwid labels``.
 
 from __future__ import annotations
 
+import getpass
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
 from rpi_hwid.model import ProbeDocument
 
-DEFAULT_USERS = ("tim", "pi")
+DEFAULT_USERS = (getpass.getuser(), "pi")
 
 
 def probe_source(fpga: bool = False, jtag: bool = False, flash: bool = False) -> str:

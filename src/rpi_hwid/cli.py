@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 
 from rpi_hwid import names, revision
+from rpi_hwid.collect import DEFAULT_USERS
 
 
 def cmd_probe(args: argparse.Namespace) -> int:
@@ -124,7 +125,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("hosts", nargs="+", help="host or user@host")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("-J", "--jump", help="ssh jump host")
-    p.add_argument("--users", default="tim,pi", help="users to try, in order")
+    p.add_argument("--users", default=",".join(DEFAULT_USERS),
+                   help="login names to try in order (default: you, then pi)")
     p.add_argument("--fpga", action="store_true", help="append the FPGA module on every host")
     p.add_argument("--jtag", action="append", metavar="HOST",
                    help="drive JTAG on this host (implies --fpga for it)")
