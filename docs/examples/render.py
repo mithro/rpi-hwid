@@ -53,7 +53,6 @@ def main() -> None:
     with tempfile.TemporaryDirectory(dir=HERE) as tmp:
         subprocess.run(["pdftoppm", "-r", str(DPI), "-png", str(pdf), tmp + "/page"], check=True)
         page = Image.open(next(Path(tmp).glob("page*.png")))
-        page.save(HERE / "sheet.png")
         page_h = page.height
         for kind, needle, name in EXAMPLES:
             index = next(i for i, (k, t) in enumerate(titles) if k == kind and needle in t)

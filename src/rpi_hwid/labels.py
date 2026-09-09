@@ -109,10 +109,15 @@ class Label:
     def width(self, s, font, size):
         return pdfmetrics.stringWidth(s, font, size)
 
-    def fit(self, x, y, s, font, size, max_w, min_size=5.5, color=black):
-        """`text`, but shrink the type until `s` fits inside `max_w`."""
+    def fitted_size(self, s, font, size, max_w, min_size=5.5):
+        """The largest size down from `size` at which `s` fits `max_w`."""
         while size > min_size and self.width(s, font, size) > max_w:
             size -= 0.25
+        return size
+
+    def fit(self, x, y, s, font, size, max_w, min_size=5.5, color=black):
+        """`text`, but shrink the type until `s` fits inside `max_w`."""
+        size = self.fitted_size(s, font, size, max_w, min_size)
         return self.text(x, y, s, font, size, color=color)
 
     def captioned(self, x_cap, x_val, y, cap, val, val_font, val_size,
@@ -178,6 +183,13 @@ class Label:
         px, py = self.pt(x, y + height)
         renderPDF.draw(d, self.c, px, py)
         return d.width
+
+    @staticmethod
+    def svg_aspect(path):
+        """height / width of an SVG, for sizing it to a column."""
+        from svglib.svglib import svg2rlg
+        d = svg2rlg(path)
+        return d.height / d.width
 
     def outline(self):
         c = self.c
@@ -250,8 +262,8 @@ def mark_maker(lab, board, x, y, height):
 
 
 def mark_rpi(lab, x, y, height):
-    """The raspberry, if the artwork directory supplies raspberry-pi.svg
-    (a trademark of Raspberry Pi Ltd, not shipped here); else nothing."""
+    """The raspberry (raspberry-pi.svg, shipped; a trademark of Raspberry Pi
+    Ltd, see artwork/README.md); nothing if the file has been removed."""
     path = artwork("raspberry-pi.svg")
     return lab.svg(path, x, y, height) if path else 0
 
@@ -322,7 +334,7 @@ def draw_fpga(lab, board):
     for an Arty its Digilent serial. Bottom, full width: the DNA, or a rule
     to write it on when nobody has read it yet."""
     dna_size = 15
-    dna_h = 6 * mm
+    dna_h = 5 * mm
     body_h = LABEL_H - 2 * PAD - dna_h
     qr_size = min(body_h - 3.5 * mm, 23 * mm)
     ident_str = board.dna or board.serial
@@ -331,20 +343,26 @@ def draw_fpga(lab, board):
 
     x = PAD + qr_size + 3 * mm
     col_w = LABEL_W - PAD - x
-    y = PAD
-    # a wide mark (Alphamax) at 5 mm, a square one (Digilent) at 6.5 mm
-    mark_h = 6.5 * mm if board.kind == "arty" else 5 * mm
+    # a wide mark (Alphamax) at 5 mm, a square one (Digilent) at 6 mm
+    mark_h = 6 * mm if board.kind == "arty" else 5 * mm
+    word_h, die_h, row_h = 8.5 * mm, 2.9 * mm, 3.6 * mm
+    block_h = mark_h + 0.5 * mm + word_h + die_h
+    if board.kind == "arty":
+        block_h += 2 * row_h
+    # The text block is centred on the QR when it is shorter than the QR,
+    # so neither the top nor the bottom of the column is left empty.
+    y = PAD + max(0, (qr_size - block_h) / 2)
     mark_maker(lab, board, x, y, mark_h)
-    y += mark_h + 1 * mm
+    y += mark_h + 0.5 * mm
     word = board.name.split("-", 1)[1] if board.name else board.model.split()[0]
     lab.fit(x, y, word, SANS_BOLD, 24, col_w)
-    y += 9.5 * mm
+    y += word_h
     die = board.part or "die not read"
     lab.fit(x, y, "{}  ·  {}".format(board.model, die), SANS, 8, col_w)
     if board.kind == "arty":
-        y += 4 * mm
+        y += row_h
         lab.captioned(x, x + 7 * mm, y, "S/N", board.serial, MONO, 8.5, col_w - 7 * mm)
-        y += 4 * mm
+        y += row_h
         flash = ("{} 128 Mb".format(board.flash)) if board.flash else "not read"
         # (S25FL128S/127S: one JEDEC id, two parts; the marking tells them apart)
         lab.captioned(x, x + 7 * mm, y, "flash", flash, SANS, 7.5, col_w - 7 * mm)
@@ -373,34 +391,44 @@ def draw_rpi(lab, pi):
                 SANS, 5.5, color=HexColor("#555555"))
 
     x = PAD + ser_w + 1.5 * mm
-    col_w = LABEL_W - PAD - x
-    y = PAD
-    logo_h = 7 * mm
-    w = mark_rpi(lab, x, y, logo_h)
-    tx = x + w + (2 * mm if w else 0)
-    head_w = LABEL_W - PAD - tx
-    lab.fit(tx, y, "Raspberry Pi " + d["model"], SANS_BOLD, 11, head_w)
+    # Two columns. The left one is as wide as a MAC's QR and holds the
+    # raspberry, the HAT and uuid captions and the two QRs; the right one
+    # starts at `tx` and holds every line of text, so the title, the HAT
+    # line, the uuid and the MACs all share one left edge. The rows are
+    # sized so the raspberry (taller than wide) fills the column's width
+    # above the HAT rows and the MAC rows fill what is left.
+    hat_rows = 3.2 * mm + 3.4 * mm
+    logo = artwork("raspberry-pi.svg")
+    aspect = Label.svg_aspect(logo) if logo else 0
+    # qr * aspect (logo) + 0.8 mm + hat_rows + 2 * (qr + 1 mm) = usable height
+    usable = LABEL_H - 2 * PAD
+    qr = (usable - 0.8 * mm - hat_rows - 2 * mm) / (aspect + 2)
+    logo_h = qr * aspect
+    tx = x + qr + 2 * mm
+    col_w = LABEL_W - PAD - tx
+    if logo:
+        mark_rpi(lab, x, PAD, logo_h)
+    # title and subtitle, the pair centred on the raspberry
+    y = PAD + max(0, (logo_h - 8.2 * mm) / 2)
+    lab.fit(tx, y, "Raspberry Pi " + d["model"], SANS_BOLD, 11, col_w)
     lab.fit(tx, y + 4.6 * mm,
             "{}  ·  Rev {}  ·  rev code {}".format(d["memory"], d["revision"],
-                                                   pi.revision), SANS, 6.5, head_w)
+                                                   pi.revision), SANS, 6.5, col_w)
 
-    # HAT band: two lines, always present
-    y = PAD + logo_h + 1 * mm
+    # HAT band: two lines, always present, captions in the left column
+    y = PAD + max(logo_h, 8.2 * mm) + 0.8 * mm
     if pi.header:
         line1 = "; ".join(pi.header)
         line2 = ("uuid", pi.hat_uuid, MONO) if pi.hat_uuid else ("", "", SANS)
     else:
         line1 = "none"
         line2 = ("", "", SANS)
-    lab.captioned(x, x + 7 * mm, y, "HAT", line1, SANS, 7, col_w - 7 * mm)
-    y += 3.4 * mm
+    lab.captioned(x, tx, y, "HAT", line1, SANS, 7, col_w)
+    y += 3.2 * mm
     cap, val, font = line2
     if val:
-        if cap:
-            lab.captioned(x, x + 7 * mm, y, cap, val, font, 6.5, col_w - 7 * mm)
-        else:
-            lab.fit(x + 7 * mm, y, val, font, 6.5, col_w - 7 * mm)
-    y += 3.8 * mm
+        lab.captioned(x, tx, y, cap, val, font, 6.5, col_w)
+    y += 3.4 * mm
 
     # MAC bands: eth then wlan, always both, fixed height
     macs = dict(pi.macs)
@@ -415,17 +443,18 @@ def draw_rpi(lab, pi):
     avail = LABEL_H - PAD - y
     row_h = avail / 2
     qr = row_h - 1 * mm
-    text_x = x + qr + 2 * mm
-    text_w = LABEL_W - PAD - text_x
+    # caption over MAC, the pair centred on the QR beside it
     for kind in ("eth", "wlan"):
         mac = macs[kind]
-        lab.text(text_x, y + 0.4 * mm, kind + " MAC", SANS, 6,
-                 color=HexColor("#555555"))
+        text, font, size = (mac, MONO, 13) if mac else (reasons[kind], SANS, 8)
+        size = lab.fitted_size(text, font, size, col_w)
+        block = 6 * 0.72 + 0.8 * mm + size * 0.72
+        cy = y + 0.5 * mm + (qr - block) / 2
+        lab.text(tx, cy, kind + " MAC", SANS, 6, color=HexColor("#555555"))
+        cy += 6 * 0.72 + 0.8 * mm
         if mac:
             lab.qr(x, y + 0.5 * mm, qr, mac)
-            lab.fit(text_x, y + 3.3 * mm, mac, MONO, 13, text_w)
-        else:
-            lab.fit(text_x, y + 3.3 * mm, reasons[kind], SANS, 8, text_w)
+        lab.text(tx, cy, text, font, size)
         y += row_h
 
 
@@ -435,15 +464,17 @@ def draw_usb(lab, dev):
     title and the MAC, and the MAC across the whole width at the bottom."""
     x, y = PAD, PAD
     h = 6.5 * mm
-    w = mark_usb(lab, x, y + 1.2 * mm, h * 0.6)
+    w = mark_usb(lab, x, y + h * 0.2, h * 0.6)
     w += 1.5 * mm
     if dev.kind == "wifi":
         w += mark_wifi(lab, x + w, y, h)
     else:
         w += mark_rj45(lab, x + w, y, h)
     tx = x + w + 2.5 * mm
-    title = dev.title
-    lab.fit(tx, y + 0.8 * mm, title, SANS_BOLD, 12, LABEL_W - PAD - tx)
+    # the title's cap height centred on the glyphs' band
+    title_size = 12
+    lab.fit(tx, y + (h - title_size * 0.72) / 2, dev.title, SANS_BOLD, title_size,
+            LABEL_W - PAD - tx)
     band_top = y + h + 1.5 * mm
 
     mac_size = 16
