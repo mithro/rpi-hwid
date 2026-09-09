@@ -379,6 +379,11 @@ Debian package locally:
 docker run --rm -v "$PWD:/src" -w /src debian:bookworm sh packaging/ci-build.sh
 ```
 
+The repository's social preview, `docs/social-preview.png`, is regenerated
+by `uv run docs/social_preview.py` from the same fixture documents as the
+README images, so it tracks the generator. GitHub has no API for it: after
+regenerating, upload the file by hand in Settings → Social preview.
+
 ## Origin
 
 Worked out on a fleet of Pi Zero W, 3B+, 4 and 5 hosts carrying NeTV2,
