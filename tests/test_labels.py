@@ -10,6 +10,7 @@ import pytest
 
 from rpi_hwid import labels
 from rpi_hwid.cli import main as cli_main
+from rpi_hwid.model import ProbeDocument
 
 
 def test_pi_record_derives_a_broadcom_radio_mac(docs):
@@ -38,6 +39,46 @@ def test_fpga_records_named_and_typed(docs):
     assert recs["acorn"].maker == "SQRL"
 
 
+def test_tinytapeout_records(docs):
+    tt06, ihp = labels.tinytapeout_records(docs)
+    assert tt06.headline == "TT06"
+    assert tt06.subtitle == "Tiny Tapeout 6  ·  ASIC  ·  sky130"
+    assert tt06.url == "https://tinytapeout.com/chips/tt06/"
+    assert tt06.demoboard_text == "TT06+  ·  v2.0.1"
+    assert tt06.commit == "0f5a1b2c"
+    assert tt06.usb_serial == "E6614C311B7A7A37"
+    assert (tt06.chip_colour, tt06.chip_silk) == ("#f28cb3", "#f8f8f8")
+    assert (tt06.demoboard_colour, tt06.demoboard_silk) == ("#f28cb3", "#f8f8f8")
+    assert ihp.headline == "TTIHP25a"
+    assert ihp.subtitle == "Tiny Tapeout IHP 25a  ·  ASIC  ·  ihp-sg13g2"
+    assert ihp.demoboard_text == "TTDBv3 [3.2]"
+    assert ihp.chip_colour is None
+    assert ihp.demoboard_colour is None
+
+
+def test_tinytapeout_records_without_a_rom_or_with_the_fpga_breakout():
+    def doc(board):
+        return ProbeDocument.from_dict("h", {"verdict": {"summary": {
+            "model": "m", "serial": "s", "revision": "c03114", "power_class": "p",
+            "tinytapeout": [board]}}})
+    (fpga,) = labels.tinytapeout_records({"h": doc({"chip": "fpga", "usb_serial": "E1"})})
+    assert fpga.headline == "FPGA"
+    assert fpga.subtitle == "FPGA breakout, no ASIC"
+    assert fpga.url == "https://tinytapeout.com/chips/"
+    assert fpga.demoboard_text == "not read"
+    (blank,) = labels.tinytapeout_records({"h": doc({"demoboard": "TT04/TT05"})})
+    assert blank.headline == "TT"
+    assert blank.subtitle == "shuttle not read"
+    assert blank.demoboard_text == "TT04/TT05"
+    assert blank.commit is None
+    assert blank.usb_serial is None
+    # a shuttle the table has no page for falls back to the chips index
+    (t35,) = labels.tinytapeout_records({"h": doc({"shuttle": "tt03p5", "chip": "asic"})})
+    assert t35.url == "https://tinytapeout.com/chips/"
+    assert t35.demoboard_text == "v1.2.1"
+    assert t35.chip_colour == "#5c2d91"
+
+
 def test_usb_records(docs):
     (u,) = labels.usb_records(docs)
     assert u.title == "ASIX Elec. Corp. AX88179"
@@ -46,9 +87,13 @@ def test_usb_records(docs):
 
 
 def test_all_labels_order_and_count(docs):
-    kinds = [k for k, _t, _d, _r in labels.all_labels(docs, {"fpga", "rpi", "usb"})]
-    # FPGA boards first in sorted-host order, then one Pi per document, then adapters
-    assert kinds == ["arty", "acorn", "netv2", "rpi", "rpi", "rpi", "rpi", "rpi", "usb"]
+    kinds = [k for k, _t, _d, _r in labels.all_labels(docs, {"fpga", "tt", "rpi", "usb"})]
+    # FPGA boards first in sorted-host order, then Tiny Tapeout boards, then
+    # one Pi per document, then adapters
+    assert kinds == ["arty", "acorn", "netv2", "tt", "tt",
+                     "rpi", "rpi", "rpi", "rpi", "rpi", "rpi", "usb"]
+    titles = [t for k, t, _d, _r in labels.all_labels(docs, {"tt"})]
+    assert titles == ["TT06 E6614C311B7A7A37", "TTIHP25a E66360B8A3C1D5F2"]
 
 
 def test_render_and_decode_every_qr(data_dir, tmp_path):
@@ -75,7 +120,10 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "e4:5f:01:96:f8:a5", "e4:5f:01:96:f8:a7",         # arty host
         "00:e0:4c:36:0b:0a", "b8:27:eb:02:a3:24",         # zero with bonnet
         "98:fe:54:13:f5:75",                              # acorn host
+        "dc:a6:32:8f:2b:11", "dc:a6:32:8f:2b:12",         # the Tiny Tapeout host
         "00:0e:c6:82:b5:e1",                              # the dongle
+        "https://tinytapeout.com/chips/tt06/",            # the chip pages
+        "https://tinytapeout.com/chips/ttihp25a/",
     }
     assert got == want
 
@@ -85,6 +133,9 @@ def test_list_and_names_cli(data_dir, capsys):
     out = capsys.readouterr().out
     assert "netv2-grove" in out
     assert "arty-hawk" in out
+    assert "tt     TT06 E6614C311B7A7A37" in out
+    assert cli_main(["labels", "--data", str(data_dir), "--list", "--only", "tt"]) == 0
+    assert capsys.readouterr().out.count("\n") == 2
     assert cli_main(["name", "--netv2", "0x00742c4e63b9085c", "--arty", "210319B301DE"]) == 0
     out = capsys.readouterr().out
     assert "netv2-grove" in out

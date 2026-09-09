@@ -74,12 +74,72 @@ ACORN_HOST = _doc(
 )
 
 
+# A Pi 4 with two Tiny Tapeout demo boards on USB: a TT06 chip on its TT06+
+# board (RP2040, v2 SDK) and a TTIHP25a on a DBv3 "ETR" board (RP2350, v3
+# SDK), whose colours the table does not record.
+TT_HOST = _doc(
+    "Raspberry Pi 4 Model B Rev 1.4", "100000003a7e1c9b", "c03114", [], "undetermined", [],
+    [{"kind": "eth", "mac": "dc:a6:32:8f:2b:11"}, {"kind": "wlan", "mac": "dc:a6:32:8f:2b:12"}],
+    [], None, None, None,
+)
+TT_HOST["usb"] = {"1-1": "2109:3431", "1-1.2": "2e8a:0005", "1-1.3": "2e8a:0005"}
+TT_HOST["tinytapeout"] = {
+    "usb": [{"path": "1-1.2", "id": "2e8a:0005", "manufacturer": "MicroPython",
+             "product": "Board in FS mode", "serial": "E6614C311B7A7A37",
+             "tty": "/dev/ttyACM0"},
+            {"path": "1-1.3", "id": "2e8a:0005", "manufacturer": "MicroPython",
+             "product": "Board in FS mode", "serial": "E66360B8A3C1D5F2",
+             "tty": "/dev/ttyACM1"}],
+    "repl": {
+        "1-1.2": {"machine": "Raspberry Pi Pico with RP2040", "micropython": "1.24.0",
+                  "sdk": "2.0.4", "sdk_revision": None, "demoboard": "TT06+",
+                  "carrier_present": True, "carrier_version": None,
+                  "rom": {"shuttle": "tt06", "repo": "TinyTapeout/tinytapeout-06",
+                          "commit": "0f5a1b2c"},
+                  "rom_text": "shuttle=tt06\nrepo=TinyTapeout/tinytapeout-06\ncommit=0f5a1b2c\n"},
+        "1-1.3": {"machine": "TinyTapeout RP2350B Core with RP2350", "micropython": "1.26.0",
+                  "sdk": "3.1.1", "sdk_revision": "9c2e4d1a", "demoboard": "TTDBv3 [3.2]",
+                  "carrier_present": True, "carrier_version": 1,
+                  "rom": {"shuttle": "ttihp25a", "repo": "TinyTapeout/tinytapeout-ihp-25a",
+                          "commit": "7b3d9e02"},
+                  "rom_text": "shuttle=ttihp25a\nrepo=TinyTapeout/tinytapeout-ihp-25a\n"
+                              "commit=7b3d9e02\n"},
+    },
+}
+TT_HOST["verdict"]["tinytapeout"] = [
+    {"kind": "tinytapeout", "usb": "1-1.2", "usb_serial": "E6614C311B7A7A37",
+     "tty": "/dev/ttyACM0", "shuttle": "tt06", "chip": "asic",
+     "repo": "TinyTapeout/tinytapeout-06", "commit": "0f5a1b2c", "demoboard": "TT06+",
+     "demoboard_version": "v2.0.1", "sdk": "2.0.4", "machine": "Raspberry Pi Pico with RP2040",
+     "chip_url": "https://tinytapeout.com/chips/tt06/",
+     "how": "Tiny Tapeout SDK 2.0.4 on Raspberry Pi Pico with RP2040 (USB 1-1.2); "
+            "chip ROM shuttle=tt06; demo board TT06+"},
+    {"kind": "tinytapeout", "usb": "1-1.3", "usb_serial": "E66360B8A3C1D5F2",
+     "tty": "/dev/ttyACM1", "shuttle": "ttihp25a", "chip": "asic",
+     "repo": "TinyTapeout/tinytapeout-ihp-25a", "commit": "7b3d9e02",
+     "demoboard": "TTDBv3 [3.2]", "demoboard_version": None, "sdk": "3.1.1",
+     "machine": "TinyTapeout RP2350B Core with RP2350",
+     "chip_url": "https://tinytapeout.com/chips/ttihp25a/",
+     "how": "Tiny Tapeout SDK 3.1.1 on TinyTapeout RP2350B Core with RP2350 (USB 1-1.3); "
+            "chip ROM shuttle=ttihp25a; demo board TTDBv3 [3.2]"},
+]
+TT_HOST["verdict"]["summary"]["tinytapeout"] = [
+    {"usb_serial": "E6614C311B7A7A37", "shuttle": "tt06", "chip": "asic",
+     "repo": "TinyTapeout/tinytapeout-06", "commit": "0f5a1b2c", "demoboard": "TT06+",
+     "demoboard_version": "v2.0.1", "sdk": "2.0.4"},
+    {"usb_serial": "E66360B8A3C1D5F2", "shuttle": "ttihp25a", "chip": "asic",
+     "repo": "TinyTapeout/tinytapeout-ihp-25a", "commit": "7b3d9e02",
+     "demoboard": "TTDBv3 [3.2]", "demoboard_version": None, "sdk": "3.1.1"},
+]
+
+
 RAW = {
     "rpi5-netv2": PI5_NETV2,
     "pi-sw1-p10": POOL_3BPLUS,
     "pi-sw2-p16": ARTY_HOST,
     "rpiz-serial": ZERO_BONNET,
     "pi-sw2-p47": ACORN_HOST,
+    "rpi4-tt": TT_HOST,
 }
 
 

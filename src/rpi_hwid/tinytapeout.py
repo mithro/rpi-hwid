@@ -471,7 +471,7 @@ def merge_tinytapeout(doc, t):
 def describe(boards):
     for b in boards:
         if b["kind"] == "tinytapeout":
-            what = b["shuttle"].upper() if b["shuttle"] else "shuttle not read"
+            what = shuttle_short(b["shuttle"]) if b["shuttle"] else "shuttle not read"
             if b["chip"] == "fpga":
                 what = "FPGA breakout"
             print("  tt     : %s%s (%s)" % (
