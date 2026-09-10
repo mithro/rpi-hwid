@@ -8,6 +8,7 @@ import json
 import os
 import pty
 import struct
+import termios
 import threading
 
 import pytest
@@ -210,7 +211,7 @@ TT06_ANSWER = {"machine": "Raspberry Pi Pico with RP2040", "micropython": "1.24.
                "sdk": "2.0.4", "sdk_revision": None, "demoboard": "TT06+",
                "carrier_present": True, "carrier_version": None,
                "rom": {"shuttle": "tt06", "repo": "TinyTapeout/tinytapeout-06",
-                       "commit": "0f5a1b2c"},
+                       "commit": "0f5a1b2c"}, "rom_cached": True,
                "rom_text": "shuttle=tt06\nrepo=TinyTapeout/tinytapeout-06\ncommit=0f5a1b2c\n"}
 
 
@@ -266,7 +267,7 @@ def test_read_repl_speaks_raw_repl(fake_board):
     assert b"\r\x01" in sent
     assert b"\x04" in sent
     assert sent.endswith(b"\r\x02")                  # and back to the friendly REPL
-    assert b"chip_ROM" in sent
+    assert b"_shuttle_props" in sent                 # the cached ROM, never a fresh read
 
 
 def test_read_repl_never_hangs():
@@ -280,6 +281,28 @@ def test_read_repl_never_hangs():
     assert tinytapeout.read_repl("/nonexistent/ttyACM9", timeout=1)["error"].startswith(
         "cannot open /nonexistent/ttyACM9")
     assert tinytapeout.read_repl("/dev/null", timeout=1)["error"].startswith("cannot open")
+
+
+def test_read_repl_survives_termios_error_and_a_stalled_write(monkeypatch):
+    # a tty that vanishes between open and tcsetattr raises termios.error,
+    # which is not an OSError; it must become an error record, not a crash
+    def gone(path):
+        raise termios.error(5, "Input/output error")
+    real_open = tinytapeout.open_tty
+    monkeypatch.setattr(tinytapeout, "open_tty", gone)
+    assert tinytapeout.read_repl("/dev/ttyACM7") == {
+        "error": "cannot open /dev/ttyACM7: (5, 'Input/output error')"}
+    monkeypatch.setattr(tinytapeout, "open_tty", real_open)
+    # a board that never drains its CDC buffer: os.write keeps saying EAGAIN
+    master, slave = pty.openpty()
+    try:
+        monkeypatch.setattr(tinytapeout.os, "write", lambda fd, data: (_ for _ in ()).throw(
+            BlockingIOError(11, "Resource temporarily unavailable")))
+        r = tinytapeout.read_repl(os.ttyname(slave), timeout=0.5)
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert r == {"error": "timed out writing to the board"}
 
 
 def test_read_repl_reports_a_traceback_and_junk(monkeypatch):

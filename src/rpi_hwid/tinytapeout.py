@@ -33,12 +33,17 @@ USB
 The serial REPL
     What makes it a Tiny Tapeout board is the SDK on it, reachable over
     the CDC ACM port (/dev/ttyACM*). The SDK's main.py builds a
-    ``DemoBoard`` singleton ``tt`` at boot; ``tt.chip_ROM.contents`` is
-    the chip's ROM (project 0 on every chip since TT05: the text
+    ``DemoBoard`` singleton ``tt`` at boot and prints it, which reads the
+    chip's ROM (project 0 on every chip since TT05: the text
     "shuttle=tt06\\nrepo=...\\ncommit=..." at bytes 32-127, written by
-    tt-support-tools rom.py), read once at boot and cached. It says
-    'unknown' when no ROM answers (a TT04 chip, or nothing mounted) and
-    'FPGA' on the FPGA breakout (v3 SDK, src/ttboard/boot/rom.py).
+    tt-support-tools rom.py) into ``tt.shuttle._shuttle_props._contents``.
+    It says 'unknown' when no ROM answers (a TT04 chip, or nothing
+    mounted) and 'FPGA' on the FPGA breakout (v3 SDK,
+    src/ttboard/boot/rom.py). Reading the ROM resets and clocks the chip's
+    project mux and drives its ui_in pins, so this probe only ever reports
+    that cached copy: when the boot did not fill it (no ``tt``, a custom
+    main.py, a ROM read that never happened) the ROM is reported as not
+    cached and nothing is driven.
     ``DemoboardDetect.PCB_str()`` names the demo board the SDK probed
     ('TT04/TT05' or 'TT06+' from the v2 SDK's pull-up and mux tests,
     'TTDBv3 [3.2]' from v3; src/ttboard/boot/demoboard_detect.py) and
@@ -48,20 +53,22 @@ The serial REPL
 The REPL is driven with MicroPython's raw-REPL protocol (Ctrl-C, Ctrl-A,
 code, Ctrl-D, Ctrl-B) over the tty opened with os.open and termios: no
 pyserial on a Pi. It interrupts whatever the board is running, which at
-boot is nothing (the SDK sits at the prompt), and it never soft-resets,
-so the board's state is otherwise untouched. Every read has a deadline
-and a board that does not answer is recorded as such. --no-repl (or
-repl=False) stops at the USB tree.
+boot is nothing (the SDK sits at the prompt), never soft-resets, and
+touches no pin, so the board's state is otherwise untouched. Every read
+and write has a deadline and a board that does not answer is recorded as
+such. --no-repl (or repl=False) stops at the USB tree.
 
 The table below is the board data that is not readable from the board:
 the chip carrier ("QFN breakout") and demo board colours per shuttle, the
 demo board revision that shipped with each kit, and the chip's page on
 tinytapeout.com. Colours and TT02-TT06 demo board versions are from Tim's
 spreadsheet; TT05/TT07/TT08 demo board versions from tt-demo-pcb
-doc/historic/README.md; the URLs from tinytapeout.com/chips/ (each
-checked on 2026-09-10; a shuttle with no page is None). An unknown colour
-stays None and the label prints the shuttle name where the swatch would
-be.
+doc/historic/README.md (which calls the TT02/TT03 board "v1.x", where
+Tim's sheet has v2.2.5/v2.2.6 off the boards themselves); the URLs from
+tinytapeout.com/chips/ (each checked on 2026-09-10; a shuttle with no
+page is None). An unknown colour stays None and the label draws an empty
+swatch. Shuttles the table does not list get the same all-None row from
+shuttle_info().
 """
 import fcntl
 import glob
@@ -104,9 +111,7 @@ SHUTTLES = {
              "https://tinytapeout.com/chips/tt08/"),
     "tt09": (None, None, None, None, None, "https://tinytapeout.com/chips/tt09/"),
     "tt10": (None, None, None, None, None, None),          # cancelled
-    "ttihp0p1": (None, None, None, None, None, None),
     "ttihp0p2": (None, None, None, None, None, "https://tinytapeout.com/chips/ttihp0p2/"),
-    "ttihp0p3": (None, None, None, None, None, None),
     "ttihp0p4": (None, None, None, None, None, "https://tinytapeout.com/chips/ttihp0p4/"),
     "ttihp25a": (None, None, None, None, None, "https://tinytapeout.com/chips/ttihp25a/"),
     "ttihp25b": (None, None, None, None, None, "https://tinytapeout.com/chips/ttihp25b/"),
@@ -118,7 +123,6 @@ SHUTTLES = {
     "ttsky26a": (None, None, None, None, None, "https://tinytapeout.com/chips/ttsky26a/"),
     "ttsky26b": (None, None, None, None, None, "https://tinytapeout.com/chips/ttsky26b/"),
     "ttsky26c": (None, None, None, None, None, "https://tinytapeout.com/chips/ttsky26c/"),
-    "ttgf0p1": (None, None, None, None, None, None),
     "ttgf0p2": (None, None, None, None, None, "https://tinytapeout.com/chips/ttgf0p2/"),
     "ttgf0p3": (None, None, None, None, None, "https://tinytapeout.com/chips/ttgf0p3/"),
     "ttgf26a": (None, None, None, None, None, "https://tinytapeout.com/chips/ttgf26a/"),
@@ -126,6 +130,8 @@ SHUTTLES = {
 }
 
 # Foundry prefixes in a shuttle name -> the PDK, for the label's subtitle.
+# "cad" (ttcad25a) is inferred to be sky130 from its CI process code; the
+# rest are as the chips list names them.
 PDK = {"": "sky130", "sky": "sky130", "ihp": "ihp-sg13g2", "gf": "gf180mcu", "cad": "sky130"}
 
 
@@ -208,10 +214,13 @@ def usb_candidates():
 
 # --- the raw REPL -------------------------------------------------------------
 #
-# The snippet run on the board. It only reads what the SDK already holds
-# (main.py built `tt` at boot and read the ROM then); DemoBoard.get() is
-# the fallback when `tt` is absent, which constructs the singleton and
-# reads the ROM, driving the ASIC's ui_in pins for a few milliseconds.
+# The snippet run on the board. It reads only what the SDK already holds:
+# `tt` as main.py built it at boot, and the ROM copy that boot cached in
+# tt.shuttle._shuttle_props (a ChipROM once read, or a HardcodedShuttle
+# when config.ini forces the shuttle). ChipROM.contents is lazy and would
+# reset and clock the chip's mux and drive ui_in on a cold read, and
+# DemoBoard.get() would run a whole board init, so neither is called: a
+# missing `tt` or an unread ROM is reported, not fetched.
 REPL_SNIPPET = """
 import json, os, sys
 d = {}
@@ -235,12 +244,24 @@ except Exception as e:
     d['err_demoboard'] = repr(e)
 try:
     t = globals().get('tt')
+    d['rom'] = None
+    d['rom_cached'] = False
     if t is None:
-        from ttboard.demoboard import DemoBoard
-        t = DemoBoard.get()
-    r = t.chip_ROM
-    d['rom'] = dict(r.contents)
-    d['rom_text'] = getattr(r, '_rom_data', None)
+        d['err_rom'] = 'tt not defined'
+    else:
+        sp = getattr(t.shuttle, '_shuttle_props', None)
+        if sp is None:
+            d['err_rom'] = 'chip ROM not read by the boot'
+        elif getattr(sp, '_contents', None) is not None:
+            d['rom'] = dict(sp._contents)
+            d['rom_text'] = getattr(sp, '_rom_data', None)
+            d['rom_cached'] = True
+        elif hasattr(sp, '_shuttle'):
+            d['rom'] = {'shuttle': sp._shuttle, 'repo': sp._repo, 'commit': sp._commit}
+            d['rom_cached'] = True
+            d['rom_forced'] = True
+        else:
+            d['err_rom'] = 'chip ROM not read by the boot'
 except Exception as e:
     d['err_rom'] = repr(e)
 print(json.dumps(d))
@@ -292,11 +313,24 @@ class Tty:
             pass
         self.buf = b""
 
-    def write(self, data):
-        # 256-byte chunks with a pause, as pyboard.py does, so the board's
-        # USB CDC buffer keeps up with a pasted snippet
+    def write(self, data, deadline):
+        """Write all of `data` before `deadline`: 256-byte chunks with a
+        pause, as pyboard.py does, so the board's USB CDC buffer keeps up
+        with a pasted snippet, and each chunk retried on a short write or
+        EAGAIN (the fd is non-blocking). OSError at the deadline."""
         for i in range(0, len(data), 256):
-            os.write(self.fd, data[i:i + 256])
+            chunk = data[i:i + 256]
+            while chunk:
+                if time.monotonic() > deadline:
+                    raise OSError("timed out writing to the board")
+                try:
+                    n = os.write(self.fd, chunk)
+                except (BlockingIOError, InterruptedError):
+                    n = 0
+                if n:
+                    chunk = chunk[n:]
+                else:
+                    select.select([], [self.fd], [], 0.05)
             time.sleep(0.01)
 
 
@@ -314,6 +348,8 @@ def open_tty(path):
         attr[2] |= termios.CS8 | termios.CLOCAL | termios.CREAD
         attr[3] &= ~(termios.ECHO | termios.ECHONL | termios.ICANON | termios.ISIG |
                      termios.IEXTEN)
+        # 115200 is nominal (USB CDC ignores it); never B1200: MicroPython's
+        # rp2 builds treat a 1200 bps touch as reset-to-BOOTSEL
         attr[4] = attr[5] = termios.B115200
         attr[6][termios.VMIN] = 0
         attr[6][termios.VTIME] = 0
@@ -336,12 +372,12 @@ def raw_repl_exec(fd, code, timeout):
     """
     deadline = time.monotonic() + timeout
     t = Tty(fd)
-    t.write(b"\r\x03\x03")
+    t.write(b"\r\x03\x03", deadline)
     t.drain(0.3)
-    t.write(b"\r\x01")
+    t.write(b"\r\x01", deadline)
     if t.read_until(RAW_REPL_BANNER, deadline) is None:
         raise OSError("no raw REPL prompt (not MicroPython, or busy)")
-    t.write(code.encode("utf-8") + b"\x04")
+    t.write(code.encode("utf-8") + b"\x04", deadline)
     if t.read_until(b"OK", min(deadline, time.monotonic() + 2)) is None:
         raise OSError("board did not accept the snippet")
     out = t.read_until(b"\x04", deadline)
@@ -350,7 +386,7 @@ def raw_repl_exec(fd, code, timeout):
     err = t.read_until(b"\x04", deadline)
     if err is None:
         raise OSError("timed out waiting for the snippet to finish")
-    t.write(b"\r\x02")
+    t.write(b"\r\x02", deadline)
     return (out[:-1].decode("utf-8", "replace"), err[:-1].decode("utf-8", "replace"))
 
 
@@ -359,8 +395,8 @@ def read_repl(tty, timeout=10):
     board's answer (see REPL_SNIPPET), or {"error": why}."""
     try:
         fd = open_tty(tty)
-    except OSError as e:
-        return {"error": "cannot open %s: %s" % (tty, e.strerror or e)}
+    except (OSError, termios.error) as e:      # termios.error is not an OSError
+        return {"error": "cannot open %s: %s" % (tty, e)}
     try:
         out, err = raw_repl_exec(fd, REPL_SNIPPET, timeout)
     except OSError as e:
@@ -405,6 +441,11 @@ def tinytapeout_verdict(d):
             continue
         rom = answer.get("rom") or {}
         raw_shuttle = (rom.get("shuttle") or "").strip()
+        machine = answer.get("machine") or ""
+        mcu = None
+        for name in ("RP2350", "RP2040"):
+            if name in machine:
+                mcu = name
         shuttle, chip = None, None
         if raw_shuttle.lower() == "fpga":
             chip = "fpga"
@@ -416,16 +457,25 @@ def tinytapeout_verdict(d):
         demoboard = answer.get("demoboard")
         if demoboard in ("UNKNOWN", "N/A", ""):
             demoboard = None
+        why = []
+        if rom:
+            why.append("chip ROM shuttle=%s%s" % (
+                raw_shuttle or "?", " (forced in config.ini)" if answer.get("rom_forced") else ""))
+        else:
+            why.append("chip ROM not cached on the board")
+        for key in ("err_rom", "err_demoboard"):
+            if answer.get(key):
+                why.append("%s: %s" % (key[4:], answer[key]))
+        why.append("demo board %s" % (demoboard or "not detected"))
         entry = {
             "kind": "tinytapeout", "usb": u["path"], "usb_serial": u["serial"],
             "tty": u["tty"], "shuttle": shuttle, "chip": chip,
             "repo": rom.get("repo") or None, "commit": rom.get("commit") or None,
             "demoboard": demoboard, "demoboard_version": info["demoboard_version"],
-            "sdk": answer.get("sdk"), "machine": answer.get("machine"),
+            "sdk": answer.get("sdk"), "machine": machine or None, "mcu": mcu,
             "chip_url": info["url"],
-            "how": "Tiny Tapeout SDK %s on %s (USB %s); chip ROM shuttle=%s; demo board %s" % (
-                answer.get("sdk"), answer.get("machine") or "RP2", u["path"],
-                raw_shuttle or "?", demoboard or "not detected"),
+            "how": "Tiny Tapeout SDK %s on %s (USB %s); %s" % (
+                answer.get("sdk"), machine or "RP2", u["path"], "; ".join(why)),
         }
         boards.append(entry)
     return boards
@@ -439,7 +489,7 @@ def tinytapeout_summary(boards):
         if b["kind"] != "tinytapeout":
             continue
         out.append({k: b.get(k) for k in (
-            "usb_serial", "shuttle", "chip", "repo", "commit", "demoboard",
+            "usb_serial", "mcu", "shuttle", "chip", "repo", "commit", "demoboard",
             "demoboard_version", "sdk")})
     return out
 

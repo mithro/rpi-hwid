@@ -67,6 +67,7 @@ class TinyTapeoutBoard:
     as its ROM described it."""
 
     usb_serial: str | None = None      # the demo board's RP2 flash unique id
+    mcu: str | None = None             # RP2040 | RP2350
     shuttle: str | None = None         # "tt06"; None when no ROM answered
     chip: str | None = None            # asic | fpga | None
     repo: str | None = None            # from the chip ROM

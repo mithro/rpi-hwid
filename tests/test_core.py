@@ -227,7 +227,7 @@ TT06_ANSWER = {"machine": "Raspberry Pi Pico with RP2040", "micropython": "1.24.
                "sdk": "2.0.4", "sdk_revision": None, "demoboard": "TT06+",
                "carrier_present": True, "carrier_version": None,
                "rom": {"shuttle": "tt06", "repo": "TinyTapeout/tinytapeout-06",
-                       "commit": "0f5a1b2c"}}
+                       "commit": "0f5a1b2c"}, "rom_cached": True}
 
 
 def test_tinytapeout_verdict_reads_the_rom_and_the_table():
@@ -238,8 +238,10 @@ def test_tinytapeout_verdict_reads_the_rom_and_the_table():
     assert b["demoboard_version"] == "v2.0.1"          # from the table, not the board
     assert b["chip_url"] == "https://tinytapeout.com/chips/tt06/"
     assert b["usb_serial"] == "E6614C311B7A7A37"
+    assert b["mcu"] == "RP2040"
+    assert "chip ROM shuttle=tt06; demo board TT06+" in b["how"]
     assert tinytapeout.tinytapeout_summary([b]) == [{
-        "usb_serial": "E6614C311B7A7A37", "shuttle": "tt06", "chip": "asic",
+        "usb_serial": "E6614C311B7A7A37", "mcu": "RP2040", "shuttle": "tt06", "chip": "asic",
         "repo": "TinyTapeout/tinytapeout-06", "commit": "0f5a1b2c", "demoboard": "TT06+",
         "demoboard_version": "v2.0.1", "sdk": "2.0.4"}]
 
@@ -259,6 +261,19 @@ def test_tinytapeout_verdict_fpga_breakout_and_no_rom():
     tt06_blank = dict(tt04, demoboard="TT06+", carrier_present=True)
     (b,) = tinytapeout.tinytapeout_verdict({"usb": [TT_USB], "repl": {"1-1.2": tt06_blank}})
     assert (b["shuttle"], b["chip"]) == (None, "asic")
+    # the boot never read the ROM: nothing is driven, and the verdict says why
+    cold = dict(TT06_ANSWER, machine="TinyTapeout RP2350B Core with RP2350", rom=None,
+                rom_cached=False, err_rom="chip ROM not read by the boot")
+    (b,) = tinytapeout.tinytapeout_verdict({"usb": [TT_USB], "repl": {"1-1.2": cold}})
+    assert (b["shuttle"], b["chip"], b["mcu"]) == (None, "asic", "RP2350")
+    assert "chip ROM not cached on the board; rom: chip ROM not read by the boot" in b["how"]
+    no_tt = dict(cold, err_rom="tt not defined", err_demoboard="ImportError('x')",
+                 demoboard=None, carrier_present=None)
+    (b,) = tinytapeout.tinytapeout_verdict({"usb": [TT_USB], "repl": {"1-1.2": no_tt}})
+    assert "rom: tt not defined; demoboard: ImportError('x'); demo board not detected" in b["how"]
+    forced = dict(TT06_ANSWER, rom_forced=True)
+    (b,) = tinytapeout.tinytapeout_verdict({"usb": [TT_USB], "repl": {"1-1.2": forced}})
+    assert "shuttle=tt06 (forced in config.ini)" in b["how"]
 
 
 def test_tinytapeout_verdict_candidates_and_other_picos():
@@ -295,6 +310,7 @@ def test_shuttle_table_and_names():
     assert tinytapeout.shuttle_short("tt06") == "TT06"
     assert tinytapeout.shuttle_pdk("ttihp0p4") == "ihp-sg13g2"
     assert tinytapeout.shuttle_pdk("FPGA") is None
+    assert "ttihp0p1" not in tinytapeout.SHUTTLES        # unsourced rows are not listed
     for colour in {c for row in tinytapeout.SHUTTLES.values() for c in row[:4] if c}:
         assert colour in tinytapeout.COLOURS
     for row in tinytapeout.SHUTTLES.values():
@@ -354,7 +370,7 @@ def test_probe_document_from_json_skips_banner():
 
 def test_summary_round_trips_tinytapeout_boards():
     raw = {"model": "m", "serial": "s", "revision": "r", "power_class": "p",
-           "tinytapeout": [{"usb_serial": "E6614C311B7A7A37", "shuttle": "tt06",
+           "tinytapeout": [{"usb_serial": "E6614C311B7A7A37", "mcu": "RP2040", "shuttle": "tt06",
                             "chip": "asic", "repo": "TinyTapeout/tinytapeout-06",
                             "commit": "0f5a1b2c", "demoboard": "TT06+",
                             "demoboard_version": "v2.0.1", "sdk": "2.0.4"}]}
@@ -412,6 +428,8 @@ def test_cli_probe_and_collect_summary_with_tinytapeout(monkeypatch, capsys, tmp
     out = capsys.readouterr().out
     assert "tt     : TT06 on demo board TT06+" in out
     assert "tt     : TTIHP25a on demo board TTDBv3 [3.2]" in out
+    assert "DemoBoard.get" not in tinytapeout.REPL_SNIPPET, "the snippet must not init the board"
+    assert ".contents" not in tinytapeout.REPL_SNIPPET, "ChipROM.contents drives the chip's pins"
     assert cli.main(["tinytapeout"]) == 0
     assert "TTIHP25a" in capsys.readouterr().out
     assert cli.main(["tinytapeout", "--json"]) == 0
