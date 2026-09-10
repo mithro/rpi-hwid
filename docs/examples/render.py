@@ -34,6 +34,8 @@ EXAMPLES = [
     ("netv2", "netv2-grove", "netv2"),
     ("arty", "arty-hawk", "arty"),
     ("acorn", "Acorn", "acorn"),
+    ("tt", "TT06", "tinytapeout"),
+    ("tt", "TTIHP25a", "tinytapeout-ihp"),
     ("rpi", "Pi 5 4 GB", "rpi5"),
     ("rpi", "Pi 5 1 GB", "rpi5-poe-hat"),
     ("rpi", "Pi 4", "rpi4-pmod-hat"),
@@ -47,7 +49,7 @@ def main() -> None:
     docs = {name: ProbeDocument.from_dict(name, raw) for name, raw in conftest.RAW.items()}
     pdf = HERE / "labels.pdf"
     labels.render(docs, pdf, outline=True)
-    kinds = {"fpga", "rpi", "usb"}
+    kinds = {"fpga", "tt", "rpi", "usb"}
     titles = [(kind, title) for kind, title, _d, _r in labels.all_labels(docs, kinds)]
 
     with tempfile.TemporaryDirectory(dir=HERE) as tmp:
