@@ -186,12 +186,16 @@ concerned, `2e8a:0005` "MicroPython" "Board in FS mode" with the RP2's
 flash unique id as its serial. What makes it a Tiny Tapeout board is the
 SDK, so the module then drives the board's raw REPL over `/dev/ttyACM*`
 (opened with `os.open` and `termios`, no pyserial needed) and asks the SDK
-what it already holds: the chip ROM it read at boot (`shuttle=`, `repo=`,
-`commit=`, present on every chip since TT05; `FPGA` on the FPGA breakout),
-the demo board it detected (`TT04/TT05`, `TT06+`, `TTDBv3 [3.2]`) and its
-own version. That interrupts whatever the board is running (at boot,
-nothing) and never resets it; every read has a deadline, and a board that
-cannot be reached stays a candidate. `--no-repl` stops at the USB tree.
+what it already holds: the copy of the chip ROM that the boot cached
+(`shuttle=`, `repo=`, `commit=`, present on every chip since TT05; `FPGA`
+on the FPGA breakout), the demo board it detected (`TT04/TT05`, `TT06+`,
+`TTDBv3 [3.2]`) and its own version. Reading the ROM afresh would drive
+the chip's pins, so the probe never does: when the boot did not read it
+(a custom `main.py`, say) the ROM is reported as not cached, with the
+reason. Asking interrupts whatever the board is running (at boot,
+nothing), never resets it and touches no pin; every read and write has a
+deadline, and a board that cannot be reached stays a candidate.
+`--no-repl` stops at the USB tree.
 
 ```
 $ rpi-hwid tinytapeout             # a Pi 4 with a TT06 dev kit on USB
@@ -358,14 +362,15 @@ when it has not been read yet.
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png" alt="Acorn CLE-215+, DNA not yet read" width="32%">
 </p>
 
-**Tiny Tapeout boards.** The shuttle is the headline, with the chip's
-long name, ASIC or FPGA breakout, and PDK under it; then the demo board as
-the SDK detected it and the revision that shipped in that kit, and the
-chip ROM's commit. The two swatches are the chip carrier's and the demo
-board's colours with "TT" in their silkscreen colour, so the right board
-is picked out of a drawer (the shuttle name stands in where a colour is
-not recorded). The QR opens the chip's page on tinytapeout.com, and the
-demo board's RP2 unique id, its USB serial, runs along the bottom.
+**Tiny Tapeout boards.** The shuttle is the headline, with ASIC or FPGA
+breakout and the PDK under it; then the demo board as the SDK detected it
+with the revision that shipped in that kit, and the chip ROM's commit. The
+two colour boxes are the chip carrier's and the demo board's colours, the
+silkscreen colour as the inner line and the colour's name beside each, so
+the right board is picked out of a drawer (an empty box marked n/a where
+the colour is not recorded). The large QR opens the chip's page on
+tinytapeout.com; the demo board's RP2 unique id, its USB serial, runs
+along the bottom with its own small QR above it.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="49%">

@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -558,77 +559,100 @@ def draw_usb(lab, dev):
 
 
 def swatch(lab, x, y, w, h, colour, silk):
-    """A board-colour rectangle with a thin keyline, carrying "TT" in its
-    silkscreen colour the way the board's own legend does."""
+    """A colour-identification box: a keyline rectangle filled with the
+    board colour, with a thin inner line in the silkscreen colour when that
+    is known; empty with "n/a" inside when the colour is not recorded."""
     c = lab.c
     px, py = lab.pt(x, y + h)
-    c.setFillColor(HexColor(colour))
-    c.setStrokeColor(HexColor("#555555"))
+    c.setStrokeColor(GREY)
     c.setLineWidth(0.4)
-    c.rect(px, py, w, h, stroke=1, fill=1)
-    if silk:
-        size = h * 0.62 / 0.72
-        lab.text(x + w / 2, y + (h - size * 0.72) / 2, "TT", SANS_BOLD, size,
-                 align="centre", color=HexColor(silk))
+    if colour:
+        c.setFillColor(HexColor(colour))
+        c.rect(px, py, w, h, stroke=1, fill=1)
+        if silk:
+            inset = 0.6 * mm
+            c.setStrokeColor(HexColor(silk))
+            c.setLineWidth(0.5)
+            c.rect(px + inset, py + inset, w - 2 * inset, h - 2 * inset, stroke=1, fill=0)
+    else:
+        c.rect(px, py, w, h, stroke=1, fill=0)
+        lab.text(x + w / 2, y + (h - CAPTION * 0.72) / 2, "n/a", SANS, CAPTION,
+                 align="centre", color=GREY)
     c.setStrokeColor(black)
     c.setFillColor(black)
 
 
 def draw_tinytapeout(lab, tt):
-    """Left: the Tiny Tapeout mark and the shuttle as the headline, the
-    chip's long name, kind and PDK under it, then the demo board revision
-    and the ROM commit as captioned rows, then a colour swatch for the chip
-    carrier and one for the demo board so the right board is picked out
-    of a drawer. Right: a QR that opens the chip's page on tinytapeout.com.
-    Bottom, full width: the demo board's RP2 unique id, the one thing on
-    the board that cannot change."""
-    grey = HexColor("#555555")
-    qr_size = 16 * mm
+    """Left: the Tiny Tapeout mark beside the shuttle as the headline, the
+    chip's kind and PDK under it, then the demo board and the ROM commit as
+    captioned rows, then a colour box each for the chip carrier and the
+    demo board (board colour, silkscreen colour as the inner line, the
+    colour's name beside it) so the right board is picked out of a drawer.
+    Right: a QR that opens the chip's page on tinytapeout.com, and a small
+    QR of the RP2 id above the foot. Bottom, full width: the demo board's
+    RP2 unique id, its USB serial, the one thing on it that cannot change,
+    set like the FPGA label's DNA."""
+    # --- right column: the chip page QR, its caption, the id's QR ---
+    qr_size = 17 * mm
     qx = LABEL_W - PAD - qr_size
     lab.qr(qx, PAD, qr_size, tt.url)
-    lab.text(qx + qr_size / 2, PAD + qr_size + 0.6 * mm, "chip page", SANS, 6,
-             align="centre", color=grey)
-
-    x, y = PAD, PAD
-    col_w = qx - 2 * mm - x
-    mark_h = 7 * mm
-    w = mark_tinytapeout(lab, x, y, mark_h)
-    tx = x + (w + 1.5 * mm if w else 0)
-    lab.fit(tx, y + 0.4 * mm, tt.headline, SANS_BOLD, 22, col_w - (tx - x))
-    y += mark_h + 1.4 * mm
-    lab.fit(x, y, tt.subtitle, SANS, 7.5, col_w)
-    y += 3.9 * mm
-    cap_x = x + 13.5 * mm
-    lab.captioned(x, cap_x, y, "demo board", tt.demoboard_text, SANS, 7.5, col_w - 13.5 * mm)
-    y += 3.7 * mm
-    if tt.commit:
-        lab.captioned(x, cap_x, y, "ROM commit", tt.commit, MONO, 7.5, col_w - 13.5 * mm)
-    else:
-        lab.captioned(x, cap_x, y, "ROM", "not read", SANS, 7.5, col_w - 13.5 * mm)
-    y += 4.3 * mm
-
-    # the swatches: board colour with its silkscreen; the shuttle name in
-    # the swatch's place when the colour is not recorded
-    sw, sh = 9 * mm, 4.2 * mm
-    sx = x
-    for cap, colour, silk in (("chip", tt.chip_colour, tt.chip_silk),
-                              ("demo board", tt.demoboard_colour, tt.demoboard_silk)):
-        if colour:
-            swatch(lab, sx, y, sw, sh, colour, silk)
-        else:
-            lab.fit(sx, y + (sh - 7 * 0.72) / 2, tt.headline, SANS_BOLD, 7, sw)
-        lab.text(sx + sw + 1 * mm, y + (sh - 6 * 0.72) / 2, cap, SANS, 6, color=grey)
-        sx += sw + 1 * mm + lab.width(cap, SANS, 6) + 3 * mm
-
-    id_size = 12
-    id_h = 6.8 * mm
-    y = LABEL_H - PAD - id_h
-    lab.text(PAD, y, "demo board RP2 unique id (USB serial)", SANS, 6, color=grey)
-    y += 6 * 0.72 + 0.5 * mm
+    lab.text(qx + qr_size / 2, PAD + qr_size + 0.4 * mm, "chip page", SANS, CAPTION,
+             align="centre", color=GREY)
+    id_size = 15
+    id_h = 6 * mm
+    id_y = LABEL_H - PAD - id_h
+    id_qr = 6.5 * mm                   # 21 modules at 0.31 mm, like the Pi serial's
     if tt.usb_serial:
-        lab.fit(PAD, y, tt.usb_serial, MONO, id_size, LABEL_W - 2 * PAD)
+        # 1.2 mm (four modules) under the caption; the id line below it is
+        # shorter than the label, so nothing runs under the code
+        lab.qr(LABEL_W - PAD - id_qr, id_y - 0.5 * mm - id_qr, id_qr, tt.usb_serial,
+               error="l")
+
+    # --- left column ---
+    x, y = PAD, PAD
+    col_w = qx - 2.5 * mm - x
+    head_size = 22
+    head_cap = head_size * 0.72
+    mark_h = 6 * mm
+    w = mark_tinytapeout(lab, x, y + (head_cap - mark_h) / 2, mark_h)
+    tx = x + (w + 1.5 * mm if w else 0)
+    lab.fit(tx, y, tt.headline, SANS_BOLD, head_size, col_w - (tx - x))
+    y += head_cap + 1.2 * mm
+    lab.text(x, y, tt.subtitle, SANS, 6.5)          # fixed size, like the Pi subtitle
+    row = 3.7 * mm
+    y += row
+    cap_w = 14 * mm
+    lab.captioned(x, x + cap_w, y, "board", tt.demoboard_text, SANS, 7.5, col_w - cap_w)
+    y += row
+    if tt.commit:
+        lab.captioned(x, x + cap_w, y, "ROM commit", tt.commit, MONO, 7.5, col_w - cap_w)
     else:
-        lab.rule(PAD, y + id_size * 0.72, LABEL_W - 2 * PAD)
+        lab.captioned(x, x + cap_w, y, "ROM", "not read", SANS, 7.5, col_w - cap_w)
+    y += row
+
+    # the colour boxes, each with its caption over its colour's name
+    sw, sh = 9 * mm, 4.5 * mm
+    line = CAPTION * 0.72 + 0.6 * mm
+    for i, (cap, colour, silk, name) in enumerate((
+            ("carrier", tt.chip_colour, tt.chip_silk, tt.chip_colour_name),
+            ("demo board", tt.demoboard_colour, tt.demoboard_silk, tt.demoboard_colour_name))):
+        sx = x + i * (col_w / 2)
+        swatch(lab, sx, y, sw, sh, colour, silk)
+        if name:
+            ty = y + (sh - 2 * line + 0.6 * mm) / 2
+            lab.text(sx + sw + 1 * mm, ty, cap, SANS, CAPTION, color=GREY)
+            lab.text(sx + sw + 1 * mm, ty + line, name, SANS, CAPTION)
+        else:
+            lab.text(sx + sw + 1 * mm, y + (sh - CAPTION * 0.72) / 2, cap, SANS, CAPTION,
+                     color=GREY)
+
+    # --- the foot: the id, caption over it, like the DNA line ---
+    cap_y = id_y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm
+    lab.text(PAD, cap_y, "%s id (USB serial)" % (tt.mcu or "RP2"), SANS, CAPTION, color=GREY)
+    if tt.usb_serial:
+        lab.fit(PAD, id_y + 0.5 * mm, tt.usb_serial, MONO, id_size, LABEL_W - 2 * PAD)
+    else:
+        lab.rule(PAD, id_y + 0.5 * mm + id_size * 0.72 + 0.3 * mm, LABEL_W - 2 * PAD)
 
 
 # --- records from probe documents --------------------------------------------
@@ -677,17 +701,20 @@ class TinyTapeoutLabel:
 
     host: str
     headline: str                    # "TT06", "FPGA", "TT"
-    subtitle: str                    # "Tiny Tapeout 6  ·  ASIC  ·  sky130"
+    subtitle: str                    # "ASIC  ·  sky130"
     url: str                         # the chip page, or the chips index
-    demoboard_text: str
+    demoboard_text: str              # "TT06+  ·  Rev 2.0.1"
     shuttle: str | None = None
     chip: str | None = None
     commit: str | None = None
     usb_serial: str | None = None
+    mcu: str | None = None           # RP2040 | RP2350
     chip_colour: str | None = None   # hex, from the table
     chip_silk: str | None = None
+    chip_colour_name: str | None = None
     demoboard_colour: str | None = None
     demoboard_silk: str | None = None
+    demoboard_colour_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -746,6 +773,19 @@ def fpga_records(docs, pinned_names=None):
     return out
 
 
+def demoboard_text(detected, version):
+    """'TT06+' and 'v2.0.1' -> 'TT06+  ·  Rev 2.0.1'; the v3 SDK's
+    'TTDBv3 [3.2]' -> 'TTDBv3  ·  Rev 3.2'; nothing known -> 'not read'."""
+    name, rev = detected or "", None
+    m = re.match(r"^(.*?)\s*\[([^\]]*)\]$", name)
+    if m:
+        name, rev = m.group(1), m.group(2)
+    if not rev and version:
+        rev = version.lstrip("vV")
+    parts = [p for p in (name, ("Rev " + rev) if rev else "") if p]
+    return "  ·  ".join(parts) if parts else "not read"
+
+
 def tinytapeout_records(docs):
     """One record per Tiny Tapeout demo board across all documents."""
     out = []
@@ -755,24 +795,25 @@ def tinytapeout_records(docs):
             if b.chip == "fpga":
                 headline, parts = "FPGA", ["FPGA breakout, no ASIC"]
             elif b.shuttle:
-                headline = tt_data.shuttle_short(b.shuttle)
-                parts = [tt_data.shuttle_title(b.shuttle), "ASIC"]
+                headline, parts = tt_data.shuttle_short(b.shuttle), ["ASIC"]
                 pdk = tt_data.shuttle_pdk(b.shuttle)
                 if pdk:
                     parts.append(pdk)
             else:
                 headline, parts = "TT", ["shuttle not read"]
-            demo = [v for v in (b.demoboard, b.demoboard_version or info["demoboard_version"])
-                    if v]
             out.append(TinyTapeoutLabel(
                 host=host, headline=headline, subtitle="  ·  ".join(parts),
                 url=info["url"] or tt_data.CHIPS_INDEX_URL,
-                demoboard_text="  ·  ".join(demo) if demo else "not read",
+                demoboard_text=demoboard_text(
+                    b.demoboard, b.demoboard_version or info["demoboard_version"]),
                 shuttle=b.shuttle, chip=b.chip, commit=b.commit, usb_serial=b.usb_serial,
+                mcu=b.mcu,
                 chip_colour=tt_data.COLOURS.get(info["chip_colour"] or ""),
                 chip_silk=tt_data.COLOURS.get(info["chip_silk"] or ""),
+                chip_colour_name=info["chip_colour"],
                 demoboard_colour=tt_data.COLOURS.get(info["demoboard_colour"] or ""),
                 demoboard_silk=tt_data.COLOURS.get(info["demoboard_silk"] or ""),
+                demoboard_colour_name=info["demoboard_colour"],
             ))
     return out
 

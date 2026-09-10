@@ -111,6 +111,7 @@ TT_HOST["verdict"]["tinytapeout"] = [
      "tty": "/dev/ttyACM0", "shuttle": "tt06", "chip": "asic",
      "repo": "TinyTapeout/tinytapeout-06", "commit": "0f5a1b2c", "demoboard": "TT06+",
      "demoboard_version": "v2.0.1", "sdk": "2.0.4", "machine": "Raspberry Pi Pico with RP2040",
+     "mcu": "RP2040",
      "chip_url": "https://tinytapeout.com/chips/tt06/",
      "how": "Tiny Tapeout SDK 2.0.4 on Raspberry Pi Pico with RP2040 (USB 1-1.2); "
             "chip ROM shuttle=tt06; demo board TT06+"},
@@ -118,16 +119,16 @@ TT_HOST["verdict"]["tinytapeout"] = [
      "tty": "/dev/ttyACM1", "shuttle": "ttihp25a", "chip": "asic",
      "repo": "TinyTapeout/tinytapeout-ihp-25a", "commit": "7b3d9e02",
      "demoboard": "TTDBv3 [3.2]", "demoboard_version": None, "sdk": "3.1.1",
-     "machine": "TinyTapeout RP2350B Core with RP2350",
+     "machine": "TinyTapeout RP2350B Core with RP2350", "mcu": "RP2350",
      "chip_url": "https://tinytapeout.com/chips/ttihp25a/",
      "how": "Tiny Tapeout SDK 3.1.1 on TinyTapeout RP2350B Core with RP2350 (USB 1-1.3); "
             "chip ROM shuttle=ttihp25a; demo board TTDBv3 [3.2]"},
 ]
 TT_HOST["verdict"]["summary"]["tinytapeout"] = [
-    {"usb_serial": "E6614C311B7A7A37", "shuttle": "tt06", "chip": "asic",
+    {"usb_serial": "E6614C311B7A7A37", "mcu": "RP2040", "shuttle": "tt06", "chip": "asic",
      "repo": "TinyTapeout/tinytapeout-06", "commit": "0f5a1b2c", "demoboard": "TT06+",
      "demoboard_version": "v2.0.1", "sdk": "2.0.4"},
-    {"usb_serial": "E66360B8A3C1D5F2", "shuttle": "ttihp25a", "chip": "asic",
+    {"usb_serial": "E66360B8A3C1D5F2", "mcu": "RP2350", "shuttle": "ttihp25a", "chip": "asic",
      "repo": "TinyTapeout/tinytapeout-ihp-25a", "commit": "7b3d9e02",
      "demoboard": "TTDBv3 [3.2]", "demoboard_version": None, "sdk": "3.1.1"},
 ]

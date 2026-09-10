@@ -42,18 +42,31 @@ def test_fpga_records_named_and_typed(docs):
 def test_tinytapeout_records(docs):
     tt06, ihp = labels.tinytapeout_records(docs)
     assert tt06.headline == "TT06"
-    assert tt06.subtitle == "Tiny Tapeout 6  ·  ASIC  ·  sky130"
+    assert tt06.subtitle == "ASIC  ·  sky130"
     assert tt06.url == "https://tinytapeout.com/chips/tt06/"
-    assert tt06.demoboard_text == "TT06+  ·  v2.0.1"
+    assert tt06.demoboard_text == "TT06+  ·  Rev 2.0.1"
     assert tt06.commit == "0f5a1b2c"
     assert tt06.usb_serial == "E6614C311B7A7A37"
+    assert tt06.mcu == "RP2040"
     assert (tt06.chip_colour, tt06.chip_silk) == ("#f28cb3", "#f8f8f8")
+    assert (tt06.chip_colour_name, tt06.demoboard_colour_name) == ("pink", "pink")
     assert (tt06.demoboard_colour, tt06.demoboard_silk) == ("#f28cb3", "#f8f8f8")
     assert ihp.headline == "TTIHP25a"
-    assert ihp.subtitle == "Tiny Tapeout IHP 25a  ·  ASIC  ·  ihp-sg13g2"
-    assert ihp.demoboard_text == "TTDBv3 [3.2]"
+    assert ihp.subtitle == "ASIC  ·  ihp-sg13g2"
+    assert ihp.demoboard_text == "TTDBv3  ·  Rev 3.2"
+    assert ihp.mcu == "RP2350"
     assert ihp.chip_colour is None
+    assert ihp.chip_colour_name is None
     assert ihp.demoboard_colour is None
+
+
+def test_demoboard_text_normalises_both_sdk_forms():
+    assert labels.demoboard_text("TT06+", "v2.0.1") == "TT06+  ·  Rev 2.0.1"
+    assert labels.demoboard_text("TTDBv3 [3.3]", None) == "TTDBv3  ·  Rev 3.3"
+    assert labels.demoboard_text("TTDBv3 [3.3]", "v9") == "TTDBv3  ·  Rev 3.3"
+    assert labels.demoboard_text("TT04/TT05", None) == "TT04/TT05"
+    assert labels.demoboard_text(None, "v1.2.1") == "Rev 1.2.1"
+    assert labels.demoboard_text(None, None) == "not read"
 
 
 def test_tinytapeout_records_without_a_rom_or_with_the_fpga_breakout():
@@ -70,12 +83,13 @@ def test_tinytapeout_records_without_a_rom_or_with_the_fpga_breakout():
     assert blank.headline == "TT"
     assert blank.subtitle == "shuttle not read"
     assert blank.demoboard_text == "TT04/TT05"
+    assert blank.mcu is None
     assert blank.commit is None
     assert blank.usb_serial is None
     # a shuttle the table has no page for falls back to the chips index
     (t35,) = labels.tinytapeout_records({"h": doc({"shuttle": "tt03p5", "chip": "asic"})})
     assert t35.url == "https://tinytapeout.com/chips/"
-    assert t35.demoboard_text == "v1.2.1"
+    assert t35.demoboard_text == "Rev 1.2.1"
     assert t35.chip_colour == "#5c2d91"
 
 
@@ -124,6 +138,7 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "00:0e:c6:82:b5:e1",                              # the dongle
         "https://tinytapeout.com/chips/tt06/",            # the chip pages
         "https://tinytapeout.com/chips/ttihp25a/",
+        "E6614C311B7A7A37", "E66360B8A3C1D5F2",           # the demo boards' RP2 ids
         # the Pi serials, as a small QR at the top of each Pi label's spine
         "d88100008543dc30", "000000004fe3e7e4", "10000000ce8e3593",
         "000000005157f671", "c36b093f773d46b8", "100000003a7e1c9b",
