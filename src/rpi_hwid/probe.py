@@ -146,7 +146,8 @@ def board_kind(model, compatible):
 
 
 NOMINAL_MEMORY = ((256, "256 MB"), (512, "512 MB"), (1024, "1 GB"), (2048, "2 GB"),
-                  (4096, "4 GB"), (8192, "8 GB"), (16384, "16 GB"))
+                  (4096, "4 GB"), (8192, "8 GB"), (16384, "16 GB"), (32768, "32 GB"),
+                  (65536, "64 GB"))
 
 
 def nominal_memory(mem_kb):
@@ -159,7 +160,7 @@ def nominal_memory(mem_kb):
     for size, name in NOMINAL_MEMORY:
         if mib <= size:
             return name
-    return "%d GB" % round(mib / 1024)
+    return "%d GB" % -(-mib // 1024)          # beyond the table: rounded up
 
 
 def mem_total_kb():

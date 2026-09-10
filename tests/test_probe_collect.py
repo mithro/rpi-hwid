@@ -190,7 +190,7 @@ def test_orange_pi_serial_falls_back_to_the_sid(opi_root):
 
 @pytest.mark.parametrize(("kb", "want"), [
     (None, None), (1015636, "1 GB"), (443212, "512 MB"), (4143120, "4 GB"),
-    (8167424, "8 GB"), (16523456, "16 GB"), (33000000, "31 GB"),
+    (8167424, "8 GB"), (16523456, "16 GB"), (31171676, "32 GB"), (70000000, "67 GB"),
 ])
 def test_nominal_memory(kb, want):
     assert probe.nominal_memory(kb) == want
