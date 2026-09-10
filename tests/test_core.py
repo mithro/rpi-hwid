@@ -10,7 +10,7 @@ import tokenize
 
 import pytest
 
-from rpi_hwid import fpga, names, probe, revision
+from rpi_hwid import boards, fpga, names, probe, revision
 from rpi_hwid.collect import load_collected, probe_source
 from rpi_hwid.model import FpgaBoard, Mac, ProbeDocument, Summary
 
@@ -82,6 +82,54 @@ def test_broadcom_macs_from_serial():
     assert revision.derived_wlan_mac("d88100008543dc30", pi5) is None
     both = [*macs, {"kind": "wlan", "mac": "x"}]
     assert revision.derived_wlan_mac("000000009bc0bdaf", both) is None
+
+
+# --- boards ---------------------------------------------------------------------
+
+
+def test_identify_pi_from_revision_and_orange_pi_from_device_tree(docs):
+    pi = boards.identify(docs["rpi5-netv2"].summary)
+    assert (pi.kind, pi.short, pi.title) == ("rpi", "Pi 5", "Raspberry Pi 5")
+    assert pi.subtitle == "4 GB  ·  Rev 1.0  ·  rev code c04170"
+    assert pi.mark == "raspberry-pi.svg"
+    assert pi.wired is True
+    assert pi.radio_derivable is False
+    zero = boards.identify(docs["rpiz-serial"].summary)
+    assert zero.wired is False
+    assert zero.radio_derivable is True
+    opi = boards.identify(docs["opi1pc-b"].summary)
+    assert (opi.kind, opi.short, opi.title) == ("opi", "Orange Pi PC", "Orange Pi PC")
+    assert opi.subtitle == "1 GB  ·  Allwinner H3  ·  xunlong,orangepi-pc"
+    assert opi.mark == "orange-pi.png"
+    assert (opi.wired, opi.radio, opi.radio_derivable) == (True, False, False)
+
+
+def test_identify_orange_pi_without_captured_details():
+    """An older document, or a Xunlong board this table has not met: the
+    title still comes off the model string and the die off the compatible."""
+    s = Summary(model="Xunlong Orange Pi Zero", serial="s", revision="",
+                power_class="undetermined",
+                compatible="xunlong,orangepi-zero allwinner,sun8i-h2-plus")
+    b = boards.identify(s)
+    assert b.title == "Orange Pi Zero"
+    assert b.subtitle == "RAM not read  ·  Allwinner H2+  ·  xunlong,orangepi-zero"
+    assert (b.wired, b.radio) == (None, None)
+    s = Summary(model="Xunlong Orange Pi 3", serial="s", revision="", power_class="undetermined",
+                compatible="xunlong,orangepi-3 allwinner,sun50i-h6-x", memory="2 GB")
+    assert boards.identify(s).subtitle == "2 GB  ·  sun50i-h6-x  ·  xunlong,orangepi-3"
+    with pytest.raises(ValueError, match="not a board this package labels"):
+        boards.identify(Summary(model="MinnowBoard Turbot", serial="s", revision="",
+                                power_class="undetermined"))
+
+
+def test_sunxi_mac_follows_uboot_rule():
+    # opi1pc-b, both captured: the one full check the fleet allows
+    assert boards.sunxi_mac("02c00181e1ce7d46") == "02:81:e1:ce:7d:46"
+    # opi1pc-a: only the MAC was captured (02:81:3c:1a:db:71); the rule says
+    # its serial ends in 3c1adb71 and, like every H3, has 0x81 in byte 3
+    assert boards.sunxi_mac("02c001813c1adb71") == "02:81:3c:1a:db:71"
+    with pytest.raises(ValueError, match="sunxi serial"):
+        boards.sunxi_mac("abcd")
 
 
 # --- probe verdict on captured evidence -------------------------------------------
@@ -263,7 +311,11 @@ def test_probe_document_from_json_skips_banner():
 
 def test_load_collected(data_dir):
     docs = load_collected(data_dir)
-    assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi-sw2-p16", "rpiz-serial", "pi-sw2-p47"}
+    assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi-sw2-p16", "rpiz-serial", "pi-sw2-p47",
+                         "opi1pc-b"}
+    assert docs["opi1pc-b"].summary.compatible == "xunlong,orangepi-pc allwinner,sun8i-h3"
+    assert docs["opi1pc-b"].summary.memory == "1 GB"
+    assert docs["opi1pc-b"].summary.revision == ""
     assert docs["rpi5-netv2"].summary.fpga[0].identity == "0x00742c4e63b9085c"
     (data_dir / "bad.json").write_text("{}")
     with pytest.raises(ValueError, match="not a probe document"):

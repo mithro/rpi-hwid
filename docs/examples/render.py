@@ -39,6 +39,7 @@ EXAMPLES = [
     ("rpi", "Pi 4", "rpi4-pmod-hat"),
     ("rpi", "Pi 3", "rpi3bplus"),
     ("rpi", "Zero", "rpi-zero-w-bonnet"),
+    ("opi", "Orange Pi PC", "orange-pi-pc"),
     ("usb", "AX88179", "usb-asix"),
 ]
 
@@ -47,7 +48,7 @@ def main() -> None:
     docs = {name: ProbeDocument.from_dict(name, raw) for name, raw in conftest.RAW.items()}
     pdf = HERE / "labels.pdf"
     labels.render(docs, pdf, outline=True)
-    kinds = {"fpga", "rpi", "usb"}
+    kinds = set(labels.KINDS)
     titles = [(kind, title) for kind, title, _d, _r in labels.all_labels(docs, kinds)]
 
     with tempfile.TemporaryDirectory(dir=HERE) as tmp:
