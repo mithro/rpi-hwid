@@ -48,9 +48,8 @@ def test_tinytapeout_records(docs):
     assert tt06.commit == "0f5a1b2c"
     assert tt06.usb_serial == "E6614C311B7A7A37"
     assert tt06.mcu == "RP2040"
-    assert (tt06.chip_colour, tt06.chip_silk) == ("#f28cb3", "#f8f8f8")
+    assert (tt06.chip_colour, tt06.demoboard_colour) == ("#f28cb3", "#f28cb3")
     assert (tt06.chip_colour_name, tt06.demoboard_colour_name) == ("pink", "pink")
-    assert (tt06.demoboard_colour, tt06.demoboard_silk) == ("#f28cb3", "#f8f8f8")
     assert ihp.headline == "TTIHP25a"
     assert ihp.subtitle == "ASIC  ·  ihp-sg13g2"
     assert ihp.demoboard_text == "TTDBv3  ·  Rev 3.2"
