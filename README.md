@@ -213,6 +213,8 @@ with a fixed-shape `summary` that everything else in the package consumes.
       "model": "Raspberry Pi Zero W Rev 1.1",
       "serial": "000000005157f671",
       "revision": "9000c1",
+      "compatible": "raspberrypi,model-zero-w brcm,bcm2835",
+      "memory": "512 MB",
       "header": ["Waveshare PoE-ETH-USB-HUB-HAT"],
       "hat_uuid": null,
       "power_class": "bonnet-poe",
@@ -229,9 +231,11 @@ with a fixed-shape `summary` that everything else in the package consumes.
 (Lists shortened.) The `summary` is the contract. `header` is what sits on the 40-pin header,
 `macs` the soldered-down interfaces (`eth` first), `usb_net` the removable
 adapters with their descriptors, `fpga` the boards the FPGA module found,
-and `hat_uuid` the EEPROM's UUID when one was read. The Pi 5-only fields
-are `null` elsewhere. Everything outside `verdict` is evidence, kept so a
-wrong verdict can be argued with.
+`hat_uuid` the EEPROM's UUID when one was read, `compatible` the device
+tree's compatible list and `memory` the fitted RAM (MemTotal rounded up to
+the size that was soldered on). The Pi 5-only fields are `null` elsewhere.
+Everything outside `verdict` is evidence, kept so a wrong verdict can be
+argued with.
 
 ## Names
 

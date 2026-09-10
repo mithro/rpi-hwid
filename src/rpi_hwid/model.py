@@ -62,12 +62,17 @@ class FpgaBoard:
 
 @dataclass(frozen=True)
 class Summary:
-    """The probe's fixed-shape verdict for one Pi."""
+    """The probe's fixed-shape verdict for one board: a Raspberry Pi, or
+    another single-board computer the probe knows (an Orange Pi PC), which
+    has no revision code, no header verdict and an undetermined power
+    class, and is told apart by ``compatible`` and ``model``."""
 
     model: str
     serial: str
     revision: str
     power_class: str
+    compatible: str = ""           # the device tree's compatible list, space-joined
+    memory: str | None = None      # the fitted RAM, "1 GB", from MemTotal
     header: tuple[str, ...] = ()
     hat_uuid: str | None = None
     fpga: tuple[FpgaBoard, ...] = ()
@@ -87,6 +92,7 @@ class Summary:
         return cls(
             model=d["model"], serial=d["serial"] or "", revision=d["revision"] or "",
             power_class=d["power_class"],
+            compatible=d.get("compatible") or "", memory=d.get("memory"),
             header=tuple(d.get("header", ())), hat_uuid=d.get("hat_uuid"),
             fpga=tuple(FpgaBoard(**b) for b in d.get("fpga", ())),
             macs=tuple(Mac(**m) for m in d.get("macs", ())),
