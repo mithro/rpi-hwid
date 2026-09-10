@@ -321,11 +321,13 @@ Every label carries only what cannot change, and every identifier that
 might otherwise be typed is also a QR code. The four layouts, cropped
 from a rendered sheet:
 
-**Raspberry Pi.** Model, memory and revision are decoded from the revision
-code, the serial runs up the left edge, the HAT band names what the probe
-found on the header (and the EEPROM UUID when there is one), and each
-soldered-down MAC gets its own QR. The layout is always the same, so a
-stack of them reads at a glance.
+**Raspberry Pi.** The MACs are what people look for, so they are the
+largest thing on the label, each with its own QR. Model, memory and
+revision are decoded from the revision code, and the HAT band names what
+the probe found on the header (and the EEPROM UUID when there is one). The
+serial is a cross-check rather than the identity anyone uses, so it runs
+up the left edge with a small QR of its own at the top. The layout is
+always the same, so a stack of them reads at a glance.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5.png" alt="Pi 5, bare header" width="49%">
@@ -371,8 +373,8 @@ demo board's RP2 unique id, its USB serial, runs along the bottom.
 </p>
 
 **USB network adapters.** The descriptors (USB version and speed, driver,
-VID:PID) and the MAC, full width with a QR, so a dongle can be matched to
-a DHCP lease from across the room.
+VID:PID) beside the MAC's QR, and the MAC itself full width along the
+foot, so a dongle can be matched to a DHCP lease from across the room.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png" alt="ASIX AX88179 USB 3.0 gigabit adapter" width="49%">
@@ -435,6 +437,13 @@ Debian package locally:
 ```
 docker run --rm -v "$PWD:/src" -w /src debian:bookworm sh packaging/ci-build.sh
 ```
+
+The repository's social preview, `docs/social-preview.png`, is regenerated
+by `uv run docs/social_preview.py` from the same fixture documents as the
+README images, so it tracks the generator. The PNG is byte-stable only for
+a given set of fonts and poppler version, so a regeneration on another
+machine may differ by a few pixels. GitHub has no API for it: after
+regenerating, upload the file by hand in Settings → Social preview.
 
 ## Origin
 
