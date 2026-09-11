@@ -674,6 +674,10 @@ def draw_tinytapeout(lab, tt):
     y += row
     if tt.commit:
         lab.captioned(x, x + cap_w, y, "ROM commit", tt.commit, MONO, 7.5, col_w - cap_w)
+    elif tt.shuttle:
+        # the ROM answered, it just holds no commit: TT03p5's carries the
+        # shuttle name and nothing else, and the FPGA breakout has no ROM
+        lab.captioned(x, x + cap_w, y, "ROM", "no commit", SANS, 7.5, col_w - cap_w)
     else:
         lab.captioned(x, x + cap_w, y, "ROM", "not read", SANS, 7.5, col_w - cap_w)
     y += row
