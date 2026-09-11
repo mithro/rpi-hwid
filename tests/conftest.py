@@ -77,18 +77,18 @@ ACORN_HOST = _doc(
     [{"kind": "eth", "mac": "98:fe:54:13:f5:75"}], [], True, True, 3000,
 )
 
-# An Orange Pi PC on Armbian trixie, from the values captured from opi1pc-b
-# on 2026-07-08: no revision code, no HAT convention, no power sensing, a
-# SoC serial from U-Boot and the eth0 MAC U-Boot derives from it.
+# The pool's Orange Pi PC, probed on pi-sw2-p22 on 2026-09-11: no revision
+# code, no HAT convention, no power sensing, a SoC serial from U-Boot and
+# the eth0 MAC U-Boot derives from it. It netboots the pool's Raspbian
+# armhf root like the Pi rigs do, so there is no Armbian release to read.
 OPI_PC = _doc(
-    "Xunlong Orange Pi PC", "02c00181e1ce7d46", None, [], "undetermined", [],
-    [{"kind": "eth", "mac": "02:81:e1:ce:7d:46"}], [], None, None, None,
+    "Xunlong Orange Pi PC", "02c000812eb7a34e", None, [], "undetermined", [],
+    [{"kind": "eth", "mac": "02:81:2e:b7:a3:4e"}], [], None, None, None,
     compatible="xunlong,orangepi-pc allwinner,sun8i-h3", memory="1 GB",
 )
-OPI_PC.update(mem_kb=1015636, sid=None, sid_serial=None, cpuinfo_serial="02c00181e1ce7d46",
-              armbian={"BOARD": "orangepipc", "BOARD_NAME": "Orange Pi PC",
-                       "BOARDFAMILY": "sun8i", "LINUXFAMILY": "sunxi",
-                       "VERSION": "26.8.0-trunk.170"})
+OPI_PC.update(mem_kb=1016504, cpuinfo_serial="02c000812eb7a34e", armbian=None,
+              sid=["0x02c00081", "0x35d04620", "0x79058814", "0x401c0a94"],
+              sid_serial="02c000812eb7a34e")
 OPI_PC["verdict"]["header"] = [
     "40-pin header not probed: no HAT ID EEPROM convention on this board"]
 
@@ -159,7 +159,7 @@ RAW = {
     "pi-sw2-p16": ARTY_HOST,
     "rpiz-serial": ZERO_BONNET,
     "pi-sw2-p47": ACORN_HOST,
-    "opi1pc-b": OPI_PC,
+    "pi-sw2-p22": OPI_PC,
     "rpi4-tt": TT_HOST,
 }
 

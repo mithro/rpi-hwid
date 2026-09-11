@@ -75,8 +75,8 @@ Other boards: the Orange Pi PC (Xunlong, Allwinner H3, Armbian)
     the probe records them and reproduces U-Boot's rule (chip-id word, then
     a CRC-32 of the other three) as a fallback and a cross-check. U-Boot
     derives eth0's MAC from the same serial: 02, the serial's fourth byte,
-    then its last four (02:81:e1:ce:7d:46 from 02c00181e1ce7d46 on
-    opi1pc-b), so the MAC is not independent evidence. RAM is MemTotal
+    then its last four (02:81:2e:b7:a3:4e from 02c000812eb7a34e on
+    pi-sw2-p22), so the MAC is not independent evidence. RAM is MemTotal
     rounded up to the fitted size, the Armbian release is
     /etc/armbian-release, and the Pi-only pokes (dtparam, vcgencmd, the ID
     bus, the I2C-1 scan, the bonnet rule) are skipped: an H3 has no PMIC,
