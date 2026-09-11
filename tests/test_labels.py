@@ -231,3 +231,22 @@ def test_a_board_with_no_label_design_is_skipped(docs, capsys):
     kinds = [k for k, _t, _d, _r in labels.all_labels(with_other, {"rpi", "opi"})]
     assert kinds == [k for k, _t, _d, _r in labels.all_labels(docs, {"rpi", "opi"})]
     assert "minnow: not a board this package labels" in capsys.readouterr().err
+
+
+def test_tt_label_tells_an_empty_rom_commit_from_an_unread_rom(docs, tmp_path):
+    """A TT03p5's chip ROM carries the shuttle name and nothing else
+    (seen on pi-sw2-p3), so the label must not claim the ROM went unread.
+    Both wordings are drawn; this checks the record reaches them."""
+    from dataclasses import replace
+
+    doc = copy.deepcopy(docs["rpi4-tt"])
+    boards = doc.summary.tinytapeout
+    doc.summary = replace(doc.summary, tinytapeout=(
+        replace(boards[0], shuttle="tt03p5", commit=None),
+        replace(boards[1], shuttle=None, commit=None),
+    ))
+    recs = labels.tinytapeout_records({"h": doc})
+    assert (recs[0].shuttle, recs[0].commit) == ("tt03p5", None)
+    assert (recs[1].shuttle, recs[1].commit) == (None, None)
+    n, _sheets = labels.render({"h": doc}, tmp_path / "tt.pdf", only=("tt",))
+    assert n == 2
