@@ -251,3 +251,28 @@ def test_tt_label_tells_an_empty_rom_commit_from_an_unread_rom(docs, tmp_path):
     assert (recs[1].shuttle, recs[1].commit) == (None, None)
     n, _sheets = labels.render({"h": doc}, tmp_path / "tt.pdf", only=("tt",))
     assert n == 2
+
+
+def test_tt_label_carries_the_shuttle_marks(docs, tmp_path, monkeypatch):
+    """The shuttle's operator and foundry marks reach the record, and a
+    mark whose artwork is missing is skipped rather than leaving a hole."""
+    from dataclasses import replace
+
+    doc = copy.deepcopy(docs["rpi4-tt"])
+    boards = doc.summary.tinytapeout
+    doc.summary = replace(doc.summary, tinytapeout=(
+        replace(boards[0], shuttle="tt06"),         # efabless on skywater
+        replace(boards[1], shuttle="ttgf26a"),      # wafer.space on globalfoundries
+    ))
+    recs = labels.tinytapeout_records({"h": doc})
+    assert recs[0].marks == ("efabless", "skywater")
+    assert recs[1].marks == ("wafer-space", "globalfoundries")
+    for name in recs[0].marks + recs[1].marks:
+        assert labels.mark_file(name), name
+
+    _drawn, full = labels.marks_widths(recs[0].marks, 3 * labels.mm)
+    _drawn, one = labels.marks_widths(("efabless", "nonesuch"), 3 * labels.mm)
+    assert 0 < one < full
+    assert labels.marks_widths(("nonesuch",), 3 * labels.mm) == ([], 0)
+    n, _sheets = labels.render({"h": doc}, tmp_path / "tt.pdf", only=("tt",))
+    assert n == 2

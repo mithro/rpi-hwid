@@ -110,7 +110,10 @@ and a line to write the DNA on when it has not been read yet.
 
 ## Tiny Tapeout boards
 
-The shuttle is the headline, with ASIC or FPGA breakout and the PDK under it; then
+The shuttle is the headline, with ASIC or FPGA breakout and the PDK under it, and
+at the right of that line the marks of whoever ran the shuttle and whose silicon
+it is — an Efabless or ChipFoundry chipIgnite run on SkyWater, a wafer.space run
+on GlobalFoundries, or IHP's own, which is both. Then
 the demo board as the SDK detected it with the revision that shipped in that kit,
 and the chip ROM's commit. Then a sample of each board, so the right one is
 picked out of a drawer: a box filled with that board's soldermask and lettered,
