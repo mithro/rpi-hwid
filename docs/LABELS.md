@@ -35,9 +35,9 @@ sheet 1 row 1 col 2  acorn  Acorn CLE-215+
 sheet 1 row 1 col 3  netv2  netv2-grove
 sheet 1 row 2 col 1  tt     TT06 E6614C311B7A7A37
 sheet 1 row 2 col 2  tt     TTIHP25a E66360B8A3C1D5F2
-sheet 1 row 2 col 3  opi    Orange Pi PC 1 GB 02c000812eb7a34e
-sheet 1 row 3 col 1  rpi    Pi 3 Model B+ 1 GB 000000004fe3e7e4
-sheet 1 row 3 col 2  rpi    Pi 4 Model B 2 GB 10000000ce8e3593
+sheet 1 row 2 col 3  rpi    Pi 3 Model B+ 1 GB 000000004fe3e7e4
+sheet 1 row 3 col 1  rpi    Pi 4 Model B 2 GB 10000000ce8e3593
+sheet 1 row 3 col 2  opi    Orange Pi PC 1 GB 02c000812eb7a34e
 sheet 1 row 3 col 3  rpi    Pi 5 1 GB c36b093f773d46b8
 sheet 1 row 4 col 1  rpi    Pi 4 Model B 4 GB 100000003a7e1c9b
 sheet 1 row 4 col 2  rpi    Pi 5 4 GB d88100008543dc30
@@ -88,7 +88,7 @@ The same layout, band for band, with the Orange Pi orange in the raspberry's box
 Title and subtitle come from the device tree instead of a revision code: model,
 fitted RAM, SoC, and the device-tree id `dt orangepi-pc`, the board's canonical id
 since Xunlong sells it by name with no part number. The HAT row is kept but reads
-`header  40-pin` — nothing to probe, and the Armbian release is left off because
+`header  40-pin` — nothing to probe, and the distribution is left off because
 it changes — and the wlan row says `no radio` on a PC or One. The SoC serial runs
 up the spine as on a Pi.
 

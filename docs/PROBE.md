@@ -82,7 +82,9 @@ serial exactly through U-Boot's CRC rule.
 
 Older `sunxi_sid` kernels read those words the other way round. The Pi-only pokes
 (`dtparam`, `vcgencmd`, the ID bus, the bus-1 scan, the bonnet rule) are skipped,
-and the Armbian release is recorded as evidence only.
+and the Armbian release, where the board has one, is recorded as evidence
+only: the fleet's Orange Pi netboots the pool's Raspbian armhf root and so
+carries none.
 
 ## FPGA boards
 
