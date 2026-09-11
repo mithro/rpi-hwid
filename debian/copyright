@@ -52,6 +52,60 @@ License: trademark
  tinytapeout.com/ttlogo.svg, the branding page's black and white SVG; see
  src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/efabless.png
+Copyright: Efabless Corporation
+License: trademark
+ The "efabless.com" wordmark, drawn only on the label of hardware made
+ through Efabless, whose chipIgnite shuttles carried Tiny Tapeout TT01 to
+ TT09, to identify it. From efabless.com's own header logo as the Internet
+ Archive captured it (Efabless ceased trading in 2025), trimmed, scaled
+ down and quantised, with the shapes and colours untouched; see
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/chipfoundry.png
+Copyright: ChipFoundry, Inc.
+License: trademark
+ The ChipFoundry chip symbol, drawn only on the label of hardware made
+ through ChipFoundry, whose chipIgnite shuttles carry Tiny Tapeout's
+ sky130 runs since TTSKY25a, to identify it. From the ChipFoundry GitHub
+ organisation avatar, the symbol half of the logo on chipfoundry.io,
+ trimmed and scaled down; see src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/wafer-space.png
+Copyright: Wafer Space
+License: trademark
+ The wafer.space rocket-and-wafer mark, drawn only on the label of
+ hardware made through wafer.space, which runs Tiny Tapeout's
+ GlobalFoundries shuttles, to identify it. From the wafer.space GitHub
+ organisation avatar, the same symbol the site serves as its favicon,
+ trimmed and scaled down; see src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/ihp.svg
+Copyright: IHP GmbH - Leibniz-Institut fuer innovative Mikroelektronik
+License: trademark
+ The IHP mark, drawn only on the label of hardware made by IHP, which
+ makes Tiny Tapeout's sg13g2 silicon, to identify it. From IHP's own
+ header logo SVG (the "ohne claim" file, without the tagline), with no
+ path touched; see src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/skywater.svg
+Copyright: SkyWater Technology, Inc.
+License: trademark
+ The SkyWater symbol, drawn only on the label of hardware made by
+ SkyWater, which makes Tiny Tapeout's sky130 silicon, to identify it. From
+ SkyWater's own header logo SVG with the wordmark paths removed and the
+ viewBox trimmed to the symbol, matching the symbol-only mark SkyWater
+ uses as its site icon; the symbol's paths are untouched. See
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/globalfoundries.svg
+Copyright: GlobalFoundries Inc.
+License: trademark
+ The GF monogram, drawn only on the label of hardware made by
+ GlobalFoundries, which makes Tiny Tapeout's gf180mcu silicon, to identify
+ it. Copied byte for byte from gf.com's own site icon SVG, GF's
+ symbol-only mark; see src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.
