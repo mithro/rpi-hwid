@@ -417,7 +417,10 @@ def test_read_repl_never_hangs():
     finally:
         os.close(slave)
         os.close(master)
-    assert r == {"error": "no raw REPL prompt (not MicroPython, or busy)"}
+    # the pty's other end is this very process, so the holder is named too
+    assert r["error"].startswith("no raw REPL prompt (not MicroPython, or busy)")
+    assert "has the port open" in r["error"]
+    assert r["holder"].endswith(f"(pid {os.getpid()})")
     assert tinytapeout.read_repl("/nonexistent/ttyACM9", timeout=1)["error"].startswith(
         "cannot open /nonexistent/ttyACM9")
     assert tinytapeout.read_repl("/dev/null", timeout=1)["error"].startswith("cannot open")
@@ -442,7 +445,7 @@ def test_read_repl_survives_termios_error_and_a_stalled_write(monkeypatch):
     finally:
         os.close(slave)
         os.close(master)
-    assert r == {"error": "timed out writing to the board"}
+    assert r["error"].startswith("timed out writing to the board")
 
 
 def test_read_repl_reports_a_traceback_and_junk(monkeypatch):

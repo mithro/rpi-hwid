@@ -591,10 +591,9 @@ def draw_usb(lab, dev):
 
 
 def swatch(lab, x, y, w, h, colour):
-    """A colour-identification box: a keyline rectangle filled with the
-    board colour; empty with "n/a" inside when the colour is not recorded.
-    (The silkscreen colour is in the table but not drawn: a white line on
-    pink is too faint at print size to identify anything.)"""
+    """One colour-identification box: a keyline rectangle filled with the
+    colour, or left empty and struck through when it is not recorded. The
+    keyline matters: a white soldermask is a white box on white stock."""
     c = lab.c
     px, py = lab.pt(x, y + h)
     c.setStrokeColor(GREY)
@@ -604,10 +603,20 @@ def swatch(lab, x, y, w, h, colour):
         c.rect(px, py, w, h, stroke=1, fill=1)
     else:
         c.rect(px, py, w, h, stroke=1, fill=0)
-        lab.text(x + w / 2, y + (h - CAPTION * 0.72) / 2, "n/a", SANS, CAPTION,
-                 align="centre", color=GREY)
+        c.line(px, py, px + w, py + h)      # struck through: nothing recorded
     c.setStrokeColor(black)
     c.setFillColor(black)
+
+
+def swatch_pair(lab, x, y, w, h, mask, silk):
+    """A board's two colours side by side: the soldermask in a wide box and
+    the silkscreen printed on it in a narrow one, in that order and in that
+    proportion, so which box is which needs no caption of its own. Returns
+    the width the pair took."""
+    mask_w = w * 0.62
+    swatch(lab, x, y, mask_w, h, mask)
+    swatch(lab, x + mask_w + 0.5 * mm, y, w - mask_w - 0.5 * mm, h, silk)
+    return w
 
 
 def draw_tinytapeout(lab, tt):
@@ -669,21 +678,23 @@ def draw_tinytapeout(lab, tt):
         lab.captioned(x, x + cap_w, y, "ROM", "not read", SANS, 7.5, col_w - cap_w)
     y += row
 
-    # the colour boxes, each with its caption over its colour's name
-    sw, sh = 9 * mm, 4.5 * mm
+    # The colours, so a board can be matched to its label across the bench:
+    # for each of the two boards, its soldermask and the silkscreen printed
+    # on it, with the caption over the two colours named in the same order.
+    sw, sh = 7.5 * mm, 4.5 * mm
     line = CAPTION * 0.72 + 0.6 * mm
-    for i, (cap, colour, name) in enumerate((
-            ("carrier", tt.chip_colour, tt.chip_colour_name),
-            ("demo board", tt.demoboard_colour, tt.demoboard_colour_name))):
+    for i, (cap, mask, silk, names) in enumerate((
+            ("carrier", tt.chip_colour, tt.chip_silk,
+             colour_names(tt.chip_colour_name, tt.chip_silk_name)),
+            ("demo board", tt.demoboard_colour, tt.demoboard_silk,
+             colour_names(tt.demoboard_colour_name, tt.demoboard_silk_name)))):
         sx = x + i * (col_w / 2)
-        swatch(lab, sx, y, sw, sh, colour)
-        if name:
-            ty = y + (sh - 2 * line + 0.6 * mm) / 2
-            lab.text(sx + sw + 1 * mm, ty, cap, SANS, CAPTION, color=GREY)
-            lab.text(sx + sw + 1 * mm, ty + line, name, SANS, CAPTION)
-        else:
-            lab.text(sx + sw + 1 * mm, y + (sh - CAPTION * 0.72) / 2, cap, SANS, CAPTION,
-                     color=GREY)
+        swatch_pair(lab, sx, y, sw, sh, mask, silk)
+        tx2 = sx + sw + 1 * mm
+        tw = col_w / 2 - sw - 1.5 * mm
+        ty = y + (sh - 2 * line + 0.6 * mm) / 2
+        lab.fit(tx2, ty, cap, SANS, CAPTION, tw, min_size=5, color=GREY)
+        lab.fit(tx2, ty + line, names, SANS, CAPTION, tw, min_size=5)
 
 
 
@@ -748,8 +759,12 @@ class TinyTapeoutLabel:
     mcu: str | None = None           # RP2040 | RP2350
     chip_colour: str | None = None   # hex, from the table
     chip_colour_name: str | None = None
+    chip_silk: str | None = None
+    chip_silk_name: str | None = None
     demoboard_colour: str | None = None
     demoboard_colour_name: str | None = None
+    demoboard_silk: str | None = None
+    demoboard_silk_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -833,6 +848,13 @@ def demoboard_text(detected, version):
     return "  ·  ".join(parts) if parts else "not read"
 
 
+def colour_names(mask, silk):
+    """The two colours of one board, in the order their boxes are drawn."""
+    if mask and silk:
+        return "%s/%s" % (mask, silk)
+    return mask or silk or "not recorded"
+
+
 def tinytapeout_records(docs):
     """One record per Tiny Tapeout demo board across all documents."""
     out = []
@@ -857,8 +879,12 @@ def tinytapeout_records(docs):
                 mcu=b.mcu,
                 chip_colour=tt_data.COLOURS.get(info["chip_colour"] or ""),
                 chip_colour_name=info["chip_colour"],
+                chip_silk=tt_data.COLOURS.get(info["chip_silk"] or ""),
+                chip_silk_name=info["chip_silk"],
                 demoboard_colour=tt_data.COLOURS.get(info["demoboard_colour"] or ""),
                 demoboard_colour_name=info["demoboard_colour"],
+                demoboard_silk=tt_data.COLOURS.get(info["demoboard_silk"] or ""),
+                demoboard_silk_name=info["demoboard_silk"],
             ))
     return out
 

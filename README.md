@@ -228,9 +228,10 @@ $ rpi-hwid tinytapeout             # a Pi 4 with a TT06 dev kit on USB
   tt     : TT06 on demo board TT06+ (Tiny Tapeout SDK 2.0.4 on Raspberry Pi Pico with RP2040 (USB 1-1.2); chip ROM shuttle=tt06; demo board TT06+)
 ```
 
-The module also carries a table of what the board cannot say: the chip carrier and
-demo board colours per shuttle, the demo board revision that shipped with each
-kit, and the chip's page on tinytapeout.com, for the label.
+The module also carries a table of what the board cannot say: the soldermask and
+silkscreen colours of both the chip carrier and the demo board for each shuttle,
+the demo board revision that shipped with each kit, and the chip's page on
+tinytapeout.com, for the label.
 
 ## Collecting a fleet
 
@@ -413,11 +414,15 @@ and a line to write the DNA on when it has not been read yet.
 
 The shuttle is the headline, with ASIC or FPGA breakout and the PDK under it; then
 the demo board as the SDK detected it with the revision that shipped in that kit,
-and the chip ROM's commit. The two colour boxes are the chip carrier's and the demo
-board's colours, named beside each, so the right board is picked out of a drawer
-(an empty box marked n/a where the colour is not recorded). The large QR opens the
-chip's page on tinytapeout.com; the demo board's RP2 unique id — its USB serial —
-runs along the foot with a small QR of its own.
+and the chip ROM's commit. Then four colour boxes, so the right board is picked
+out of a drawer: for the chip carrier and for the demo board, a wide box in the
+board's soldermask and a narrow one in the silkscreen printed on it, in that
+proportion so no caption is needed to tell them apart, with both colours named
+beside. A TT05 kit, say, is a yellow carrier lettered in black on a black demo
+board lettered in white. A box is left empty and struck through where the colour
+is not recorded. The large QR opens the chip's page on tinytapeout.com; the demo
+board's RP2 unique id — its USB serial — runs along the foot with a small QR of
+its own.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="49%">

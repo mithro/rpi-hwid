@@ -361,6 +361,26 @@ def open_tty(path):
     return fd
 
 
+def port_holder(tty):
+    """"<command> (pid N)" for a process holding `tty` open, else None.
+
+    Only processes this user owns are readable in /proc, which is the case
+    that matters: a bridge or console service running as the same user is
+    what usually has the port, and it swallows the REPL's answers so the
+    board looks mute. Anything unreadable is skipped, not guessed at.
+    """
+    for proc in glob.glob(ROOT + "/proc/[0-9]*"):
+        try:
+            for fd in glob.glob(proc + "/fd/*"):
+                if os.path.realpath(fd) != tty:
+                    continue
+                comm = read(proc + "/comm") or "?"
+                return "%s (pid %s)" % (comm, os.path.basename(proc))
+        except OSError:
+            continue
+    return None
+
+
 def raw_repl_exec(fd, code, timeout):
     """Run `code` on a MicroPython board over its raw REPL and return
     (stdout, stderr) as text; raises OSError naming the stage that failed.
@@ -393,14 +413,23 @@ def raw_repl_exec(fd, code, timeout):
 def read_repl(tty, timeout=10):
     """Ask the SDK on the board what it holds. Always returns a dict: the
     board's answer (see REPL_SNIPPET), or {"error": why}."""
+    def blamed(what):
+        """`what` went wrong, and who else has the port if anyone does."""
+        holder = port_holder(tty)
+        if holder:
+            return {"error": "%s; %s has the port open" % (what, holder), "holder": holder}
+        return {"error": str(what)}
+
     try:
         fd = open_tty(tty)
     except (OSError, termios.error) as e:      # termios.error is not an OSError
-        return {"error": "cannot open %s: %s" % (tty, e)}
+        # EBUSY here is the usual one: a bridge or console service already
+        # holds the port, often exclusively (pyserial does that by default).
+        return blamed("cannot open %s: %s" % (tty, e))
     try:
         out, err = raw_repl_exec(fd, REPL_SNIPPET, timeout)
     except OSError as e:
-        return {"error": str(e)}
+        return blamed(e)
     finally:
         try:
             os.close(fd)
