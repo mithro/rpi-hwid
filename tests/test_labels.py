@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import glob
 import shutil
 import subprocess
@@ -34,7 +35,7 @@ def test_board_record_pi5_without_radio_says_so(docs):
 
 def test_board_record_zero_has_no_wired_port(docs):
     p = labels.board_record(docs["rpiz-serial"])
-    assert p.eth_note == "no wired port on this model"
+    assert p.eth_note == "no wired port"
     assert p.macs[0] == ("eth", "00:e0:4c:36:0b:0a"), "the bonnet's port is still printed"
 
 
@@ -43,14 +44,14 @@ def test_board_record_orange_pi_pc(docs):
     assert p.kind == "opi"
     assert p.short == "Orange Pi PC"
     assert p.title == "Orange Pi PC"
-    assert p.subtitle == "1 GB  ·  Allwinner H3  ·  xunlong,orangepi-pc"
+    assert p.subtitle == "1 GB  ·  Allwinner H3  ·  dt orangepi-pc"
     assert p.mark == "orange-pi.png"
     assert p.serial == "02c00181e1ce7d46"
     assert p.macs == (("eth", "02:81:e1:ce:7d:46"),)
-    assert p.wlan_note == "no radio on this model"
+    assert p.wlan_note == "no radio"
     assert p.eth_note is None
     assert p.header == ()
-    assert p.header_note == "40-pin, not probed"
+    assert p.header_note == "40-pin"
     assert p.hat_uuid is None
 
 
@@ -217,3 +218,16 @@ def test_awkward_records_still_fit(docs, tmp_path, monkeypatch):
     size = lab.fit(0, 0, "x" * 200, labels.SANS, 8, 30 * labels.mm)
     assert size == 5.5  # stopped at the floor, then elided
     assert lab.width("x" * 200, labels.SANS, 5.5) > 30 * labels.mm
+
+
+def test_a_board_with_no_label_design_is_skipped(docs, capsys):
+    """A document from a board this package has no label for (the probe's
+    "other") is skipped with a note, not fatal to the whole run."""
+    from dataclasses import replace
+
+    doc = copy.deepcopy(docs["opi1pc-b"])
+    doc.summary = replace(doc.summary, model="MinnowBoard Turbot", compatible="")
+    with_other = dict(docs, minnow=doc)
+    kinds = [k for k, _t, _d, _r in labels.all_labels(with_other, {"rpi", "opi"})]
+    assert kinds == [k for k, _t, _d, _r in labels.all_labels(docs, {"rpi", "opi"})]
+    assert "minnow: not a board this package labels" in capsys.readouterr().err

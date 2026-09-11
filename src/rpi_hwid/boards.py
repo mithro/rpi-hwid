@@ -31,9 +31,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from rpi_hwid import probe
 from rpi_hwid.revision import decode_revision
 
+# The probe is annotation-free (it has to run on a Pi's python 3.5), so its
+# classifier is bound to a typed name once here rather than called untyped.
+_probe_board_kind: Callable[[str, list[str]], str] = probe.board_kind
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from rpi_hwid.model import Summary
 
 # SoC names from the last entry of the device tree's compatible list.
@@ -73,17 +80,17 @@ class BoardIdentity:
 
 
 def board_kind(s: Summary) -> str:
-    compat = s.compatible.split()
-    if any(c.startswith("raspberrypi,") for c in compat) or s.model.startswith("Raspberry Pi"):
-        return "rpi"
-    if any(c.startswith("xunlong,") for c in compat) or "Orange Pi" in s.model:
-        return "opi"
-    raise ValueError(f"not a board this package labels: {s.model!r} ({s.compatible!r})")
+    """``rpi``, ``opi`` or ``other``, from the probe's own classifier, so
+    the two sides of the wire can never disagree about what a board is."""
+    return _probe_board_kind(s.model, s.compatible.split())
 
 
-def identify(s: Summary) -> BoardIdentity:
-    """The label header for one document's summary."""
+def identify(s: Summary) -> BoardIdentity | None:
+    """The label header for one document's summary, or None for a board
+    this package has no label design for (the probe's ``other``)."""
     kind = board_kind(s)
+    if kind == "other":
+        return None
     if kind == "rpi":
         rev = decode_revision(s.revision)
         return BoardIdentity(
@@ -100,7 +107,10 @@ def identify(s: Summary) -> BoardIdentity:
         soc = compat[-1].split(",", 1)[-1]        # "sun8i-h3": still says which die
     title = s.model.removeprefix(MAKER_PREFIX[kind]) or board
     memory = s.memory or "RAM not read"
-    parts = [memory] + ([soc] if soc else []) + ([board] if board else [])
+    # the device-tree id, without its vendor prefix and said to be one:
+    # "xunlong,orangepi-pc" pasted raw into the subtitle reads as debris
+    dt = ("dt " + board.split(",", 1)[-1]) if board else ""
+    parts = [memory] + ([soc] if soc else []) + ([dt] if dt else [])
     wired, radio = ORANGE_PI_PORTS.get(board, (None, None))
     return BoardIdentity(
         kind=kind, short=title, title=title, subtitle="  ·  ".join(parts),

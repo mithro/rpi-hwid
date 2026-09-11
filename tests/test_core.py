@@ -100,7 +100,7 @@ def test_identify_pi_from_revision_and_orange_pi_from_device_tree(docs):
     assert zero.radio_derivable is True
     opi = boards.identify(docs["opi1pc-b"].summary)
     assert (opi.kind, opi.short, opi.title) == ("opi", "Orange Pi PC", "Orange Pi PC")
-    assert opi.subtitle == "1 GB  ·  Allwinner H3  ·  xunlong,orangepi-pc"
+    assert opi.subtitle == "1 GB  ·  Allwinner H3  ·  dt orangepi-pc"
     assert opi.mark == "orange-pi.png"
     assert (opi.wired, opi.radio, opi.radio_derivable) == (True, False, False)
 
@@ -113,14 +113,17 @@ def test_identify_orange_pi_without_captured_details():
                 compatible="xunlong,orangepi-zero allwinner,sun8i-h2-plus")
     b = boards.identify(s)
     assert b.title == "Orange Pi Zero"
-    assert b.subtitle == "RAM not read  ·  Allwinner H2+  ·  xunlong,orangepi-zero"
+    assert b.subtitle == "RAM not read  ·  Allwinner H2+  ·  dt orangepi-zero"
     assert (b.wired, b.radio) == (None, None)
     s = Summary(model="Xunlong Orange Pi 3", serial="s", revision="", power_class="undetermined",
                 compatible="xunlong,orangepi-3 allwinner,sun50i-h6-x", memory="2 GB")
-    assert boards.identify(s).subtitle == "2 GB  ·  sun50i-h6-x  ·  xunlong,orangepi-3"
-    with pytest.raises(ValueError, match="not a board this package labels"):
-        boards.identify(Summary(model="MinnowBoard Turbot", serial="s", revision="",
-                                power_class="undetermined"))
+    assert boards.identify(s).subtitle == "2 GB  ·  sun50i-h6-x  ·  dt orangepi-3"
+    # a board with no label design of its own: identified as None, so the
+    # label run skips it rather than dying on it
+    other = Summary(model="MinnowBoard Turbot", serial="s", revision="",
+                    power_class="undetermined")
+    assert boards.board_kind(other) == "other"
+    assert boards.identify(other) is None
 
 
 def test_sunxi_mac_follows_uboot_rule():

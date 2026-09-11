@@ -161,11 +161,18 @@ $ rpi-hwid probe
 Xunlong Orange Pi PC  serial 02c00181e1ce7d46
   header : 40-pin header not probed: no HAT ID EEPROM convention on this board
   signal : device tree: compatible xunlong,orangepi-pc allwinner,sun8i-h3; 1 GB (MemTotal 1015636 kB)
-  signal : Allwinner SID 0x02c00181 0x… -> serial 02c00181e1ce7d46
   signal : Armbian 26.8.0-trunk.170 on board id orangepipc (sunxi)
   power  : no power sensing on this board: nothing on it reports its supply
   onboard: eth    02:81:e1:ce:7d:46  dwmac-sun8i
 ```
+
+That block is composed from values captured off the fleet's own boards,
+not pasted from a live run: both Orange Pis were off the network when this
+was written. The serial comes from the device tree, which is where U-Boot
+puts it. The fallback that rebuilds it from the SoC's SID e-fuses has not
+been run on hardware, and older `sunxi_sid` kernels read those words the
+other way round, so on a board whose device tree carries no serial at all
+the fallback could be wrong with nothing to contradict it.
 
 The board is told from the device tree's `compatible` list, and its
 `serial` is the SoC's: U-Boot builds `serial#` from the Allwinner SID
@@ -391,12 +398,12 @@ disabled radio is stated as such.
 
 **Orange Pi.** The same layout, band for band, with the Orange Pi orange
 in the raspberry's box: the title and subtitle come from the device tree
-instead of a revision code (model, fitted RAM, SoC, and the
-`xunlong,orangepi-pc` compatible string, which is the board's canonical
-id since Xunlong sells it by name with no part number), the HAT row is
-kept but reads `header 40-pin, not probed` in grey (there is no HAT ID
+instead of a revision code (model, fitted RAM, SoC, and the device-tree
+id `dt orangepi-pc`, which is the board's canonical id since Xunlong
+sells it by name with no part number), the HAT row is
+kept but reads `header  40-pin` (there is no HAT ID
 EEPROM convention to probe, and the Armbian release is left off because
-it changes), and the wlan row says `no radio on this model` on a PC or
+it changes), and the wlan row says `no radio` on a PC or
 One. The SoC serial runs up the spine as on a Pi.
 
 <p>

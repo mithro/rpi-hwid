@@ -80,6 +80,9 @@ SANS, SANS_BOLD, MONO, MONO_REGULAR = "Helvetica", "Helvetica-Bold", "Courier-Bo
 # dither into dots on a laser printer, light enough to step back from the
 # black values it labels.
 GREY = HexColor("#555555")
+# A value the probe could not read, said in words: darker than the caption
+# beside it, so the row reads as a value in grey and not as a second caption.
+NOTE = HexColor("#444444")
 CAPTION = 6                # caption size, points, everywhere
 
 
@@ -504,7 +507,7 @@ def draw_board(lab, b):
     if b.header:
         lab.captioned(x, tx, y, "HAT", "; ".join(b.header), SANS, 7, col_w)
     elif b.header_note:
-        lab.captioned(x, tx, y, "header", b.header_note, SANS, 7, col_w, color=GREY)
+        lab.captioned(x, tx, y, "header", b.header_note, SANS, 7, col_w)
     else:
         lab.captioned(x, tx, y, "HAT", "none", SANS, 7, col_w)
     y += 3.2 * mm
@@ -527,7 +530,7 @@ def draw_board(lab, b):
     for kind in ("eth", "wlan"):
         mac = macs[kind]
         text, font, size, colour = ((mac, MONO, mac_size, black) if mac
-                                    else (reasons[kind], SANS, 8, GREY))
+                                    else (reasons[kind], SANS, 8, NOTE))
         size = lab.fitted_size(text, font, size, col_w)
         cy = y + 0.5 * mm + (qr - block) / 2
         lab.text(tx, cy, kind + " MAC", SANS, CAPTION, color=GREY)
@@ -768,6 +771,8 @@ def board_record(doc):
     cannot be derived and so was disabled when the probe ran."""
     s = doc.summary
     ident = boards.identify(s)
+    if ident is None:                 # not a board this package labels
+        return None
     macs = [(m.kind, m.mac) for m in s.macs if m.kind in ("eth", "wlan")]
     wlan_note = None
     if not any(k == "wlan" for k, _ in macs):
@@ -775,7 +780,7 @@ def board_record(doc):
         if derived:
             macs.append(("wlan", derived))
         elif ident.radio is False:
-            wlan_note = "no radio on this model"
+            wlan_note = "no radio"
         elif ident.kind == "rpi" and not ident.radio_derivable:
             wlan_note = "radio disabled, not readable"
     order = {"eth": 0, "wlan": 1}
@@ -784,8 +789,8 @@ def board_record(doc):
         kind=ident.kind, short=ident.short, title=ident.title, subtitle=ident.subtitle,
         mark=ident.mark, serial=s.serial, memory=ident.memory, macs=tuple(macs),
         header=tuple(s.header), hat_uuid=s.hat_uuid,
-        header_note=None if ident.kind == "rpi" else "40-pin, not probed",
-        eth_note="no wired port on this model" if ident.wired is False else None,
+        header_note=None if ident.kind == "rpi" else "40-pin",
+        eth_note="no wired port" if ident.wired is False else None,
         wlan_note=wlan_note,
     )
 
@@ -888,6 +893,9 @@ def all_labels(docs, only, pinned_names=None):
     if only & {"rpi", "opi"}:
         for host in sorted(docs):
             b = board_record(docs[host])
+            if b is None:
+                print("%s: not a board this package labels, skipped" % host, file=sys.stderr)
+                continue
             if b.kind in only:
                 yield b.kind, f"{b.short} {b.memory} {b.serial}", draw_board, b
     if "usb" in only:

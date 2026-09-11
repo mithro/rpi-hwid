@@ -160,7 +160,10 @@ def nominal_memory(mem_kb):
     for size, name in NOMINAL_MEMORY:
         if mib <= size:
             return name
-    return "%d GB" % -(-mib // 1024)          # beyond the table: rounded up
+    size = NOMINAL_MEMORY[-1][0]             # beyond the table: the next
+    while size < mib:                        # power of two that fits it
+        size *= 2
+    return "%d GB" % (size // 1024)
 
 
 def mem_total_kb():
@@ -198,12 +201,18 @@ def sunxi_sid():
 
 
 def sunxi_serial(sid):
-    """U-Boot's serial# for a sun8i board from its SID words: the chip-id
-    word, then a CRC-32 of words 1-3 (board/sunxi/board.c,
-    setup_environment; the low 24 bits are forced non-zero because they
-    also become the MAC's NIC bytes). The same string U-Boot writes to the
-    device tree's /serial-number."""
+    """U-Boot's serial# from an Allwinner SID's words: the chip-id word,
+    then a CRC-32 of words 1-3, with the low 24 bits forced non-zero
+    because they also become the MAC's NIC bytes. H3 and later; the CRC is
+    skipped on sun4i/5i/6i/7i and on the A23 and A33, which are sun8i too.
+    (board/sunxi/board.c: get_unique_sid in current U-Boot,
+    setup_environment in older trees.) The same string U-Boot writes to
+    the device tree's /serial-number -- so this stands in only when that
+    property is missing. None when the chip-id word is zero, which is what
+    a board whose U-Boot sets no serial at all reads as."""
     words = [int(w, 16) for w in sid]
+    if not words[0]:
+        return None
     tail = zlib.crc32(struct.pack("<3I", *words[1:4])) & 0xffffffff
     if tail & 0xffffff == 0:
         tail |= 0x800000
@@ -268,6 +277,12 @@ def id_bus_scan():
 # for other Synopsys DWMAC platforms), the onboard SDIO radio (brcmfmac),
 # and the 3B+'s LAN7800, which is on an internal USB bus but cannot be
 # unplugged.
+# Soldered-down wired ports: the Pi's own controllers (macb on a Pi 5,
+# bcmgenet on a Pi 4, the 3B+'s LAN7800), the Allwinner H3's dwmac-sun8i,
+# and stmmaceth, the name the generic DesignWare MAC platform driver
+# registers under (drivers/net/ethernet/stmicro/stmmac) on the sunxi
+# boards whose device tree does not bind the sun8i glue -- read from the
+# kernel source, not from a board here.
 SOC_ETHERNET_DRIVERS = ("macb", "bcmgenet", "lan78xx", "dwmac-sun8i", "stmmaceth")
 ONBOARD_DRIVERS = SOC_ETHERNET_DRIVERS + ("brcmfmac",)
 
