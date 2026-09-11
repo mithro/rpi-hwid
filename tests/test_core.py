@@ -368,6 +368,31 @@ def test_shuttle_table_and_names():
         assert row[5] is None or row[5].startswith("https://")
 
 
+def test_shuttle_marks_name_the_operator_then_the_foundry():
+    # one of each kind: chipIgnite under Efabless, then under ChipFoundry,
+    # IHP's own shuttles (operator and foundry are the same mark), and
+    # wafer.space's GlobalFoundries runs
+    assert tinytapeout.shuttle_marks("tt06") == ("efabless", "skywater")
+    assert tinytapeout.shuttle_marks("ttsky25b") == ("chipfoundry", "skywater")
+    assert tinytapeout.shuttle_marks("ttihp25a") == ("ihp",)
+    assert tinytapeout.shuttle_marks("ttgf26a") == ("wafer-space", "globalfoundries")
+    # ttcad25a went through neither: a Cadence shuttle, so the foundry only
+    assert tinytapeout.shuttle_marks("ttcad25a") == ("skywater",)
+    assert tinytapeout.shuttle_marks("TTSKY26C") == ("chipfoundry", "skywater")
+    # an unknown shuttle (and no shuttle at all) yields nothing, never raises
+    assert tinytapeout.shuttle_marks("ttxyz99z") == ()
+    assert tinytapeout.shuttle_marks("") == ()
+    assert tinytapeout.shuttle_marks(None) == ()
+    # tt10 was cancelled: no silicon, nothing to mark
+    assert tinytapeout.shuttle_marks("tt10") == ()
+    # the two tables describe the same shuttles, and every mark is shipped
+    assert set(tinytapeout.SHUTTLE_MARKS) == set(tinytapeout.SHUTTLES)
+    artwork = pathlib.Path(tinytapeout.__file__).parent / "artwork"
+    for marks in tinytapeout.SHUTTLE_MARKS.values():
+        for mark in marks:
+            assert list(artwork.glob(mark + ".*")), mark
+
+
 # --- collector --------------------------------------------------------------------------
 
 

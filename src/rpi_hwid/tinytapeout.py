@@ -134,6 +134,82 @@ SHUTTLES = {
 # rest are as the chips list names them.
 PDK = {"": "sky130", "sky": "sky130", "ihp": "ihp-sg13g2", "gf": "gf180mcu", "cad": "sky130"}
 
+# shuttle -> the marks that apply to it, as artwork file stems (see
+# artwork/README.md): the shuttle operator that ran the shuttle first, then
+# the foundry whose silicon it is. One name where the operator *is* the
+# foundry (IHP runs its own shuttles), and an empty tuple where there is
+# nothing to draw.
+#
+# Established 2026-09-11 from the "Shuttle information"/"Launch stats" on
+# each chip's page under tinytapeout.com/chips/, cross-checked against the
+# tapeout tag on each shuttle's repo under github.com/TinyTapeout:
+#
+#   tt01-tt09, tt03p5  "Submitted to Efabless <code> chipIgnite shuttle
+#                      using Skywater 130nm open source PDK" (tt01 is the
+#                      earlier "Efabless ... MPW7 shuttle"); tt03p5 has no
+#                      chip page, and its repo's only tag is
+#                      "tapeout-2306q", an Efabless shuttle code of the
+#                      same 2211Q/2304C form as its neighbours.
+#   ttsky25a onwards   "Submitted to ChipFoundry CI#### shuttle using the
+#                      SkyWater 130nm open source PDK"; ttsky25a's page
+#                      adds "(formerly CC2509)" and its repo is tagged
+#                      "tapeout-cc2509".
+#   ttihp*             "Submitted to IHP using sg13g2 130nm open source
+#                      PDK" -- IHP both ran the shuttle and made the wafer.
+#   ttgf*              "Submitted to wafer.space using gf180mcuD 180nm open
+#                      source PDK" (repos tagged "tapeout-ws####"):
+#                      wafer.space ran the shuttle, GlobalFoundries made
+#                      the silicon.
+#
+# The Efabless -> ChipFoundry changeover: Efabless ceased trading at the
+# end of March 2025, unable to close a funding round, taking chipIgnite
+# with it (eeNews Europe, "Tiny Tapeout hit as eFabless closes", and
+# Hackster, "Open Source Silicon Project Tiny Tapeout Hits Trouble as
+# Efabless Shuts Its Doors", both 2025-03; ChipFoundry then continued
+# chipIgnite and bought the Efabless assets, announced 2025-09-03,
+# globenewswire.com/news-release/2025/09/03/3143962). Tiny Tapeout's own
+# pages draw the line in the same place: every shuttle up to and including
+# tt09 (submissions closed 2024-11-10) says Efabless, and ttsky25a
+# (launched 2025-06-27) and everything after it says ChipFoundry. No Tiny
+# Tapeout sky130 shuttle sits between the two, so no shuttle is ambiguous
+# about which of the two ran it.
+SHUTTLE_MARKS = {
+    "tt01": ("efabless", "skywater"),
+    "tt02": ("efabless", "skywater"),
+    "tt03": ("efabless", "skywater"),
+    "tt03p5": ("efabless", "skywater"),
+    "tt04": ("efabless", "skywater"),
+    "tt05": ("efabless", "skywater"),
+    "tt06": ("efabless", "skywater"),
+    "tt07": ("efabless", "skywater"),
+    "tt08": ("efabless", "skywater"),
+    "tt09": ("efabless", "skywater"),
+    "tt10": (),                        # cancelled: no shuttle, no silicon
+    # ttcad25a is the odd one out: it is sky130, but it did not go through
+    # chipIgnite at all. Its repo's only tag is "tapeout-cadence-2506" and
+    # its GDS is in TinyTapeout/tapeout-cadence-june-2025 ("Tiny Tapeout
+    # chips on Cadence June 2025 Tapeout on SKY130 130nm process"), a
+    # Cadence-run shuttle; its chip page carries no shuttle information at
+    # all. Neither Efabless nor ChipFoundry ran it, and there is no Cadence
+    # mark here, so it gets the foundry only.
+    "ttcad25a": ("skywater",),
+    "ttsky25a": ("chipfoundry", "skywater"),
+    "ttsky25b": ("chipfoundry", "skywater"),
+    "ttsky26a": ("chipfoundry", "skywater"),
+    "ttsky26b": ("chipfoundry", "skywater"),
+    "ttsky26c": ("chipfoundry", "skywater"),
+    "ttihp0p2": ("ihp",),
+    "ttihp0p4": ("ihp",),
+    "ttihp25a": ("ihp",),
+    "ttihp25b": ("ihp",),
+    "ttihp26a": ("ihp",),
+    "ttihp26b": ("ihp",),
+    "ttgf0p2": ("wafer-space", "globalfoundries"),
+    "ttgf0p3": ("wafer-space", "globalfoundries"),
+    "ttgf26a": ("wafer-space", "globalfoundries"),
+    "ttgf26b": ("wafer-space", "globalfoundries"),
+}
+
 
 def shuttle_info(shuttle):
     """The table row for `shuttle` as a dict, all None for a shuttle the
@@ -185,6 +261,17 @@ def shuttle_short(shuttle):
 def shuttle_pdk(shuttle):
     parts = _split_shuttle(shuttle)
     return PDK.get(parts[0]) if parts else None
+
+
+def shuttle_marks(shuttle):
+    """The maker marks for `shuttle`, as artwork file stems: the shuttle
+    operator that ran it first, then the foundry whose silicon it is
+    ('tt06' -> ('efabless', 'skywater'), 'ttgf26a' -> ('wafer-space',
+    'globalfoundries')). One name where the operator is the foundry
+    ('ttihp25a' -> ('ihp',)), and an empty tuple for a shuttle the table
+    does not know, so a caller can draw what it gets without a special
+    case."""
+    return SHUTTLE_MARKS.get((shuttle or "").lower(), ())
 
 
 def read(path):
