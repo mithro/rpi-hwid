@@ -34,9 +34,11 @@ EXAMPLES = [
     ("netv2", "netv2-grove", "netv2"),
     ("arty", "arty-hawk", "arty"),
     ("acorn", "Acorn", "acorn"),
+    ("tt", "TT06", "tinytapeout"),
+    ("tt", "TTIHP25a", "tinytapeout-ihp"),
     ("rpi", "Pi 5 4 GB", "rpi5"),
     ("rpi", "Pi 5 1 GB", "rpi5-poe-hat"),
-    ("rpi", "Pi 4", "rpi4-pmod-hat"),
+    ("rpi", "10000000ce8e3593", "rpi4-pmod-hat"),
     ("rpi", "Pi 3", "rpi3bplus"),
     ("rpi", "Zero", "rpi-zero-w-bonnet"),
     ("opi", "Orange Pi PC", "orange-pi-pc"),
@@ -56,7 +58,10 @@ def main() -> None:
         page = Image.open(next(Path(tmp).glob("page*.png")))
         page_h = page.height
         for kind, needle, name in EXAMPLES:
-            index = next(i for i, (k, t) in enumerate(titles) if k == kind and needle in t)
+            hits = [i for i, (k, t) in enumerate(titles) if k == kind and needle in t]
+            if len(hits) != 1:
+                raise SystemExit(f"{len(hits)} fixture labels match {kind} {needle!r}, want one")
+            index = hits[0]
             x, y = labels.label_origin(index)
             left, bottom = x * PX, page_h - y * PX
             top, right = bottom - labels.LABEL_H * PX, left + labels.LABEL_W * PX

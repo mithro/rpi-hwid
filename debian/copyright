@@ -43,6 +43,14 @@ License: trademark
  which Digilent made, to identify it. From the Digilent GitHub organisation
  avatar; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/tinytapeout.svg
+Copyright: Tiny Tapeout LTD
+License: trademark
+ The circular Tiny Tapeout mark, drawn only on the label of a Tiny Tapeout
+ demo board, which Tiny Tapeout made, to identify it. From
+ tinytapeout.com/ttlogo.svg, the branding page's black and white SVG; see
+ src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.

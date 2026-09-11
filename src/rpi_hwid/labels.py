@@ -12,21 +12,23 @@ print.
 Every label carries only what cannot change: a Pi's revision code, serial
 and soldered-down MACs and the HAT it wears; an Orange Pi's SoC serial,
 MAC, SoC and device-tree id; an FPGA board's DNA or Digilent serial and the
-name derived from it; a USB adapter's own MAC. Nothing about where a thing
-is plugged in or what it is called this month. Each identifier someone
-might need to type is also a QR code, in a monospace face with a slashed
-zero where one is installed.
+name derived from it; a USB adapter's own MAC; a Tiny Tapeout board's
+shuttle, the chip ROM's commit and the demo board's RP2 unique id. Nothing
+about where a thing is plugged in or what it is called this month. Each
+identifier someone might need to type is also a QR code, in a monospace
+face with a slashed zero where one is installed.
 
 Records come straight from ``rpi-hwid collect`` output (or ``probe --json``
 files): one board label per document (a Raspberry Pi or an Orange Pi, the
 same layout with the maker's mark and the model decoding swapped, see
-``rpi_hwid.boards``), one FPGA label per board the probe found, one adapter
-label per removable USB network adapter. Artwork: the package ships the
-Raspberry Pi raspberry, the Orange Pi orange, the Alphamax and Digilent
-marks and the public-domain USB trident (see artwork/README.md, each mark
-drawn only on its owner's hardware); ``--artwork DIR`` overrides any of
-them and may add ``netv2.svg``, and a label whose mark is missing sets the
-maker's name in type (or, on a board label, leaves the mark's box empty).
+``rpi_hwid.boards``), one FPGA label per board the probe found, one Tiny
+Tapeout label per demo board, one adapter label per removable USB network
+adapter. Artwork: the package ships the Raspberry Pi raspberry, the Orange
+Pi orange, the Alphamax, Digilent and Tiny Tapeout marks and the
+public-domain USB trident (see artwork/README.md, each mark drawn only on
+its owner's hardware); ``--artwork DIR`` overrides any of them and may add
+``netv2.svg``, and a label whose mark is missing sets the maker's name in
+type (or, on a board label, leaves the mark's box empty).
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +51,7 @@ from reportlab.pdfgen import canvas
 
 from rpi_hwid import boards
 from rpi_hwid import names as naming
+from rpi_hwid import tinytapeout as tt_data
 from rpi_hwid.collect import load_collected
 from rpi_hwid.revision import derived_wlan_mac
 
@@ -317,6 +321,14 @@ def mark_usb(lab, x, y, height):
     return lab.svg(artwork("usb.svg"), x, y, height)
 
 
+def mark_tinytapeout(lab, x, y, height):
+    """The circular Tiny Tapeout mark (tinytapeout.svg, shipped; Tiny
+    Tapeout's mark, see artwork/README.md); nothing if the file has been
+    removed."""
+    path = artwork("tinytapeout.svg")
+    return lab.svg(path, x, y, height) if path else 0
+
+
 def mark_wifi(lab, x, y, height):
     """Three arcs over a dot, the universal radio glyph."""
     c = lab.c
@@ -370,7 +382,7 @@ def mark_rj45(lab, x, y, height):
     return w
 
 
-# --- the three label designs --------------------------------------------------
+# --- the four label designs ---------------------------------------------------
 
 def draw_fpga(lab, board):
     """One design for every Artix-7 board. Left: a QR of the board's
@@ -575,6 +587,103 @@ def draw_usb(lab, dev):
     lab.fit(PAD, y + CAPTION * 0.72 + cap_gap, dev.mac, MONO, mac_size, LABEL_W - 2 * PAD)
 
 
+def swatch(lab, x, y, w, h, colour):
+    """A colour-identification box: a keyline rectangle filled with the
+    board colour; empty with "n/a" inside when the colour is not recorded.
+    (The silkscreen colour is in the table but not drawn: a white line on
+    pink is too faint at print size to identify anything.)"""
+    c = lab.c
+    px, py = lab.pt(x, y + h)
+    c.setStrokeColor(GREY)
+    c.setLineWidth(0.4)
+    if colour:
+        c.setFillColor(HexColor(colour))
+        c.rect(px, py, w, h, stroke=1, fill=1)
+    else:
+        c.rect(px, py, w, h, stroke=1, fill=0)
+        lab.text(x + w / 2, y + (h - CAPTION * 0.72) / 2, "n/a", SANS, CAPTION,
+                 align="centre", color=GREY)
+    c.setStrokeColor(black)
+    c.setFillColor(black)
+
+
+def draw_tinytapeout(lab, tt):
+    """Left: the Tiny Tapeout mark beside the shuttle as the headline, the
+    chip's kind and PDK under it, then the demo board and the ROM commit as
+    captioned rows, then a colour box each for the chip carrier and the
+    demo board (board colour, the colour's name beside it) so the right
+    board is picked out of a drawer. Right: a QR that opens the chip's
+    page on tinytapeout.com. Foot: the demo board's RP2 unique id, its USB
+    serial, the one thing on it that cannot change, set like the FPGA
+    label's DNA, with its own small QR at the right end of the row."""
+    # --- the chip page QR, its caption ---
+    qr_size = 17 * mm
+    qx = LABEL_W - PAD - qr_size
+    lab.qr(qx, PAD, qr_size, tt.url)
+    lab.text(qx + qr_size / 2, PAD + qr_size + 0.4 * mm, "chip page", SANS, CAPTION,
+             align="centre", color=GREY)
+
+    # --- the foot: the id, caption over it, its QR at the row's right end ---
+    # The QR sits in the die-cut corner (PAD = 2.5 mm quiet zone below and
+    # right), the id is fitted 2 mm short of it, and the "id" caption is
+    # the only thing near it.
+    id_size = 15
+    id_h = 6 * mm
+    id_y = LABEL_H - PAD - id_h
+    id_qr = 6.5 * mm                   # 21 modules at 0.31 mm, like the Pi serial's
+    id_w = LABEL_W - 2 * PAD
+    cap_y = id_y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm
+    lab.text(PAD, cap_y, "%s id (USB serial)" % (tt.mcu or "RP2"), SANS, CAPTION, color=GREY)
+    if tt.usb_serial:
+        qr_x, qr_y = LABEL_W - PAD - id_qr, LABEL_H - PAD - id_qr
+        lab.qr(qr_x, qr_y, id_qr, tt.usb_serial, error="l")
+        lab.text(qr_x + id_qr / 2, qr_y - 0.4 * mm - CAPTION * 0.72, "id", SANS, CAPTION,
+                 align="centre", color=GREY)
+        id_w -= id_qr + 2 * mm
+        lab.fit(PAD, id_y + 0.5 * mm, tt.usb_serial, MONO, id_size, id_w)
+    else:
+        lab.rule(PAD, id_y + 0.5 * mm + id_size * 0.72 + 0.3 * mm, id_w)
+
+    # --- left column, 3 mm clear of the chip page QR ---
+    x, y = PAD, PAD
+    col_w = qx - 3 * mm - x
+    head_size = 22
+    head_cap = head_size * 0.72
+    mark_h = 6 * mm
+    w = mark_tinytapeout(lab, x, y + (head_cap - mark_h) / 2, mark_h)
+    tx = x + (w + 1.5 * mm if w else 0)
+    lab.fit(tx, y, tt.headline, SANS_BOLD, head_size, col_w - (tx - x))
+    y += head_cap + 1.2 * mm
+    lab.text(x, y, tt.subtitle, SANS, 6.5)          # fixed size, like the Pi subtitle
+    row = 3.7 * mm
+    y += row
+    cap_w = 14 * mm
+    lab.captioned(x, x + cap_w, y, "board", tt.demoboard_text, SANS, 7.5, col_w - cap_w)
+    y += row
+    if tt.commit:
+        lab.captioned(x, x + cap_w, y, "ROM commit", tt.commit, MONO, 7.5, col_w - cap_w)
+    else:
+        lab.captioned(x, x + cap_w, y, "ROM", "not read", SANS, 7.5, col_w - cap_w)
+    y += row
+
+    # the colour boxes, each with its caption over its colour's name
+    sw, sh = 9 * mm, 4.5 * mm
+    line = CAPTION * 0.72 + 0.6 * mm
+    for i, (cap, colour, name) in enumerate((
+            ("carrier", tt.chip_colour, tt.chip_colour_name),
+            ("demo board", tt.demoboard_colour, tt.demoboard_colour_name))):
+        sx = x + i * (col_w / 2)
+        swatch(lab, sx, y, sw, sh, colour)
+        if name:
+            ty = y + (sh - 2 * line + 0.6 * mm) / 2
+            lab.text(sx + sw + 1 * mm, ty, cap, SANS, CAPTION, color=GREY)
+            lab.text(sx + sw + 1 * mm, ty + line, name, SANS, CAPTION)
+        else:
+            lab.text(sx + sw + 1 * mm, y + (sh - CAPTION * 0.72) / 2, cap, SANS, CAPTION,
+                     color=GREY)
+
+
+
 # --- records from probe documents --------------------------------------------
 
 USB_SPEED = {"12": "FS 12 Mbit/s", "480": "HS 480 Mbit/s", "5000": "SS 5 Gbit/s",
@@ -618,6 +727,26 @@ class FpgaLabel:
     dna: str | None = None
     serial: str | None = None
     flash: str | None = None
+
+
+@dataclass(frozen=True)
+class TinyTapeoutLabel:
+    """What a Tiny Tapeout demo board's label prints."""
+
+    host: str
+    headline: str                    # "TT06", "FPGA", "TT"
+    subtitle: str                    # "ASIC  ·  sky130"
+    url: str                         # the chip page, or the chips index
+    demoboard_text: str              # "TT06+  ·  Rev 2.0.1"
+    shuttle: str | None = None
+    chip: str | None = None
+    commit: str | None = None
+    usb_serial: str | None = None
+    mcu: str | None = None           # RP2040 | RP2350
+    chip_colour: str | None = None   # hex, from the table
+    chip_colour_name: str | None = None
+    demoboard_colour: str | None = None
+    demoboard_colour_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -686,6 +815,49 @@ def fpga_records(docs, pinned_names=None):
     return out
 
 
+def demoboard_text(detected, version):
+    """'TT06+' and 'v2.0.1' -> 'TT06+  ·  Rev 2.0.1'; the v3 SDK's
+    'TTDBv3 [3.2]' -> 'TTDBv3  ·  Rev 3.2'; nothing known -> 'not read'."""
+    name, rev = detected or "", None
+    m = re.match(r"^(.*?)\s*\[([^\]]*)\]$", name)
+    if m:
+        name, rev = m.group(1), m.group(2)
+    if not rev and version:
+        rev = version.lstrip("vV")
+    parts = [p for p in (name, ("Rev " + rev) if rev else "") if p]
+    return "  ·  ".join(parts) if parts else "not read"
+
+
+def tinytapeout_records(docs):
+    """One record per Tiny Tapeout demo board across all documents."""
+    out = []
+    for host in sorted(docs):
+        for b in docs[host].summary.tinytapeout:
+            info = tt_data.shuttle_info(b.shuttle)
+            if b.chip == "fpga":
+                headline, parts = "FPGA", ["FPGA breakout, no ASIC"]
+            elif b.shuttle:
+                headline, parts = tt_data.shuttle_short(b.shuttle), ["ASIC"]
+                pdk = tt_data.shuttle_pdk(b.shuttle)
+                if pdk:
+                    parts.append(pdk)
+            else:
+                headline, parts = "TT", ["shuttle not read"]
+            out.append(TinyTapeoutLabel(
+                host=host, headline=headline, subtitle="  ·  ".join(parts),
+                url=info["url"] or tt_data.CHIPS_INDEX_URL,
+                demoboard_text=demoboard_text(
+                    b.demoboard, b.demoboard_version or info["demoboard_version"]),
+                shuttle=b.shuttle, chip=b.chip, commit=b.commit, usb_serial=b.usb_serial,
+                mcu=b.mcu,
+                chip_colour=tt_data.COLOURS.get(info["chip_colour"] or ""),
+                chip_colour_name=info["chip_colour"],
+                demoboard_colour=tt_data.COLOURS.get(info["demoboard_colour"] or ""),
+                demoboard_colour_name=info["demoboard_colour"],
+            ))
+    return out
+
+
 def usb_records(docs):
     out = []
     for host in sorted(docs):
@@ -702,13 +874,17 @@ def usb_records(docs):
 
 # --- assembly -----------------------------------------------------------------
 
-KINDS = ("fpga", "rpi", "opi", "usb")
+KINDS = ("fpga", "tt", "rpi", "opi", "usb")
 
 
 def all_labels(docs, only, pinned_names=None):
+    only = set(only)
     if "fpga" in only:
         for b in fpga_records(docs, pinned_names):
             yield b.kind, b.name or b.model, draw_fpga, b
+    if "tt" in only:
+        for t in tinytapeout_records(docs):
+            yield "tt", f"{t.headline} {t.usb_serial or ''}".strip(), draw_tinytapeout, t
     if only & {"rpi", "opi"}:
         for host in sorted(docs):
             b = board_record(docs[host])

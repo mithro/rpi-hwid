@@ -4,11 +4,16 @@ without a Pi (and without sudo)."""
 
 from __future__ import annotations
 
+import json
+import os
+import pty
 import struct
+import termios
+import threading
 
 import pytest
 
-from rpi_hwid import fpga, probe
+from rpi_hwid import fpga, probe, tinytapeout
 
 
 def _w(root, rel, content):
@@ -54,6 +59,16 @@ def _pi5_tree(root):
         _w(root, "/sys/bus/usb/devices/2-1/" + k, v + "\n")
     _w(root, "/sys/bus/usb/devices/usb2/idVendor", "1d6b\n")
     _w(root, "/sys/bus/usb/devices/usb2/idProduct", "0003\n")
+    # a Tiny Tapeout demo board (MicroPython RP2040) on usb 1-1.2, its CDC
+    # ACM interface bound to ttyACM0, and a Pico in BOOTSEL mode on 1-1.3
+    for k, v in (("idVendor", "2e8a"), ("idProduct", "0005"), ("manufacturer", "MicroPython"),
+                 ("product", "Board in FS mode"), ("serial", "E6614C311B7A7A37")):
+        _w(root, "/sys/bus/usb/devices/1-1.2/" + k, v + "\n")
+    (root / "sys/bus/usb/devices/1-1.2:1.0/tty/ttyACM0").mkdir(parents=True)
+    (root / "sys/bus/usb/devices/1-1.2:1.1").mkdir(parents=True)
+    for k, v in (("idVendor", "2e8a"), ("idProduct", "0003"), ("product", "RP2 Boot"),
+                 ("serial", "E0C9125B0D9B")):
+        _w(root, "/sys/bus/usb/devices/1-1.3/" + k, v + "\n")
     # the Acorn on PCIe, plus the RP1 which is not a board
     for slot, vend, dev_id, cls, res, sub in (
         ("0001:01:00.0", "0x1e24", "0x021f", "0x120000",
@@ -211,6 +226,7 @@ def fake_root(tmp_path, monkeypatch):
     _pi5_tree(tmp_path)
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
     monkeypatch.setattr(fpga, "ROOT", str(tmp_path))
+    monkeypatch.setattr(tinytapeout, "ROOT", str(tmp_path))
     # no sudo, no vcgencmd, no openFPGALoader here: every command answers
     # what it would on a machine lacking the tool, and the PMIC line is fed
     # by the one stub that matters
@@ -327,3 +343,168 @@ def test_probe_main_prints_text_and_json(fake_root, capsys, monkeypatch):
     monkeypatch.setattr("sys.argv", ["fpga.py"])
     fpga.main()
     assert "acorn" in capsys.readouterr().out
+
+
+# --- tinytapeout: the USB tree, the raw REPL on a pty, and the merge ----------------
+
+TT06_ANSWER = {"machine": "Raspberry Pi Pico with RP2040", "micropython": "1.24.0",
+               "sdk": "2.0.4", "sdk_revision": None, "demoboard": "TT06+",
+               "carrier_present": True, "carrier_version": None,
+               "rom": {"shuttle": "tt06", "repo": "TinyTapeout/tinytapeout-06",
+                       "commit": "0f5a1b2c"}, "rom_cached": True,
+               "rom_text": "shuttle=tt06\nrepo=TinyTapeout/tinytapeout-06\ncommit=0f5a1b2c\n"}
+
+
+def _fake_micropython(master, answer, seen):
+    """Speak MicroPython's raw REPL protocol on the master side of a pty:
+    Ctrl-A gets the banner, code + Ctrl-D gets OK, output, Ctrl-D, Ctrl-D,
+    '>' and Ctrl-B the friendly prompt. Records what the host sent."""
+    buf = b""
+    while True:
+        try:
+            data = os.read(master, 4096)
+        except OSError:
+            return
+        if not data:
+            return
+        buf += data
+        seen.append(data)
+        if b"\x01" in buf:
+            os.write(master, b"\r\nraw REPL; CTRL-B to exit\r\n>")
+            buf = buf[buf.index(b"\x01") + 1:]
+        if b"\x04" in buf:
+            code = buf[:buf.index(b"\x04")]
+            buf = buf[buf.index(b"\x04") + 1:]
+            os.write(master, b"OK")
+            if b"import ttboard" in code:
+                os.write(master, json.dumps(answer).encode() + b"\r\n")
+            os.write(master, b"\x04\x04>")
+        if b"\x02" in buf:
+            os.write(master, b"\r\nMicroPython v1.24.0 on 2024-10-25\r\n>>> ")
+            buf = buf[buf.index(b"\x02") + 1:]
+
+
+@pytest.fixture
+def fake_board():
+    """A pty whose far end behaves like a demo board at the REPL; yields
+    the tty path and the list of writes the board saw."""
+    master, slave = pty.openpty()
+    seen: list[bytes] = []
+    th = threading.Thread(target=_fake_micropython, args=(master, TT06_ANSWER, seen),
+                          daemon=True)
+    th.start()
+    yield os.ttyname(slave), seen
+    os.close(slave)
+    os.close(master)
+
+
+def test_read_repl_speaks_raw_repl(fake_board):
+    tty, seen = fake_board
+    answer = tinytapeout.read_repl(tty, timeout=5)
+    assert answer == TT06_ANSWER
+    sent = b"".join(seen)
+    assert sent.startswith(b"\r\x03\x03")           # interrupt first
+    assert b"\r\x01" in sent
+    assert b"\x04" in sent
+    assert sent.endswith(b"\r\x02")                  # and back to the friendly REPL
+    assert b"_shuttle_props" in sent                 # the cached ROM, never a fresh read
+
+
+def test_read_repl_never_hangs():
+    master, slave = pty.openpty()               # nobody answers on the far end
+    try:
+        r = tinytapeout.read_repl(os.ttyname(slave), timeout=1)
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert r == {"error": "no raw REPL prompt (not MicroPython, or busy)"}
+    assert tinytapeout.read_repl("/nonexistent/ttyACM9", timeout=1)["error"].startswith(
+        "cannot open /nonexistent/ttyACM9")
+    assert tinytapeout.read_repl("/dev/null", timeout=1)["error"].startswith("cannot open")
+
+
+def test_read_repl_survives_termios_error_and_a_stalled_write(monkeypatch):
+    # a tty that vanishes between open and tcsetattr raises termios.error,
+    # which is not an OSError; it must become an error record, not a crash
+    def gone(path):
+        raise termios.error(5, "Input/output error")
+    real_open = tinytapeout.open_tty
+    monkeypatch.setattr(tinytapeout, "open_tty", gone)
+    assert tinytapeout.read_repl("/dev/ttyACM7") == {
+        "error": "cannot open /dev/ttyACM7: (5, 'Input/output error')"}
+    monkeypatch.setattr(tinytapeout, "open_tty", real_open)
+    # a board that never drains its CDC buffer: os.write keeps saying EAGAIN
+    master, slave = pty.openpty()
+    try:
+        monkeypatch.setattr(tinytapeout.os, "write", lambda fd, data: (_ for _ in ()).throw(
+            BlockingIOError(11, "Resource temporarily unavailable")))
+        r = tinytapeout.read_repl(os.ttyname(slave), timeout=0.5)
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert r == {"error": "timed out writing to the board"}
+
+
+def test_read_repl_reports_a_traceback_and_junk(monkeypatch):
+    def exec_raises(fd, code, timeout):
+        return ("", "Traceback (most recent call last):\n  ...\nOSError: boom\n")
+    monkeypatch.setattr(tinytapeout, "open_tty", lambda path: os.open("/dev/null", os.O_RDWR))
+    monkeypatch.setattr(tinytapeout, "raw_repl_exec", exec_raises)
+    assert tinytapeout.read_repl("x")["error"].startswith("snippet raised: Traceback")
+    monkeypatch.setattr(tinytapeout, "raw_repl_exec", lambda fd, c, t: ("nothing here", ""))
+    assert tinytapeout.read_repl("x")["error"].startswith("no JSON")
+    monkeypatch.setattr(tinytapeout, "raw_repl_exec", lambda fd, c, t: ("{bad", ""))
+    assert tinytapeout.read_repl("x")["error"].startswith("bad JSON")
+
+
+def test_tinytapeout_collect_walks_the_usb_tree(fake_root, monkeypatch):
+    asked = []
+
+    def fake_read_repl(tty, timeout=10):
+        asked.append(tty)
+        return TT06_ANSWER
+    monkeypatch.setattr(tinytapeout, "read_repl", fake_read_repl)
+    t = tinytapeout.collect_tinytapeout()
+    assert [u["id"] for u in t["usb"]] == ["2e8a:0005", "2e8a:0003"]
+    assert t["usb"][0]["tty"] == "/dev/ttyACM0"
+    assert t["usb"][0]["serial"] == "E6614C311B7A7A37"
+    assert asked == ["/dev/ttyACM0"], "only the MicroPython device is asked, not BOOTSEL"
+    assert [b["kind"] for b in t["boards"]] == ["tinytapeout"]
+    assert t["summary"][0]["shuttle"] == "tt06"
+    assert t["summary"][0]["demoboard_version"] == "v2.0.1"
+    # without the REPL the same device is a candidate only
+    t = tinytapeout.collect_tinytapeout(repl=False)
+    assert t["repl"] is None
+    assert [b["kind"] for b in t["boards"]] == ["rp2-micropython"]
+    assert t["summary"] == []
+
+
+def test_merge_tinytapeout_into_probe_document(fake_root, monkeypatch):
+    monkeypatch.setattr(tinytapeout, "read_repl", lambda tty, timeout=10: TT06_ANSWER)
+    d = probe.collect()
+    d["verdict"] = probe.verdict(d)
+    tinytapeout.merge_tinytapeout(d, tinytapeout.collect_tinytapeout())
+    assert d["verdict"]["summary"]["tinytapeout"][0]["usb_serial"] == "E6614C311B7A7A37"
+    assert d["tinytapeout"]["repl"]["1-1.2"]["sdk"] == "2.0.4"
+    assert d["verdict"]["tinytapeout"][0]["chip_url"] == "https://tinytapeout.com/chips/tt06/"
+
+
+def test_tinytapeout_main_prints_text_and_json(fake_root, capsys, monkeypatch):
+    monkeypatch.setattr(tinytapeout, "read_repl", lambda tty, timeout=10: TT06_ANSWER)
+    monkeypatch.setattr("sys.argv", ["tinytapeout.py"])
+    tinytapeout.main()
+    out = capsys.readouterr().out
+    assert "tt     : TT06 on demo board TT06+" in out
+    monkeypatch.setattr("sys.argv", ["tinytapeout.py", "--json", "--no-repl"])
+    tinytapeout.main()
+    out = capsys.readouterr().out
+    assert '"repl": null' in out
+    monkeypatch.setattr("sys.argv", ["tinytapeout.py", "--no-repl"])
+    tinytapeout.main()
+    assert "candidate (MicroPython RP2 2e8a:0005" in capsys.readouterr().out
+    fpga_answer = dict(TT06_ANSWER, rom={"shuttle": "FPGA", "repo": "", "commit": ""})
+    tinytapeout.describe(tinytapeout.tinytapeout_verdict(
+        {"usb": tinytapeout.usb_candidates(), "repl": {"1-1.2": fpga_answer}}))
+    assert "tt     : FPGA breakout" in capsys.readouterr().out
+    tinytapeout.describe([])
+    assert "none found" in capsys.readouterr().out
