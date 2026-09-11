@@ -40,14 +40,14 @@ def test_board_record_zero_has_no_wired_port(docs):
 
 
 def test_board_record_orange_pi_pc(docs):
-    p = labels.board_record(docs["opi1pc-b"])
+    p = labels.board_record(docs["pi-sw2-p22"])
     assert p.kind == "opi"
     assert p.short == "Orange Pi PC"
     assert p.title == "Orange Pi PC"
     assert p.subtitle == "1 GB  ·  Allwinner H3  ·  dt orangepi-pc"
     assert p.mark == "orange-pi.png"
-    assert p.serial == "02c00181e1ce7d46"
-    assert p.macs == (("eth", "02:81:e1:ce:7d:46"),)
+    assert p.serial == "02c000812eb7a34e"
+    assert p.macs == (("eth", "02:81:2e:b7:a3:4e"),)
     assert p.wlan_note == "no radio"
     assert p.eth_note is None
     assert p.header == ()
@@ -130,8 +130,9 @@ def test_all_labels_order_and_count(docs):
     kinds = [k for k, _t, _d, _r in labels.all_labels(docs, labels.KINDS)]
     # FPGA boards first in sorted-host order, then Tiny Tapeout boards, then
     # one board per document (the Orange Pi host sorts first), then adapters
-    assert kinds == ["arty", "acorn", "netv2", "tt", "tt", "opi",
-                     "rpi", "rpi", "rpi", "rpi", "rpi", "rpi", "usb"]
+    # the Orange Pi's host, pi-sw2-p22, sorts among the pool rigs
+    assert kinds == ["arty", "acorn", "netv2", "tt", "tt",
+                     "rpi", "rpi", "opi", "rpi", "rpi", "rpi", "rpi", "usb"]
     titles = [t for k, t, _d, _r in labels.all_labels(docs, {"tt"})]
     assert titles == ["TT06 E6614C311B7A7A37", "TTIHP25a E66360B8A3C1D5F2"]
     only_opi = [k for k, _t, _d, _r in labels.all_labels(docs, {"opi"})]
@@ -162,7 +163,7 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "e4:5f:01:96:f8:a5", "e4:5f:01:96:f8:a7",         # arty host
         "00:e0:4c:36:0b:0a", "b8:27:eb:02:a3:24",         # zero with bonnet
         "98:fe:54:13:f5:75",                              # acorn host
-        "02:81:e1:ce:7d:46",                              # the Orange Pi PC
+        "02:81:2e:b7:a3:4e",                              # the Orange Pi PC
         "dc:a6:32:8f:2b:11", "dc:a6:32:8f:2b:12",         # the Tiny Tapeout host
         "00:0e:c6:82:b5:e1",                              # the dongle
         "https://tinytapeout.com/chips/tt06/",            # the chip pages
@@ -171,7 +172,7 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         # the board serials, as a small QR at the top of each board label's spine
         "d88100008543dc30", "000000004fe3e7e4", "10000000ce8e3593",
         "000000005157f671", "c36b093f773d46b8", "100000003a7e1c9b",
-        "02c00181e1ce7d46",
+        "02c000812eb7a34e",
     }
     assert got == want
 
@@ -181,7 +182,7 @@ def test_list_and_names_cli(data_dir, capsys):
     out = capsys.readouterr().out
     assert "netv2-grove" in out
     assert "arty-hawk" in out
-    assert "opi    Orange Pi PC 1 GB 02c00181e1ce7d46" in out
+    assert "opi    Orange Pi PC 1 GB 02c000812eb7a34e" in out
     assert "rpi    Pi 5 4 GB d88100008543dc30" in out
     assert "tt     TT06 E6614C311B7A7A37" in out
     assert cli_main(["labels", "--data", str(data_dir), "--list", "--only", "tt"]) == 0
@@ -225,7 +226,7 @@ def test_a_board_with_no_label_design_is_skipped(docs, capsys):
     "other") is skipped with a note, not fatal to the whole run."""
     from dataclasses import replace
 
-    doc = copy.deepcopy(docs["opi1pc-b"])
+    doc = copy.deepcopy(docs["pi-sw2-p22"])
     doc.summary = replace(doc.summary, model="MinnowBoard Turbot", compatible="")
     with_other = dict(docs, minnow=doc)
     kinds = [k for k, _t, _d, _r in labels.all_labels(with_other, {"rpi", "opi"})]
