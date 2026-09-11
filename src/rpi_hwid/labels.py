@@ -269,6 +269,38 @@ def mark_raster(lab, name, x, y, height):
     return raster(lab, path, x, y, height) if path else 0
 
 
+def mark_file(name):
+    """The artwork file for a bare mark name, whichever form it ships in."""
+    for ext in (".svg", ".png"):
+        path = artwork(name + ext)
+        if path:
+            return path
+    return None
+
+
+def marks_widths(names, height, gap=1.2 * mm):
+    """[(file, width)] for the marks that exist, at `height`, and the width
+    the row of them takes. A mark whose file is absent is skipped rather
+    than leaving a hole."""
+    drawn = [(p, height / mark_aspect(p))
+             for p in (mark_file(n) for n in names) if p]
+    total = sum(w for _p, w in drawn) + gap * max(len(drawn) - 1, 0)
+    return drawn, total
+
+
+def marks_row(lab, names, right, y, height, gap=1.2 * mm):
+    """Draw the marks in a row ending flush at `right`, in the order
+    given, each scaled to `height`."""
+    drawn, total = marks_widths(names, height, gap)
+    at = right - total
+    for path, w in drawn:
+        if path.endswith(".svg"):
+            lab.svg(path, at, y, height)
+        else:
+            raster(lab, path, at, y, height)
+        at += w + gap
+
+
 def mark_aspect(path):
     """height / width of a mark, SVG or raster."""
     if path.endswith(".svg"):
@@ -662,7 +694,18 @@ def draw_tinytapeout(lab, tt):
     tx = x + (w + 1.5 * mm if w else 0)
     lab.fit(tx, y, tt.headline, SANS_BOLD, head_size, col_w - (tx - x))
     y += head_cap + 1.2 * mm
+    # The subtitle line, with the marks of whoever ran the shuttle and whose
+    # silicon it is at its right edge: an Efabless chipIgnite run on
+    # SkyWater, a wafer.space run on GlobalFoundries, IHP's own. They shrink
+    # rather than crowd a long subtitle, and drop out below 2 mm.
     lab.text(x, y, tt.subtitle, SANS, 6.5)          # fixed size, like the Pi subtitle
+    if tt.marks:
+        free = col_w - lab.width(tt.subtitle, SANS, 6.5) - 2 * mm
+        mh = 3.4 * mm
+        while mh > 2 * mm and marks_widths(tt.marks, mh)[1] > free:
+            mh -= 0.2 * mm
+        if marks_widths(tt.marks, mh)[1] <= free:
+            marks_row(lab, tt.marks, x + col_w, y - 0.4 * mm, mh)
     row = 3.5 * mm
     y += row
     cap_w = 14 * mm
@@ -764,6 +807,7 @@ class TinyTapeoutLabel:
     commit: str | None = None
     usb_serial: str | None = None
     mcu: str | None = None           # RP2040 | RP2350
+    marks: tuple[str, ...] = ()      # the shuttle's operator, then its foundry
     chip_colour: str | None = None   # hex, from the table
     chip_colour_name: str | None = None
     chip_silk: str | None = None
@@ -876,7 +920,7 @@ def tinytapeout_records(docs):
                 demoboard_text=demoboard_text(
                     b.demoboard, b.demoboard_version or info["demoboard_version"]),
                 shuttle=b.shuttle, chip=b.chip, commit=b.commit, usb_serial=b.usb_serial,
-                mcu=b.mcu,
+                mcu=b.mcu, marks=tuple(tt_data.shuttle_marks(b.shuttle)),
                 chip_colour=tt_data.COLOURS.get(info["chip_colour"] or ""),
                 chip_colour_name=info["chip_colour"],
                 chip_silk=tt_data.COLOURS.get(info["chip_silk"] or ""),
