@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import glob
 import shutil
 import subprocess
@@ -13,19 +14,45 @@ from rpi_hwid.cli import main as cli_main
 from rpi_hwid.model import ProbeDocument
 
 
-def test_pi_record_derives_a_broadcom_radio_mac(docs):
-    p = labels.pi_record(docs["pi-sw1-p10"])
-    assert p.model == "3 Model B+"
+def test_board_record_derives_a_broadcom_radio_mac(docs):
+    p = labels.board_record(docs["pi-sw1-p10"])
+    assert p.kind == "rpi"
+    assert p.title == "Raspberry Pi 3 Model B+"
+    assert p.subtitle == "1 GB  ·  Rev 1.3  ·  rev code a020d3"
     assert p.memory == "1 GB"
+    assert p.mark == "raspberry-pi.svg"
     assert p.macs == (("eth", "b8:27:eb:e3:e7:e4"), ("wlan", "b8:27:eb:b6:b2:b1"))
     assert p.wlan_note is None
+    assert p.header_note is None
 
 
-def test_pi_record_pi5_without_radio_says_so(docs):
-    p = labels.pi_record(docs["pi-sw2-p47"])
+def test_board_record_pi5_without_radio_says_so(docs):
+    p = labels.board_record(docs["pi-sw2-p47"])
     assert p.macs == (("eth", "98:fe:54:13:f5:75"),)
     assert p.wlan_note == "radio disabled, not readable"
     assert p.header == ("Waveshare PoE M.2 HAT+ (B)",)
+
+
+def test_board_record_zero_has_no_wired_port(docs):
+    p = labels.board_record(docs["rpiz-serial"])
+    assert p.eth_note == "no wired port"
+    assert p.macs[0] == ("eth", "00:e0:4c:36:0b:0a"), "the bonnet's port is still printed"
+
+
+def test_board_record_orange_pi_pc(docs):
+    p = labels.board_record(docs["opi1pc-b"])
+    assert p.kind == "opi"
+    assert p.short == "Orange Pi PC"
+    assert p.title == "Orange Pi PC"
+    assert p.subtitle == "1 GB  ·  Allwinner H3  ·  dt orangepi-pc"
+    assert p.mark == "orange-pi.png"
+    assert p.serial == "02c00181e1ce7d46"
+    assert p.macs == (("eth", "02:81:e1:ce:7d:46"),)
+    assert p.wlan_note == "no radio"
+    assert p.eth_note is None
+    assert p.header == ()
+    assert p.header_note == "40-pin"
+    assert p.hat_uuid is None
 
 
 def test_fpga_records_named_and_typed(docs):
@@ -100,13 +127,15 @@ def test_usb_records(docs):
 
 
 def test_all_labels_order_and_count(docs):
-    kinds = [k for k, _t, _d, _r in labels.all_labels(docs, {"fpga", "tt", "rpi", "usb"})]
+    kinds = [k for k, _t, _d, _r in labels.all_labels(docs, labels.KINDS)]
     # FPGA boards first in sorted-host order, then Tiny Tapeout boards, then
-    # one Pi per document, then adapters
-    assert kinds == ["arty", "acorn", "netv2", "tt", "tt",
+    # one board per document (the Orange Pi host sorts first), then adapters
+    assert kinds == ["arty", "acorn", "netv2", "tt", "tt", "opi",
                      "rpi", "rpi", "rpi", "rpi", "rpi", "rpi", "usb"]
     titles = [t for k, t, _d, _r in labels.all_labels(docs, {"tt"})]
     assert titles == ["TT06 E6614C311B7A7A37", "TTIHP25a E66360B8A3C1D5F2"]
+    only_opi = [k for k, _t, _d, _r in labels.all_labels(docs, {"opi"})]
+    assert only_opi == ["opi"]
 
 
 def test_render_and_decode_every_qr(data_dir, tmp_path):
@@ -133,14 +162,16 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "e4:5f:01:96:f8:a5", "e4:5f:01:96:f8:a7",         # arty host
         "00:e0:4c:36:0b:0a", "b8:27:eb:02:a3:24",         # zero with bonnet
         "98:fe:54:13:f5:75",                              # acorn host
+        "02:81:e1:ce:7d:46",                              # the Orange Pi PC
         "dc:a6:32:8f:2b:11", "dc:a6:32:8f:2b:12",         # the Tiny Tapeout host
         "00:0e:c6:82:b5:e1",                              # the dongle
         "https://tinytapeout.com/chips/tt06/",            # the chip pages
         "https://tinytapeout.com/chips/ttihp25a/",
         "E6614C311B7A7A37", "E66360B8A3C1D5F2",           # the demo boards' RP2 ids
-        # the Pi serials, as a small QR at the top of each Pi label's spine
+        # the board serials, as a small QR at the top of each board label's spine
         "d88100008543dc30", "000000004fe3e7e4", "10000000ce8e3593",
         "000000005157f671", "c36b093f773d46b8", "100000003a7e1c9b",
+        "02c00181e1ce7d46",
     }
     assert got == want
 
@@ -150,6 +181,8 @@ def test_list_and_names_cli(data_dir, capsys):
     out = capsys.readouterr().out
     assert "netv2-grove" in out
     assert "arty-hawk" in out
+    assert "opi    Orange Pi PC 1 GB 02c00181e1ce7d46" in out
+    assert "rpi    Pi 5 4 GB d88100008543dc30" in out
     assert "tt     TT06 E6614C311B7A7A37" in out
     assert cli_main(["labels", "--data", str(data_dir), "--list", "--only", "tt"]) == 0
     assert capsys.readouterr().out.count("\n") == 2
@@ -162,9 +195,10 @@ def test_list_and_names_cli(data_dir, capsys):
 
 
 def test_awkward_records_still_fit(docs, tmp_path, monkeypatch):
-    """A Pi with no raspberry artwork (the QR size falls back to the title
-    block's height) and a three-board HAT line (elided at the size floor)
-    render without overflowing; `fit` cuts rather than runs off."""
+    """A Pi with no raspberry artwork (the mark's box stays blank and the
+    bands stay where they are) and a three-board HAT line (elided at the
+    size floor) render without overflowing; `fit` cuts rather than runs
+    off."""
     from dataclasses import replace
 
     from reportlab.pdfgen import canvas
@@ -184,3 +218,16 @@ def test_awkward_records_still_fit(docs, tmp_path, monkeypatch):
     size = lab.fit(0, 0, "x" * 200, labels.SANS, 8, 30 * labels.mm)
     assert size == 5.5  # stopped at the floor, then elided
     assert lab.width("x" * 200, labels.SANS, 5.5) > 30 * labels.mm
+
+
+def test_a_board_with_no_label_design_is_skipped(docs, capsys):
+    """A document from a board this package has no label for (the probe's
+    "other") is skipped with a note, not fatal to the whole run."""
+    from dataclasses import replace
+
+    doc = copy.deepcopy(docs["opi1pc-b"])
+    doc.summary = replace(doc.summary, model="MinnowBoard Turbot", compatible="")
+    with_other = dict(docs, minnow=doc)
+    kinds = [k for k, _t, _d, _r in labels.all_labels(with_other, {"rpi", "opi"})]
+    assert kinds == [k for k, _t, _d, _r in labels.all_labels(docs, {"rpi", "opi"})]
+    assert "minnow: not a board this package labels" in capsys.readouterr().err

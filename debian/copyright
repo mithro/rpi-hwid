@@ -21,6 +21,15 @@ License: trademark
  https://www.raspberrypi.com/trademark-rules/ and
  src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/orange-pi.png
+Copyright: Shenzhen Xunlong Software Co., Ltd.
+License: trademark
+ The Orange Pi orange is a trademark of Shenzhen Xunlong Software Co.,
+ Ltd. It is drawn only on the label of hardware that is an Orange Pi, to
+ identify it. From the Orange Pi GitHub account avatar, cropped to the
+ fruit and with its ink deepened for print (the shapes untouched); see
+ src/rpi_hwid/artwork/README.md.
+
 Files: src/rpi_hwid/artwork/alphamax.png
 Copyright: Alphamax LLC
 License: trademark

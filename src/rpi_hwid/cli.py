@@ -38,7 +38,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(doc, indent=1))
         return 0
-    print(f"{doc['model']}  serial {doc['serial']}  rev {doc['revision']}")
+    print(probe.headline(doc))
     v = doc["verdict"]
     for h in v["header"]:
         print("  header : " + h)

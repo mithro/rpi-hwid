@@ -12,9 +12,12 @@ import pytest
 from rpi_hwid.model import ProbeDocument
 
 
-def _doc(model, serial, revision, header, power_class, fpga, macs, usb_net, rtc, fan, mc):
+def _doc(model, serial, revision, header, power_class, fpga, macs, usb_net, rtc, fan, mc,
+         compatible="", memory=None):
     return {
         "model": model, "serial": serial, "revision": revision,
+        "compatible": compatible.split(),
+        "board": "rpi" if model.startswith("Raspberry") else "opi",
         "hat_fw": None, "hat_eeproms": {}, "i2c1": [], "usb": {},
         "interfaces": [{"kind": m["kind"], "mac": m["mac"], "onboard": True,
                         "name": m["kind"] + "0", "driver": "x", "usb": None, "speed": None}
@@ -25,6 +28,7 @@ def _doc(model, serial, revision, header, power_class, fpga, macs, usb_net, rtc,
             "power": power_class, "evidence": [], "fpga": [],
             "summary": {
                 "model": model, "serial": serial, "revision": revision,
+                "compatible": compatible, "memory": memory,
                 "header": header, "hat_uuid": None, "power_class": power_class,
                 "fpga": fpga, "macs": macs, "usb_net": usb_net,
                 "rtc_battery": rtc, "fan": fan, "max_current_ma": mc, "ext5v_v": None,
@@ -72,6 +76,21 @@ ACORN_HOST = _doc(
     ["Waveshare PoE M.2 HAT+ (B)"], "gpio-poe-hat", [{"kind": "acorn"}],
     [{"kind": "eth", "mac": "98:fe:54:13:f5:75"}], [], True, True, 3000,
 )
+
+# An Orange Pi PC on Armbian trixie, from the values captured from opi1pc-b
+# on 2026-07-08: no revision code, no HAT convention, no power sensing, a
+# SoC serial from U-Boot and the eth0 MAC U-Boot derives from it.
+OPI_PC = _doc(
+    "Xunlong Orange Pi PC", "02c00181e1ce7d46", None, [], "undetermined", [],
+    [{"kind": "eth", "mac": "02:81:e1:ce:7d:46"}], [], None, None, None,
+    compatible="xunlong,orangepi-pc allwinner,sun8i-h3", memory="1 GB",
+)
+OPI_PC.update(mem_kb=1015636, sid=None, sid_serial=None, cpuinfo_serial="02c00181e1ce7d46",
+              armbian={"BOARD": "orangepipc", "BOARD_NAME": "Orange Pi PC",
+                       "BOARDFAMILY": "sun8i", "LINUXFAMILY": "sunxi",
+                       "VERSION": "26.8.0-trunk.170"})
+OPI_PC["verdict"]["header"] = [
+    "40-pin header not probed: no HAT ID EEPROM convention on this board"]
 
 
 # A Pi 4 with two Tiny Tapeout demo boards on USB: a TT06 chip on its TT06+
@@ -140,6 +159,7 @@ RAW = {
     "pi-sw2-p16": ARTY_HOST,
     "rpiz-serial": ZERO_BONNET,
     "pi-sw2-p47": ACORN_HOST,
+    "opi1pc-b": OPI_PC,
     "rpi4-tt": TT_HOST,
 }
 

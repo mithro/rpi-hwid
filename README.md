@@ -13,6 +13,8 @@ which network interfaces are soldered down.
 
 Around that probe:
 
+- the same probe on an **Orange Pi PC** (Allwinner H3, Armbian): the board,
+  its SoC serial and MAC from the device tree and the SID, in the same document,
 - a separate **FPGA probe** for a NeTV2, Acorn or Arty board attached to the Pi,
 - a separate **Tiny Tapeout probe** for a demo board on the Pi's USB: which
   shuttle's chip is on it (read from the chip's own ROM over the board's REPL),
@@ -146,6 +148,44 @@ The switch-side 802.3af class narrows the ambiguous cases (the bonnet is
 class 3, the M.2 HAT+ (B) class 4, an af-only HAT is never class 4), but
 that is read from the switch, not the Pi, so it is outside this package.
 
+### Orange Pi
+
+The probe also runs unchanged on the fleet's Xunlong Orange Pi PCs
+(Allwinner H3, Armbian), and the document keeps its shape: the board is
+another `model`, with `revision` empty (the 0000 in its cpuinfo is not a
+code), `header` empty, and `power_class` `undetermined`, because an H3
+has no PMIC and no firmware report of what feeds it. What it does have:
+
+```
+$ rpi-hwid probe
+Xunlong Orange Pi PC  serial 02c00181e1ce7d46
+  header : 40-pin header not probed: no HAT ID EEPROM convention on this board
+  signal : device tree: compatible xunlong,orangepi-pc allwinner,sun8i-h3; 1 GB (MemTotal 1015636 kB)
+  signal : Armbian 26.8.0-trunk.170 on board id orangepipc (sunxi)
+  power  : no power sensing on this board: nothing on it reports its supply
+  onboard: eth    02:81:e1:ce:7d:46  dwmac-sun8i
+```
+
+That block is composed from values captured off the fleet's own boards,
+not pasted from a live run: both Orange Pis were off the network when this
+was written. The serial comes from the device tree, which is where U-Boot
+puts it. The fallback that rebuilds it from the SoC's SID e-fuses has not
+been run on hardware, and older `sunxi_sid` kernels read those words the
+other way round, so on a board whose device tree carries no serial at all
+the fallback could be wrong with nothing to contradict it.
+
+The board is told from the device tree's `compatible` list, and its
+`serial` is the SoC's: U-Boot builds `serial#` from the Allwinner SID
+e-fuses and writes it to `/serial-number` in the device tree, where the
+probe reads it (the 32-bit kernel repeats it as cpuinfo's `Serial`, and
+the SID nvmem under `/sys/bus/nvmem/devices/` is read too, so U-Boot's
+rule can be reproduced when neither is there). U-Boot derives the eth0
+MAC from the same serial (`02`, the serial's fourth byte, its last four:
+`02:81:e1:ce:7d:46` from `02c00181e1ce7d46`), so on these boards the MAC
+is not independent evidence. The Pi-only pokes (`dtparam`, `vcgencmd`,
+the ID bus, the bus-1 scan, the bonnet rule) are skipped, and the Armbian
+release is recorded as evidence only.
+
 ## FPGA boards
 
 `rpi_hwid.fpga` is kept apart from the Pi probe because few people have an
@@ -233,7 +273,7 @@ cannot be reached is reported and skipped, and the exit status says so.
 ## The document
 
 `rpi-hwid probe --json`, and every file the collector writes, is one JSON
-object: the raw evidence as it came off the Pi, plus a `verdict` block
+object: the raw evidence as it came off the board, plus a `verdict` block
 with a fixed-shape `summary` that everything else in the package consumes.
 
 ```json
@@ -256,6 +296,8 @@ with a fixed-shape `summary` that everything else in the package consumes.
       "model": "Raspberry Pi Zero W Rev 1.1",
       "serial": "000000005157f671",
       "revision": "9000c1",
+      "compatible": "raspberrypi,model-zero-w brcm,bcm2835",
+      "memory": "512 MB",
       "header": ["Waveshare PoE-ETH-USB-HUB-HAT"],
       "hat_uuid": null,
       "power_class": "bonnet-poe",
@@ -273,9 +315,11 @@ with a fixed-shape `summary` that everything else in the package consumes.
 `macs` the soldered-down interfaces (`eth` first), `usb_net` the removable
 adapters with their descriptors, `fpga` the boards the FPGA module found,
 `tinytapeout` the demo boards the Tiny Tapeout module found (present only
-when that module ran), and `hat_uuid` the EEPROM's UUID when one was read. The Pi 5-only fields
-are `null` elsewhere. Everything outside `verdict` is evidence, kept so a
-wrong verdict can be argued with.
+when that module ran), `hat_uuid` the EEPROM's UUID when one was read,
+`compatible` the device tree's compatible list and `memory` the fitted RAM
+(MemTotal rounded up to the size that was soldered on). The Pi 5-only
+fields are `null` elsewhere. Everything outside `verdict` is evidence, kept
+so a wrong verdict can be argued with.
 
 ## Names
 
@@ -302,7 +346,7 @@ object of serial to name and pass it with `--names registry.json` to both
 Avery L7160 grid), from a directory of collected documents. Print at
 100 %. `--outline` draws the die-cut edges for an alignment print on plain
 paper; `--start N` skips N positions on the first sheet so a partly used
-sheet can be finished; `--only rpi|fpga|tt|usb` limits the kinds; `--list`
+sheet can be finished; `--only rpi|opi|fpga|tt|usb` limits the kinds; `--list`
 prints what would be generated and where.
 
 ```
@@ -310,6 +354,7 @@ $ rpi-hwid labels --data data/ --list
 sheet 1 row 1 col 1  arty   arty-hawk
 sheet 1 row 1 col 2  acorn  Acorn CLE-215+
 sheet 1 row 1 col 3  tt     TT06 E6614C311B7A7A37
+sheet 1 row 2 col 1  opi    Orange Pi PC 1 GB 02c00181e1ce7d46
 sheet 1 row 2 col 1  rpi    Pi 3 Model B+ 1 GB 000000004fe3e7e4
 sheet 1 row 2 col 2  rpi    Pi 4 Model B 2 GB 10000000ce8e3593
 sheet 1 row 2 col 3  rpi    Pi 5 1 GB c36b093f773d46b8
@@ -351,6 +396,20 @@ Broadcom-OUI rule: same serial digits, XOR `55:55:55`), so it is printed
 even when the radio is off. On a Pi 4 or 5 it cannot be derived, so a
 disabled radio is stated as such.
 
+**Orange Pi.** The same layout, band for band, with the Orange Pi orange
+in the raspberry's box: the title and subtitle come from the device tree
+instead of a revision code (model, fitted RAM, SoC, and the device-tree
+id `dt orangepi-pc`, which is the board's canonical id since Xunlong
+sells it by name with no part number), the HAT row is
+kept but reads `header  40-pin` (there is no HAT ID
+EEPROM convention to probe, and the Armbian release is left off because
+it changes), and the wlan row says `no radio` on a PC or
+One. The SoC serial runs up the spine as on a Pi.
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/orange-pi-pc.png" alt="Orange Pi PC on Armbian; eth MAC derived by U-Boot from the SoC serial, no radio" width="49%">
+</p>
+
 **FPGA boards.** The maker and the derived name, the die, and the
 immutable identifier full width with a QR: Device DNA where read, the
 Digilent serial and flash part on an Arty, and a line to write the DNA on
@@ -385,9 +444,10 @@ foot, so a dongle can be matched to a DHCP lease from across the room.
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png" alt="ASIX AX88179 USB 3.0 gigabit adapter" width="49%">
 </p>
 
-The package ships the Raspberry Pi raspberry, the Alphamax, Digilent and
-Tiny Tapeout marks (each its owner's trademark, drawn only on that maker's
-own hardware to identify it) and the public-domain USB trident; see
+The package ships the Raspberry Pi raspberry, the Orange Pi orange, the
+Alphamax, Digilent and Tiny Tapeout marks (each its owner's trademark,
+drawn only on that maker's own hardware to identify it) and the
+public-domain USB trident; see
 `src/rpi_hwid/artwork/README.md` for the sources. A `--artwork DIR`
 overrides any of them and may add a `netv2.svg`. A board whose maker has no
 mark (SQRL) gets the name in type. The images are regenerated from the test
@@ -401,16 +461,17 @@ the probes emit JSON because they run on a Pi's Python 3.5.
 ```python
 from pathlib import Path
 
+from rpi_hwid.boards import identify
 from rpi_hwid.collect import collect, load_collected
 from rpi_hwid.names import netv2_name
-from rpi_hwid.revision import decode_revision
 
-collect(["rpi5-netv2", "pi@10.21.2.47"], Path("data"), jump="jump.example.org", fpga=True)
+collect(["rpi5-netv2", "pi@10.21.2.47", "opi1pc-b"], Path("data"), jump="jump.example.org",
+        fpga=True)
 
 for host, doc in load_collected(Path("data")).items():
     s = doc.summary
-    rev = decode_revision(s.revision)
-    print(host, rev.model, rev.memory, s.power_class, [m.mac for m in s.macs])
+    board = identify(s)        # Pi: from the revision code; Orange Pi: from the device tree
+    print(host, board.title, board.memory, s.power_class, [m.mac for m in s.macs])
     for board in s.fpga:
         name = netv2_name(board.dna) if board.kind == "netv2" and board.dna else ""
         print("  ", board.kind, board.identity, name)
@@ -454,8 +515,8 @@ regenerating, upload the file by hand in Settings → Social preview.
 
 Worked out on a fleet of Pi Zero W, 3B+, 4 and 5 hosts carrying NeTV2,
 Acorn and Arty boards, powered by a mix of Waveshare PoE HATs and external
-PoE splitters, in September 2026. The rules above are what those boards
-showed; a board that behaves differently is a bug report. The Tiny Tapeout
-module was written from the SDK's public sources (tt-micropython-firmware,
-tt-demo-pcb, tt-support-tools) and tested against an emulated board; a
-report from a real demo board is welcome.
+PoE splitters, plus two Orange Pi PCs on Armbian, in September 2026. The
+rules above are what those boards showed; a board that behaves differently
+is a bug report. The Tiny Tapeout module was written from the SDK's public
+sources (tt-micropython-firmware, tt-demo-pcb, tt-support-tools) and tested
+against an emulated board; a report from a real demo board is welcome.

@@ -60,6 +60,28 @@ Pi 5 (Waveshare F, G, H, J) from a 3 A USB-C splitter, and on a 3B+/4 an
 EEPROM-less, I2C-less HAT (Waveshare C, D, E) from any splitter -- and the
 (C) *is* a splitter electrically, feeding the Pi's USB power input from a
 USB-A socket. Those need the switch's 802.3af class or a look at the board.
+
+Other boards: the Orange Pi PC (Xunlong, Allwinner H3, Armbian)
+    The same probe runs on the fleet's Orange Pi PCs and the summary keeps
+    its shape: the board is just another `model`, with no revision code, an
+    empty header and an undetermined power class. Identity comes from the
+    device tree: /proc/device-tree/model ("Xunlong Orange Pi PC") and
+    compatible ("xunlong,orangepi-pc allwinner,sun8i-h3"). The serial is
+    the SoC's: U-Boot reads the Allwinner SID e-fuses, builds serial# from
+    them and writes it to /serial-number in the device tree it hands the
+    kernel (common/fdt_support.c fdt_root), which the 32-bit kernel also
+    prints as /proc/cpuinfo's Serial line. The SID words themselves are
+    readable from the sunxi-sid nvmem under /sys/bus/nvmem/devices/, and
+    the probe records them and reproduces U-Boot's rule (chip-id word, then
+    a CRC-32 of the other three) as a fallback and a cross-check. U-Boot
+    derives eth0's MAC from the same serial: 02, the serial's fourth byte,
+    then its last four (02:81:e1:ce:7d:46 from 02c00181e1ce7d46 on
+    opi1pc-b), so the MAC is not independent evidence. RAM is MemTotal
+    rounded up to the fitted size, the Armbian release is
+    /etc/armbian-release, and the Pi-only pokes (dtparam, vcgencmd, the ID
+    bus, the I2C-1 scan, the bonnet rule) are skipped: an H3 has no PMIC,
+    no firmware power report and no HAT convention, so nothing here can
+    say what powers it.
 """
 import glob
 import json
@@ -69,6 +91,7 @@ import struct
 import subprocess
 import sys
 import uuid
+import zlib
 
 # Prefix for every absolute path read; the tests point it at a fake tree.
 ROOT = ""
@@ -98,6 +121,102 @@ def dt_u32(path):
             return struct.unpack(">I", f.read(4))[0]
     except (OSError, struct.error):
         return None
+
+
+def dt_strings(path):
+    """A device-tree string-list property (NUL-separated), as a list."""
+    try:
+        with open(path, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return []
+    return [s.decode("ascii", "replace") for s in raw.split(b"\0") if s]
+
+
+# --- which board --------------------------------------------------------------
+
+def board_kind(model, compatible):
+    """"rpi" for a Raspberry Pi, "opi" for a Xunlong Orange Pi, else "other";
+    from the device tree's compatible list first, the model string second."""
+    if any(c.startswith("raspberrypi,") for c in compatible) or model.startswith("Raspberry Pi"):
+        return "rpi"
+    if any(c.startswith("xunlong,") for c in compatible) or "Orange Pi" in model:
+        return "opi"
+    return "other"
+
+
+NOMINAL_MEMORY = ((256, "256 MB"), (512, "512 MB"), (1024, "1 GB"), (2048, "2 GB"),
+                  (4096, "4 GB"), (8192, "8 GB"), (16384, "16 GB"), (32768, "32 GB"),
+                  (65536, "64 GB"))
+
+
+def nominal_memory(mem_kb):
+    """The fitted RAM size from MemTotal, which always reads a little under
+    it (the firmware, and on a Pi the GPU, take their share first): the
+    smallest nominal size MemTotal fits in."""
+    if not mem_kb:
+        return None
+    mib = mem_kb / 1024.0
+    for size, name in NOMINAL_MEMORY:
+        if mib <= size:
+            return name
+    size = NOMINAL_MEMORY[-1][0]             # beyond the table: the next
+    while size < mib:                        # power of two that fits it
+        size *= 2
+    return "%d GB" % (size // 1024)
+
+
+def mem_total_kb():
+    m = re.search(r"^MemTotal:\s*(\d+) kB", read(ROOT + "/proc/meminfo") or "", re.M)
+    return int(m.group(1)) if m else None
+
+
+def armbian_release():
+    """/etc/armbian-release as a dict (KEY=value lines, values may be
+    quoted); None where the file does not exist."""
+    text = read(ROOT + "/etc/armbian-release")
+    if text is None:
+        return None
+    out = {}
+    for line in text.split("\n"):
+        if "=" in line and not line.startswith("#"):
+            k, v = line.split("=", 1)
+            out[k.strip()] = v.strip().strip('"')
+    return out
+
+
+def sunxi_sid():
+    """The first four words of the Allwinner SID e-fuses, from the sunxi-sid
+    nvmem (little-endian 32-bit words: the chip id, then the unique part);
+    None where there is no such nvmem or it cannot be read."""
+    for p in sorted(glob.glob(ROOT + "/sys/bus/nvmem/devices/sunxi-sid*/nvmem")):
+        try:
+            with open(p, "rb") as f:
+                raw = f.read(16)
+        except OSError:
+            continue
+        if len(raw) == 16:
+            return ["0x%08x" % w for w in struct.unpack("<4I", raw)]
+    return None
+
+
+def sunxi_serial(sid):
+    """U-Boot's serial# from an Allwinner SID's words: the chip-id word,
+    then a CRC-32 of words 1-3, with the low 24 bits forced non-zero
+    because they also become the MAC's NIC bytes. H3 and later; the CRC is
+    skipped on sun4i/5i/6i/7i and on the A23 and A33, which are sun8i too.
+    (board/sunxi/board.c: get_unique_sid in current U-Boot,
+    setup_environment in older trees.) The same string U-Boot writes to
+    the device tree's /serial-number -- so this stands in only when that
+    property is missing. None when the chip-id word is zero, which is what
+    a board whose U-Boot sets no serial at all reads as."""
+    words = [int(w, 16) for w in sid]
+    if not words[0]:
+        return None
+    tail = zlib.crc32(struct.pack("<3I", *words[1:4])) & 0xffffffff
+    if tail & 0xffffff == 0:
+        tail |= 0x800000
+    return "%08x%08x" % (words[0], tail)
 
 
 # --- HAT EEPROM -------------------------------------------------------------
@@ -154,9 +273,18 @@ def id_bus_scan():
 
 
 # Soldered-down interface drivers: the SoC Ethernet (macb on Pi 5,
-# bcmgenet on Pi 4), the onboard SDIO radio (brcmfmac), and the 3B+'s
-# LAN7800, which is on an internal USB bus but cannot be unplugged.
-ONBOARD_DRIVERS = ("macb", "bcmgenet", "brcmfmac", "lan78xx")
+# bcmgenet on Pi 4, dwmac-sun8i for the Allwinner H3's EMAC and stmmaceth
+# for other Synopsys DWMAC platforms), the onboard SDIO radio (brcmfmac),
+# and the 3B+'s LAN7800, which is on an internal USB bus but cannot be
+# unplugged.
+# Soldered-down wired ports: the Pi's own controllers (macb on a Pi 5,
+# bcmgenet on a Pi 4, the 3B+'s LAN7800), the Allwinner H3's dwmac-sun8i,
+# and stmmaceth, the name the generic DesignWare MAC platform driver
+# registers under (drivers/net/ethernet/stmicro/stmmac) on the sunxi
+# boards whose device tree does not bind the sun8i glue -- read from the
+# kernel source, not from a board here.
+SOC_ETHERNET_DRIVERS = ("macb", "bcmgenet", "lan78xx", "dwmac-sun8i", "stmmaceth")
+ONBOARD_DRIVERS = SOC_ETHERNET_DRIVERS + ("brcmfmac",)
 
 
 def net_interfaces():
@@ -176,7 +304,7 @@ def net_interfaces():
         if m:
             usb_dev = m.group(1)
         onboard = drv in ONBOARD_DRIVERS
-        kind = ("eth" if name.startswith("eth") or drv in ("macb", "bcmgenet", "lan78xx")
+        kind = ("eth" if name.startswith("eth") or drv in SOC_ETHERNET_DRIVERS
                 else "wlan" if name.startswith("wl") or drv == "brcmfmac"
                 else "other")
         out.append({"name": name, "mac": read(p + "/address"), "driver": drv,
@@ -220,15 +348,39 @@ def parse_i2cdetect(text):
 def collect():
     d = {}
     d["model"] = read(ROOT + "/proc/device-tree/model") or ""
+    compatible = dt_strings(ROOT + "/proc/device-tree/compatible")
+    d["compatible"] = compatible
+    d["board"] = board_kind(d["model"], compatible)
+    is_pi = d["board"] == "rpi"
+    cpuinfo = read(ROOT + "/proc/cpuinfo") or ""
     d["serial"] = read(ROOT + "/proc/device-tree/serial-number")
-    m = re.search(r"^Revision\s*:\s*(\S+)", read(ROOT + "/proc/cpuinfo") or "", re.M)
-    d["revision"] = m.group(1) if m else None
+    m = re.search(r"^Serial\s*:\s*([0-9a-fA-F]+)", cpuinfo, re.M)
+    d["cpuinfo_serial"] = m.group(1) if m else None
+    # The Allwinner SID: recorded whenever the nvmem is there, and the
+    # serial U-Boot builds from it stands in when the device tree and
+    # cpuinfo carry nothing (or the all-zero placeholder).
+    d["sid"] = sunxi_sid()
+    d["sid_serial"] = sunxi_serial(d["sid"]) if d["sid"] else None
+    if not d["serial"] or set(d["serial"]) == {"0"}:
+        if d["cpuinfo_serial"] and set(d["cpuinfo_serial"]) != {"0"}:
+            d["serial"] = d["cpuinfo_serial"]
+        elif d["sid_serial"]:
+            d["serial"] = d["sid_serial"]
+    # The revision code is the Pi firmware's; a device-tree boot on
+    # anything else prints a meaningless 0000 there.
+    m = re.search(r"^Revision\s*:\s*(\S+)", cpuinfo, re.M)
+    d["revision"] = m.group(1) if m and is_pi else None
+    d["mem_kb"] = mem_total_kb()
+    d["armbian"] = armbian_release()
     d["hat_fw"] = None
     if os.path.isdir(ROOT + "/proc/device-tree/hat"):
         d["hat_fw"] = {k: read(ROOT + "/proc/device-tree/hat/" + k)
                        for k in ("vendor", "product", "product_id", "product_ver", "uuid")}
-    d["hat_eeproms"] = id_bus_scan()
-    if os.path.exists(ROOT + "/dev/i2c-1"):
+    # The ID bus and bus 1 are HAT evidence, and HATs are a Pi convention:
+    # on another board a device on bus 1 is the board's own (an Orange Pi
+    # PC's CPU regulator), so the scans are skipped rather than misread.
+    d["hat_eeproms"] = id_bus_scan() if is_pi else {}
+    if is_pi and os.path.exists(ROOT + "/dev/i2c-1"):
         d["i2c1"] = parse_i2cdetect(sh(["sudo", "i2cdetect", "-y", "1"]))
     else:
         d["i2c1"] = None
@@ -238,12 +390,12 @@ def collect():
         if v:
             usb[os.path.basename(p)] = "%s:%s" % (v, pr)
     d["usb"] = usb
-    # What the power port itself reports. Every model: the firmware's
+    # What the power port itself reports. Every Pi model: the firmware's
     # throttle flags, whose bit 0 is under-voltage now and bit 16
     # under-voltage since boot -- the only thing a 3B+, Zero or Pi 4 can say
     # about the supply on its micro-USB or USB-C. Pi 5: the firmware's USB-C
-    # judgement, below.
-    thr = sh(["vcgencmd", "get_throttled"])
+    # judgement, below. Other boards have no vcgencmd and nothing like it.
+    thr = sh(["vcgencmd", "get_throttled"]) if is_pi else ""
     m = re.search(r"0x([0-9a-f]+)", thr)
     t = int(m.group(1), 16) if m else None
     d["throttled"] = ("0x%x" % t) if t is not None else None
@@ -279,6 +431,25 @@ def collect():
 
 def verdict(d):
     ev, header, power = [], [], None
+    is_pi = d.get("board", "rpi") == "rpi"
+    if d.get("compatible"):
+        ev.append("device tree: compatible %s; %s (MemTotal %s kB)" % (
+            " ".join(d["compatible"]), nominal_memory(d.get("mem_kb")) or "memory not read",
+            d.get("mem_kb")))
+    if d.get("sid"):
+        ev.append("Allwinner SID %s -> serial %s%s" % (
+            " ".join(d["sid"]), d["sid_serial"],
+            "" if d["sid_serial"] == d["serial"] else " (device tree says %s)" % d["serial"]))
+    if d.get("armbian"):
+        a = d["armbian"]
+        ev.append("Armbian %s on board id %s (%s)" % (
+            a.get("VERSION", "?"), a.get("BOARD", "?"), a.get("LINUXFAMILY", "?")))
+    if not is_pi:
+        # HATs are a Pi convention, and the supply is unsensed: an H3 has
+        # no PMIC and no firmware to report what feeds the board.
+        return {"header": ["40-pin header not probed: no HAT ID EEPROM convention on this board"],
+                "power": "no power sensing on this board: nothing on it reports its supply",
+                "evidence": ev, "summary": summary(d, [], "undetermined")}
     for addr, e in d["hat_eeproms"].items():
         header.append("%s (HAT EEPROM at %s, pid %s%s)" % (
             e.get("product", "?").strip(), addr, e.get("pid"),
@@ -382,6 +553,8 @@ def summary(d, header, power):
         hat_uuid = list(d["hat_eeproms"].values())[0].get("uuid")
     return {
         "model": d["model"], "serial": d["serial"], "revision": d["revision"],
+        "compatible": " ".join(d.get("compatible") or []),
+        "memory": nominal_memory(d.get("mem_kb")),
         "header": items, "hat_uuid": hat_uuid, "power_class": pclass,
         "macs": macs, "usb_net": usb_net,
         "rtc_battery": ((d.get("rtc_batt_v") or 0) > 1.0) if d["pi5"] else None,
@@ -391,6 +564,15 @@ def summary(d, header, power):
     }
 
 
+def headline(d):
+    """The first line of the text report: model, serial, and the revision
+    code where the board has one."""
+    line = "%s  serial %s" % (d["model"], d["serial"])
+    if d.get("revision"):
+        line += "  rev %s" % d["revision"]
+    return line
+
+
 def main():
     d = collect()
     v = verdict(d)
@@ -398,7 +580,7 @@ def main():
         d["verdict"] = v
         print(json.dumps(d, indent=1))
         return
-    print("%s  serial %s  rev %s" % (d["model"], d["serial"], d["revision"]))
+    print(headline(d))
     for h in v["header"]:
         print("  header : " + h)
     for e in v["evidence"]:

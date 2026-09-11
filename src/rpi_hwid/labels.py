@@ -10,22 +10,25 @@ sticker. ``--outline`` draws the sticker edges for a plain-paper alignment
 print.
 
 Every label carries only what cannot change: a Pi's revision code, serial
-and soldered-down MACs and the HAT it wears; an FPGA board's DNA or Digilent
-serial and the name derived from it; a USB adapter's own MAC; a Tiny Tapeout
-board's shuttle, the chip ROM's commit and the demo board's RP2 unique id.
-Nothing about where a thing is plugged in or what it is called this month.
-Each identifier someone might need to type is also a QR code, in a
-monospace face with a slashed zero where one is installed.
+and soldered-down MACs and the HAT it wears; an Orange Pi's SoC serial,
+MAC, SoC and device-tree id; an FPGA board's DNA or Digilent serial and the
+name derived from it; a USB adapter's own MAC; a Tiny Tapeout board's
+shuttle, the chip ROM's commit and the demo board's RP2 unique id. Nothing
+about where a thing is plugged in or what it is called this month. Each
+identifier someone might need to type is also a QR code, in a monospace
+face with a slashed zero where one is installed.
 
 Records come straight from ``rpi-hwid collect`` output (or ``probe --json``
-files): one Pi label per document, one FPGA label per board the probe
-found, one Tiny Tapeout label per demo board, one adapter label per
-removable USB network adapter. Artwork: the package ships the Raspberry Pi
-raspberry, the Alphamax, Digilent and Tiny Tapeout marks and the
+files): one board label per document (a Raspberry Pi or an Orange Pi, the
+same layout with the maker's mark and the model decoding swapped, see
+``rpi_hwid.boards``), one FPGA label per board the probe found, one Tiny
+Tapeout label per demo board, one adapter label per removable USB network
+adapter. Artwork: the package ships the Raspberry Pi raspberry, the Orange
+Pi orange, the Alphamax, Digilent and Tiny Tapeout marks and the
 public-domain USB trident (see artwork/README.md, each mark drawn only on
 its owner's hardware); ``--artwork DIR`` overrides any of them and may add
 ``netv2.svg``, and a label whose mark is missing sets the maker's name in
-type.
+type (or, on a board label, leaves the mark's box empty).
 """
 
 from __future__ import annotations
@@ -46,10 +49,11 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
+from rpi_hwid import boards
 from rpi_hwid import names as naming
 from rpi_hwid import tinytapeout as tt_data
 from rpi_hwid.collect import load_collected
-from rpi_hwid.revision import decode_revision, derived_wlan_mac
+from rpi_hwid.revision import derived_wlan_mac
 
 PACKAGE_ARTWORK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artwork")
 ARTWORK_DIR = None
@@ -76,6 +80,9 @@ SANS, SANS_BOLD, MONO, MONO_REGULAR = "Helvetica", "Helvetica-Bold", "Courier-Bo
 # dither into dots on a laser printer, light enough to step back from the
 # black values it labels.
 GREY = HexColor("#555555")
+# A value the probe could not read, said in words: darker than the caption
+# beside it, so the row reads as a value in grey and not as a second caption.
+NOTE = HexColor("#444444")
 CAPTION = 6                # caption size, points, everywhere
 
 
@@ -139,7 +146,7 @@ class Label:
     CAPTION_GAP = 1.2 * mm
 
     def captioned(self, x_cap, x_val, y, cap, val, val_font, val_size,
-                  max_w, cap_size=CAPTION, min_size=5.5):
+                  max_w, cap_size=CAPTION, min_size=5.5, color=black):
         """A grey caption and its value on one shared baseline; `y` is the
         cap-height top of the value. The caption is set flush against the
         value, right-aligned just left of `x_val`, so the pair reads as one
@@ -150,7 +157,7 @@ class Label:
         cap_x = max(x_val - self.CAPTION_GAP, x_cap + self.width(cap, SANS, cap_size))
         self.text(cap_x, baseline - cap_size * 0.72, cap, SANS, cap_size,
                   align="right", color=GREY)
-        self.fit(x_val, y, val, val_font, size, max_w, min_size)
+        self.fit(x_val, y, val, val_font, size, max_w, min_size, color=color)
         return size
 
     def rule(self, x, y, w):
@@ -221,9 +228,9 @@ class Label:
 
 # --- marks --------------------------------------------------------------------
 #
-# The Raspberry Pi raspberry, the Alphamax and Digilent marks and the USB
-# trident are real artwork, shipped in artwork/ (see artwork/README.md for
-# where each came from). There is no vector NeTV2 logo to be had, so that
+# The Raspberry Pi raspberry, the Orange Pi orange, the Alphamax and
+# Digilent marks and the USB trident are real artwork, shipped in artwork/
+# (see artwork/README.md for where each came from). There is no vector NeTV2 logo to be had, so that
 # mark is drawn here: drop a `netv2.svg` into the --artwork directory and it
 # will be used instead. The Wi-Fi arcs are drawn too, which is simpler than
 # tracking a licence for a three-arc glyph.
@@ -244,18 +251,48 @@ def mark_netv2(lab, x, y, height):
     return lab.svg(path, x, y, height) if path else 0
 
 
-def mark_raster(lab, name, x, y, height):
-    """A raster mark from the artwork directory, scaled to `height`; the
-    width it took, or 0 when the file is absent."""
-    path = artwork(name)
-    if not path:
-        return 0
+def raster(lab, path, x, y, height):
+    """A raster image scaled to `height` with its top-left at (x, y); the
+    width it took."""
     from PIL import Image
     w0, h0 = Image.open(path).size
     width = height * w0 / h0
     px, py = lab.pt(x, y + height)
     lab.c.drawImage(path, px, py, width, height, mask="auto")
     return width
+
+
+def mark_raster(lab, name, x, y, height):
+    """A raster mark from the artwork directory, scaled to `height`; the
+    width it took, or 0 when the file is absent."""
+    path = artwork(name)
+    return raster(lab, path, x, y, height) if path else 0
+
+
+def mark_aspect(path):
+    """height / width of a mark, SVG or raster."""
+    if path.endswith(".svg"):
+        return Label.svg_aspect(path)
+    from PIL import Image
+    w0, h0 = Image.open(path).size
+    return h0 / w0
+
+
+def mark_fitted(lab, name, x, y, box_w, box_h):
+    """A mark from the artwork directory drawn as large as fits inside the
+    box, flush left and centred vertically, so every board label keeps
+    the same geometry whatever shape its maker's mark is. Nothing is drawn
+    (and the box stays blank) when the file is absent."""
+    path = artwork(name)
+    if not path:
+        return
+    aspect = mark_aspect(path)
+    h = min(box_h, box_w * aspect)
+    top = y + (box_h - h) / 2
+    if path.endswith(".svg"):
+        lab.svg(path, x, top, h)
+    else:
+        raster(lab, path, x, top, h)
 
 
 def mark_alphamax(lab, x, y, height):
@@ -281,13 +318,6 @@ def mark_maker(lab, board, x, y, height):
         lab.text(x, y + height - 2.5 * mm, board.maker, SANS, size, color=GREY)
         w = lab.width(board.maker, SANS, size)
     return w
-
-
-def mark_rpi(lab, x, y, height):
-    """The raspberry (raspberry-pi.svg, shipped; a trademark of Raspberry Pi
-    Ltd, see artwork/README.md); nothing if the file has been removed."""
-    path = artwork("raspberry-pi.svg")
-    return lab.svg(path, x, y, height) if path else 0
 
 
 def mark_usb(lab, x, y, height):
@@ -412,19 +442,27 @@ def draw_fpga(lab, board):
                  LABEL_W - 2 * PAD - 6 * mm)
 
 
-def draw_rpi(lab, pi):
-    """Every Pi label has the same bands at the same heights, so the eye
-    finds each fact in the same place on every board. Up the left edge: a
-    small QR of the serial at the top with the serial reading up to it, a
-    cross-check rather than the identity people use (a 16-character serial
-    is 16 bytes, which the smallest QR holds at error level L; a Code 128 of
-    it cannot reach a printable bar width in a 38 mm spine). Then two
-    columns: the raspberry, the HAT and uuid captions and the two MAC QRs on
-    the left, all as wide as a QR; the title, subtitle, HAT line, uuid and
-    MACs on the right, sharing one left edge. The MACs are what people look
-    for, so they are the largest thing on the label. A row whose MAC is not
-    known says why, in grey."""
-    d = {"model": pi.model, "memory": pi.memory, "revision": pi.rev}
+# The header band is the raspberry's height at the QR width that the rest
+# of the layout leaves: its aspect (height / width, as svglib measures the
+# shipped SVG) is fixed here so the bands are the same on every board
+# label, whatever mark sits in the box and even when there is none.
+MARK_ASPECT = 262.5 / 205.554
+
+
+def draw_board(lab, b):
+    """One design for every single-board computer, Raspberry Pi or Orange
+    Pi: the same bands at the same heights, so the eye finds each fact in
+    the same place on every board. Up the left edge: a small QR of the
+    serial at the top with the serial reading up to it, a cross-check
+    rather than the identity people use (a 16-character serial is 16 bytes,
+    which the smallest QR holds at error level L; a Code 128 of it cannot
+    reach a printable bar width in a 38 mm spine). Then two columns: the
+    maker's mark, the HAT and uuid captions and the two MAC QRs on the
+    left, all as wide as a QR; the title, subtitle, HAT line, uuid and MACs
+    on the right, sharing one left edge. The MACs are what people look for,
+    so they are the largest thing on the label. A row whose MAC is not
+    known says why, in grey; so does the header row on a board that has no
+    HAT convention to probe."""
 
     # --- the spine: the serial's QR, the serial, its caption ---
     # The 16 digits are set as two columns of eight reading up, so they can
@@ -433,13 +471,13 @@ def draw_rpi(lab, pi):
     # left column, as rotated lines stack to the right.
     ser_qr = 6.5 * mm                  # 21 modules at 0.31 mm
     ser_size = 10
-    lab.qr(PAD, PAD, ser_qr, pi.serial, error="l")
-    half = (len(pi.serial) + 1) // 2
+    lab.qr(PAD, PAD, ser_qr, b.serial, error="l")
+    half = (len(b.serial) + 1) // 2
     col_pitch = ser_size * 0.72 + 0.7 * mm
-    lab.rotated(PAD, LABEL_H - PAD, pi.serial[:half], MONO, ser_size)
-    lab.rotated(PAD + col_pitch, LABEL_H - PAD, pi.serial[half:], MONO, ser_size)
-    ser_len = max(lab.width(pi.serial[:half], MONO, ser_size),
-                  lab.width(pi.serial[half:], MONO, ser_size))
+    lab.rotated(PAD, LABEL_H - PAD, b.serial[:half], MONO, ser_size)
+    lab.rotated(PAD + col_pitch, LABEL_H - PAD, b.serial[half:], MONO, ser_size)
+    ser_len = max(lab.width(b.serial[:half], MONO, ser_size),
+                  lab.width(b.serial[half:], MONO, ser_size))
     lab.rotated(PAD, LABEL_H - PAD - ser_len - 1 * mm, "serial", SANS, CAPTION, color=GREY)
     x = PAD + ser_qr + 1.5 * mm
 
@@ -447,58 +485,52 @@ def draw_rpi(lab, pi):
     title_h = 8.2 * mm                 # title over subtitle
     hat_rows = 3.2 * mm + 3.4 * mm
     qr_gap = 2 * mm                    # quiet zone between the stacked QRs
-    logo = artwork("raspberry-pi.svg")
-    aspect = Label.svg_aspect(logo) if logo else 0
-    # the header band is the raspberry's height (or the title block's when
-    # there is no raspberry), then the HAT rows, then the two QR rows:
-    # qr * aspect + 0.8 + hat_rows + 0.5 + qr + qr_gap + qr = usable
+    # the header band is the mark's box, then the HAT rows, then the two
+    # QR rows: qr * aspect + 0.8 + hat_rows + 0.5 + qr + qr_gap + qr = usable
     usable = LABEL_H - 2 * PAD
     rest = usable - 0.8 * mm - hat_rows - 0.5 * mm - qr_gap
-    qr = min(rest / (aspect + 2), (rest - title_h) / 2)
-    logo_h = qr * aspect
+    qr = min(rest / (MARK_ASPECT + 2), (rest - title_h) / 2)
+    logo_h = qr * MARK_ASPECT
     tx = x + qr + 1.5 * mm
     col_w = LABEL_W - PAD - tx
-    if logo:
-        mark_rpi(lab, x, PAD, logo_h)
+    mark_fitted(lab, b.mark, x, PAD, qr, logo_h)
     y = PAD + max(0, (logo_h - title_h) / 2)
-    lab.fit(tx, y, "Raspberry Pi " + d["model"], SANS_BOLD, 11, col_w)
-    lab.fit(tx, y + 4.6 * mm,
-            "{}  ·  Rev {}  ·  rev code {}".format(d["memory"], d["revision"],
-                                                   pi.revision), SANS, 6.5, col_w)
+    lab.fit(tx, y, b.title, SANS_BOLD, 11, col_w)
+    lab.fit(tx, y + 4.6 * mm, b.subtitle, SANS, 6.5, col_w)
 
     # HAT band: the HAT line, then the uuid line centred in the rest of the
-    # band (regular weight: bold mono at 6 pt fills in under toner)
+    # band (regular weight: bold mono at 6 pt fills in under toner). A
+    # board without the HAT convention keeps the row, captioned "header"
+    # and saying in grey that nothing was probed there.
     y = PAD + max(logo_h, title_h) + 0.8 * mm
     band_top = y
-    if pi.header:
-        line1 = "; ".join(pi.header)
+    if b.header:
+        lab.captioned(x, tx, y, "HAT", "; ".join(b.header), SANS, 7, col_w)
+    elif b.header_note:
+        lab.captioned(x, tx, y, "header", b.header_note, SANS, 7, col_w)
     else:
-        line1 = "none"
-    lab.captioned(x, tx, y, "HAT", line1, SANS, 7, col_w)
+        lab.captioned(x, tx, y, "HAT", "none", SANS, 7, col_w)
     y += 3.2 * mm
-    if pi.hat_uuid:
+    if b.hat_uuid:
         uuid_y = y + (3.4 * mm - 6.5 * 0.72) / 2
-        lab.captioned(x, tx, uuid_y, "uuid", pi.hat_uuid, MONO_REGULAR, 6.5, col_w,
+        lab.captioned(x, tx, uuid_y, "uuid", b.hat_uuid, MONO_REGULAR, 6.5, col_w,
                       min_size=5)
     y = band_top + hat_rows
 
     # MAC bands: eth then wlan, always both, fixed height
-    macs = dict(pi.macs)
+    macs = dict(b.macs)
     if "eth" not in macs:
         macs["eth"] = None
     if "wlan" not in macs:
         macs["wlan"] = None
-    reasons = {
-        "eth": "no wired port on this model" if "Zero" in d["model"] else "not read",
-        "wlan": pi.wlan_note or "not read",
-    }
+    reasons = {"eth": b.eth_note or "not read", "wlan": b.wlan_note or "not read"}
     cap_gap = 0.7 * mm
     mac_size = lab.fitted_size("00:00:00:00:00:00", MONO, 13, col_w)
     block = CAPTION * 0.72 + cap_gap + mac_size * 0.72
     for kind in ("eth", "wlan"):
         mac = macs[kind]
         text, font, size, colour = ((mac, MONO, mac_size, black) if mac
-                                    else (reasons[kind], SANS, 8, GREY))
+                                    else (reasons[kind], SANS, 8, NOTE))
         size = lab.fitted_size(text, font, size, col_w)
         cy = y + 0.5 * mm + (qr - block) / 2
         lab.text(tx, cy, kind + " MAC", SANS, CAPTION, color=GREY)
@@ -666,18 +698,23 @@ IDCODE_PART = {"0x362d093": "XC7A35T", "0x3631093": "XC7A100T", "0x3636093": "XC
 
 
 @dataclass(frozen=True)
-class PiLabel:
-    """What the Pi label prints, from one document."""
+class BoardLabel:
+    """What a board label prints, from one document: the header from
+    ``rpi_hwid.boards``, the identifiers from the summary."""
 
+    kind: str                        # rpi | opi
+    short: str                       # "Pi 5", "Orange Pi PC"
+    title: str
+    subtitle: str
+    mark: str                        # artwork file name
     serial: str
-    revision: str                    # the code, e.g. c04170
-    rev: str                         # "1.0"
-    model: str                       # "5", "3 Model B+"
     memory: str
     macs: tuple[tuple[str, str], ...]        # (kind, mac), eth first
     header: tuple[str, ...]
     hat_uuid: str | None = None
-    wlan_note: str | None = None
+    header_note: str | None = None   # in place of the HAT line, on a board with no HATs
+    eth_note: str | None = None      # why there is no eth MAC
+    wlan_note: str | None = None     # why there is no wlan MAC
 
 
 @dataclass(frozen=True)
@@ -727,23 +764,35 @@ class UsbLabel:
     lines: tuple[tuple[str, str], ...]
 
 
-def pi_record(doc):
-    """The Pi label's record from a document."""
+def board_record(doc):
+    """The board label's record from a document. A missing wlan MAC is
+    derived where the board's rule allows (the Broadcom-OUI Pis), and
+    otherwise explained: no radio on this model, or a radio whose MAC
+    cannot be derived and so was disabled when the probe ran."""
     s = doc.summary
-    rev = decode_revision(s.revision)
+    ident = boards.identify(s)
+    if ident is None:                 # not a board this package labels
+        return None
     macs = [(m.kind, m.mac) for m in s.macs if m.kind in ("eth", "wlan")]
     wlan_note = None
     if not any(k == "wlan" for k, _ in macs):
         derived = derived_wlan_mac(s.serial, [{"kind": m.kind, "mac": m.mac} for m in s.macs])
         if derived:
             macs.append(("wlan", derived))
-        elif rev.is_pi5 or rev.model.startswith("4"):
+        elif ident.radio is False:
+            wlan_note = "no radio"
+        elif ident.kind == "rpi" and not ident.radio_derivable:
             wlan_note = "radio disabled, not readable"
     order = {"eth": 0, "wlan": 1}
     macs.sort(key=lambda m: order[m[0]])
-    return PiLabel(serial=s.serial, revision=rev.code, rev=rev.revision, model=rev.model,
-                   memory=rev.memory, macs=tuple(macs), header=tuple(s.header),
-                   hat_uuid=s.hat_uuid, wlan_note=wlan_note)
+    return BoardLabel(
+        kind=ident.kind, short=ident.short, title=ident.title, subtitle=ident.subtitle,
+        mark=ident.mark, serial=s.serial, memory=ident.memory, macs=tuple(macs),
+        header=tuple(s.header), hat_uuid=s.hat_uuid,
+        header_note=None if ident.kind == "rpi" else "40-pin",
+        eth_note="no wired port" if ident.wired is False else None,
+        wlan_note=wlan_note,
+    )
 
 
 def fpga_records(docs, pinned_names=None):
@@ -830,17 +879,25 @@ def usb_records(docs):
 
 # --- assembly -----------------------------------------------------------------
 
+KINDS = ("fpga", "tt", "rpi", "opi", "usb")
+
+
 def all_labels(docs, only, pinned_names=None):
+    only = set(only)
     if "fpga" in only:
         for b in fpga_records(docs, pinned_names):
             yield b.kind, b.name or b.model, draw_fpga, b
     if "tt" in only:
         for t in tinytapeout_records(docs):
             yield "tt", f"{t.headline} {t.usb_serial or ''}".strip(), draw_tinytapeout, t
-    if "rpi" in only:
+    if only & {"rpi", "opi"}:
         for host in sorted(docs):
-            p = pi_record(docs[host])
-            yield "rpi", f"Pi {p.model} {p.memory} {p.serial}", draw_rpi, p
+            b = board_record(docs[host])
+            if b is None:
+                print("%s: not a board this package labels, skipped" % host, file=sys.stderr)
+                continue
+            if b.kind in only:
+                yield b.kind, f"{b.short} {b.memory} {b.serial}", draw_board, b
     if "usb" in only:
         for u in usb_records(docs):
             yield "usb", f"{u.title} {u.mac}", draw_usb, u
@@ -854,7 +911,7 @@ def label_origin(index):
     return x, y
 
 
-def render(docs, out, only=("fpga", "tt", "rpi", "usb"), start=0, outline=False,
+def render(docs, out, only=KINDS, start=0, outline=False,
            pinned_names=None):
     """Write the PDF; returns (label count, sheet count)."""
     register_fonts()
@@ -882,7 +939,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="rpi-hwid labels", description=__doc__.split("\n")[0])
     ap.add_argument("--data", required=True, type=Path, help="directory of probe JSON documents")
     ap.add_argument("--out", default="hardware-labels.pdf", type=Path)
-    ap.add_argument("--only", action="append", choices=["fpga", "tt", "rpi", "usb"])
+    ap.add_argument("--only", action="append", choices=list(KINDS))
     ap.add_argument("--start", type=int, default=0,
                     help="leave the first N positions of the first sheet blank")
     ap.add_argument("--outline", action="store_true", help="draw each label's edge")
@@ -895,7 +952,7 @@ def main(argv=None):
     ARTWORK_DIR = str(args.artwork) if args.artwork else None
     docs = load_collected(args.data)
     pinned = json.loads(args.names.read_text()) if args.names else None
-    only = args.only or ["fpga", "tt", "rpi", "usb"]
+    only = args.only or list(KINDS)
     if args.list:
         for i, (kind, title, _, _) in enumerate(all_labels(docs, set(only), pinned)):
             pos = i + args.start
