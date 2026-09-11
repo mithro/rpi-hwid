@@ -112,15 +112,15 @@ and a line to write the DNA on when it has not been read yet.
 
 The shuttle is the headline, with ASIC or FPGA breakout and the PDK under it; then
 the demo board as the SDK detected it with the revision that shipped in that kit,
-and the chip ROM's commit. Then four colour boxes, so the right board is picked
-out of a drawer: for the chip carrier and for the demo board, a wide box in the
-board's soldermask and a narrow one in the silkscreen printed on it, in that
-proportion so no caption is needed to tell them apart, with both colours named
-beside. A TT05 kit, say, is a yellow carrier lettered in black on a black demo
-board lettered in white. A box is left empty and struck through where the colour
-is not recorded. The large QR opens the chip's page on tinytapeout.com; the demo
-board's RP2 unique id — its USB serial — runs along the foot with a small QR of
-its own.
+and the chip ROM's commit. Then a sample of each board, so the right one is
+picked out of a drawer: a box filled with that board's soldermask and lettered,
+the way the board itself is, in its silkscreen colour — so the box shows both
+colours at once — with the two named beside it, soldermask over silkscreen, for
+the reader whose eye the print cannot be trusted by. A TT05 kit, say, is a
+yellow carrier lettered in black beside a black demo board lettered in white. A
+box whose colours are not recorded is left empty and struck through. The large
+QR opens the chip's page on tinytapeout.com; the demo board's RP2 unique id —
+its USB serial — runs along the foot with a small QR of its own.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="49%">

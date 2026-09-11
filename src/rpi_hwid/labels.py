@@ -590,41 +590,37 @@ def draw_usb(lab, dev):
     lab.fit(PAD, y + CAPTION * 0.72 + cap_gap, dev.mac, MONO, mac_size, LABEL_W - 2 * PAD)
 
 
-def swatch(lab, x, y, w, h, colour):
-    """One colour-identification box: a keyline rectangle filled with the
-    colour, or left empty and struck through when it is not recorded. The
-    keyline matters: a white soldermask is a white box on white stock."""
+def swatch(lab, x, y, w, h, mask, silk=None, label=""):
+    """A sample of a board: a keyline box filled with the soldermask
+    colour and lettered, like the board itself, in the silkscreen colour.
+    A colour that is not recorded leaves the box empty and struck through,
+    and the lettering falls back to grey. The keyline matters -- a white
+    soldermask is a white box on white stock."""
     c = lab.c
     px, py = lab.pt(x, y + h)
     c.setStrokeColor(GREY)
     c.setLineWidth(0.4)
-    if colour:
-        c.setFillColor(HexColor(colour))
+    if mask:
+        c.setFillColor(HexColor(mask))
         c.rect(px, py, w, h, stroke=1, fill=1)
     else:
         c.rect(px, py, w, h, stroke=1, fill=0)
         c.line(px, py, px + w, py + h)      # struck through: nothing recorded
     c.setStrokeColor(black)
     c.setFillColor(black)
-
-
-def swatch_pair(lab, x, y, w, h, mask, silk):
-    """A board's two colours side by side: the soldermask in a wide box and
-    the silkscreen printed on it in a narrow one, in that order and in that
-    proportion, so which box is which needs no caption of its own. Returns
-    the width the pair took."""
-    mask_w = w * 0.62
-    swatch(lab, x, y, mask_w, h, mask)
-    swatch(lab, x + mask_w + 0.5 * mm, y, w - mask_w - 0.5 * mm, h, silk)
-    return w
+    if label:
+        size = lab.fitted_size(label, SANS_BOLD, 6, w - 1 * mm, min_size=4.5)
+        lab.text(x + w / 2, y + (h - size * 0.72) / 2, label, SANS_BOLD, size,
+                 align="centre", color=HexColor(silk) if silk else GREY)
 
 
 def draw_tinytapeout(lab, tt):
     """Left: the Tiny Tapeout mark beside the shuttle as the headline, the
     chip's kind and PDK under it, then the demo board and the ROM commit as
-    captioned rows, then a colour box each for the chip carrier and the
-    demo board (board colour, the colour's name beside it) so the right
-    board is picked out of a drawer. Right: a QR that opens the chip's
+    captioned rows, then a sample of each board -- the chip carrier and
+    the demo board -- filled with its soldermask and lettered in its
+    silkscreen, with both colours named beside it, so the right board is
+    picked out of a drawer. Right: a QR that opens the chip's
     page on tinytapeout.com. Foot: the demo board's RP2 unique id, its USB
     serial, the one thing on it that cannot change, set like the FPGA
     label's DNA, with its own small QR at the right end of the row."""
@@ -667,7 +663,7 @@ def draw_tinytapeout(lab, tt):
     lab.fit(tx, y, tt.headline, SANS_BOLD, head_size, col_w - (tx - x))
     y += head_cap + 1.2 * mm
     lab.text(x, y, tt.subtitle, SANS, 6.5)          # fixed size, like the Pi subtitle
-    row = 3.7 * mm
+    row = 3.5 * mm
     y += row
     cap_w = 14 * mm
     lab.captioned(x, x + cap_w, y, "board", tt.demoboard_text, SANS, 7.5, col_w - cap_w)
@@ -682,23 +678,30 @@ def draw_tinytapeout(lab, tt):
         lab.captioned(x, x + cap_w, y, "ROM", "not read", SANS, 7.5, col_w - cap_w)
     y += row
 
-    # The colours, so a board can be matched to its label across the bench:
-    # for each of the two boards, its soldermask and the silkscreen printed
-    # on it, with the caption over the two colours named in the same order.
-    sw, sh = 7.5 * mm, 4.5 * mm
-    line = CAPTION * 0.72 + 0.6 * mm
-    for i, (cap, mask, silk, names) in enumerate((
+    # The colours, so a board can be matched to its label across the bench.
+    # Each box is a sample of the board it names: filled with that board's
+    # soldermask and lettered in its silkscreen, the way the board itself
+    # is. Beside it the two colours in words, soldermask over silkscreen,
+    # for the reader whose eye the print cannot be trusted by.
+    sw, sh = 11 * mm, 5.5 * mm
+    line = CAPTION * 0.72 + 0.5 * mm
+    for i, (cap, mask, silk, mask_name, silk_name) in enumerate((
             ("carrier", tt.chip_colour, tt.chip_silk,
-             colour_names(tt.chip_colour_name, tt.chip_silk_name)),
+             tt.chip_colour_name, tt.chip_silk_name),
             ("demo board", tt.demoboard_colour, tt.demoboard_silk,
-             colour_names(tt.demoboard_colour_name, tt.demoboard_silk_name)))):
+             tt.demoboard_colour_name, tt.demoboard_silk_name))):
         sx = x + i * (col_w / 2)
-        swatch_pair(lab, sx, y, sw, sh, mask, silk)
+        swatch(lab, sx, y, sw, sh, mask, silk, cap)
         tx2 = sx + sw + 1 * mm
         tw = col_w / 2 - sw - 1.5 * mm
-        ty = y + (sh - 2 * line + 0.6 * mm) / 2
-        lab.fit(tx2, ty, cap, SANS, CAPTION, tw, min_size=5, color=GREY)
-        lab.fit(tx2, ty + line, names, SANS, CAPTION, tw, min_size=5)
+        if mask_name or silk_name:
+            ty = y + (sh - 2 * line + 0.5 * mm) / 2
+            lab.fit(tx2, ty, mask_name or "?", SANS, CAPTION, tw, min_size=4.5)
+            lab.fit(tx2, ty + line, silk_name or "?", SANS, CAPTION, tw, min_size=4.5,
+                    color=GREY)
+        else:
+            lab.fit(tx2, y + (sh - CAPTION * 0.72) / 2, "unknown", SANS, CAPTION,
+                    tw, min_size=4.5, color=GREY)
 
 
 
@@ -850,13 +853,6 @@ def demoboard_text(detected, version):
         rev = version.lstrip("vV")
     parts = [p for p in (name, ("Rev " + rev) if rev else "") if p]
     return "  ·  ".join(parts) if parts else "not read"
-
-
-def colour_names(mask, silk):
-    """The two colours of one board, in the order their boxes are drawn."""
-    if mask and silk:
-        return "%s/%s" % (mask, silk)
-    return mask or silk or "not recorded"
 
 
 def tinytapeout_records(docs):
