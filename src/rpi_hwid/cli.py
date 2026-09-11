@@ -1,8 +1,11 @@
 """The rpi-hwid command line.
 
-    rpi-hwid probe [--json] [--fpga] [--jtag] [--flash]   on a Pi: what is this?
+    rpi-hwid probe [--json] [--fpga] [--jtag] [--flash] [--tinytapeout]
+                                                          on a Pi: what is this?
     rpi-hwid fpga [--json] [--jtag] [--flash]             on a Pi: which FPGA board?
-    rpi-hwid collect --out DIR [-J JUMP] [--fpga] HOST…  over ssh: one JSON per host
+    rpi-hwid tinytapeout [--json] [--no-repl]             on a Pi: which Tiny Tapeout board?
+    rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] HOST…
+                                                          over ssh: one JSON per host
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
     rpi-hwid name --netv2 DNA… | --arty SERIAL…           the derived board names
     rpi-hwid revision CODE…                               decode Pi revision codes
@@ -28,6 +31,10 @@ def cmd_probe(args: argparse.Namespace) -> int:
         from rpi_hwid import fpga
 
         fpga.merge_fpga(doc, fpga.collect_fpga(args.jtag, args.flash))
+    if args.tinytapeout:
+        from rpi_hwid import tinytapeout
+
+        tinytapeout.merge_tinytapeout(doc, tinytapeout.collect_tinytapeout())
     if args.json:
         print(json.dumps(doc, indent=1))
         return 0
@@ -42,6 +49,10 @@ def cmd_probe(args: argparse.Namespace) -> int:
         from rpi_hwid import fpga
 
         fpga.describe(v["fpga"])
+    if "tinytapeout" in v:
+        from rpi_hwid import tinytapeout
+
+        tinytapeout.describe(v["tinytapeout"])
     for i in doc["interfaces"]:
         if i["onboard"]:
             print(f"  onboard: {i['kind']:6s} {i['mac']}  {i['driver']}")
@@ -62,21 +73,34 @@ def cmd_fpga(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tinytapeout(args: argparse.Namespace) -> int:
+    from rpi_hwid import tinytapeout
+
+    t = tinytapeout.collect_tinytapeout(repl=not args.no_repl)
+    if args.json:
+        print(json.dumps(t, indent=1))
+    else:
+        tinytapeout.describe(t["boards"])
+    return 0
+
+
 def cmd_collect(args: argparse.Namespace) -> int:
     from rpi_hwid.collect import collect
 
     results = collect(
         args.hosts, args.out, users=tuple(args.users.split(",")), jump=args.jump,
         fpga=args.fpga, jtag_hosts=tuple(args.jtag or ()), flash_hosts=tuple(args.flash or ()),
-        workers=args.workers,
+        workers=args.workers, tinytapeout=args.tinytapeout,
     )
     failed = 0
     for r in results:
         if r.ok and r.doc is not None:
             s = r.doc.summary
             boards = ", ".join(b.identity or b.kind for b in s.fpga)
+            tts = ", ".join(b.shuttle or b.chip or "?" for b in s.tinytapeout)
             print(f"  {r.host}: {s.model}; header {list(s.header) or 'bare'}; "
-                  f"power {s.power_class}" + (f"; fpga {boards}" if boards else ""))
+                  f"power {s.power_class}" + (f"; fpga {boards}" if boards else "")
+                  + (f"; tinytapeout {tts}" if tts else ""))
         else:
             failed += 1
             print(f"  {r.host}: FAILED ({r.error})")
@@ -113,6 +137,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--jtag", action="store_true", help="also drive JTAG for idcode and DNA")
     p.add_argument("--flash", action="store_true",
                    help="also identify an Arty's SPI flash (reloads the FPGA)")
+    p.add_argument("--tinytapeout", action="store_true",
+                   help="also look for a Tiny Tapeout demo board (reads its REPL)")
     p.set_defaults(func=cmd_probe)
 
     p = sub.add_parser("fpga", help="which FPGA board is attached (run on the Pi)")
@@ -120,6 +146,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--jtag", action="store_true")
     p.add_argument("--flash", action="store_true")
     p.set_defaults(func=cmd_fpga)
+
+    p = sub.add_parser("tinytapeout",
+                       help="which Tiny Tapeout demo board is on USB (run on the Pi)")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-repl", action="store_true",
+                   help="stop at the USB tree; do not read the board's REPL")
+    p.set_defaults(func=cmd_tinytapeout)
 
     p = sub.add_parser("collect", help="probe hosts over ssh, one JSON file each")
     p.add_argument("hosts", nargs="+", help="host or user@host")
@@ -132,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="drive JTAG on this host (implies --fpga for it)")
     p.add_argument("--flash", action="append", metavar="HOST",
                    help="identify the Arty flash on this host (reloads the FPGA)")
+    p.add_argument("--tinytapeout", action="store_true",
+                   help="append the Tiny Tapeout module on every host")
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_collect)
 

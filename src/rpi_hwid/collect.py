@@ -7,6 +7,7 @@ host that no user can reach is reported, never skipped silently.
 
     rpi-hwid collect --out data/ rpi5-netv2 pi@10.21.1.10 -J welland.fpgas.online
     rpi-hwid collect --out data/ --fpga --jtag rpi5-netv2      # with the FPGA module
+    rpi-hwid collect --out data/ --tinytapeout rpiz-tt          # with the Tiny Tapeout module
 
 The output files are the input to ``rpi-hwid labels``.
 """
@@ -29,24 +30,30 @@ from rpi_hwid.model import ProbeDocument
 DEFAULT_USERS = (getpass.getuser(), "pi")
 
 
-def probe_source(fpga: bool = False, jtag: bool = False, flash: bool = False) -> str:
+def probe_source(
+    fpga: bool = False, jtag: bool = False, flash: bool = False, tinytapeout: bool = False,
+) -> str:
     """The script to feed to ``python3 -`` on a host.
 
-    The Pi probe alone, or the Pi probe followed by the FPGA module and a
-    few lines that run both and merge the FPGA findings into the Pi
-    document. Both files skip their own ``main()`` when embedded.
+    The Pi probe alone, or the Pi probe followed by the FPGA module, the
+    Tiny Tapeout module or both, and a few lines that run them all and
+    merge the extra findings into the Pi document. Every file skips its
+    own ``main()`` when embedded.
     """
     pkg = resources.files("rpi_hwid")
     probe = pkg.joinpath("probe.py").read_text()
-    if not fpga:
+    if not fpga and not tinytapeout:
         return probe
-    fpga_src = pkg.joinpath("fpga.py").read_text()
-    glue = (
-        "\n\n_doc = collect()\n_doc['verdict'] = verdict(_doc)\n"
-        f"merge_fpga(_doc, collect_fpga({jtag!r}, {flash!r}))\n"
-        "print(json.dumps(_doc, indent=1))\n"
-    )
-    return "RPI_HWID_EMBEDDED = True\n" + probe + "\n" + fpga_src + glue
+    extra = ""
+    glue = "\n\n_doc = collect()\n_doc['verdict'] = verdict(_doc)\n"
+    if fpga:
+        extra += "\n" + pkg.joinpath("fpga.py").read_text()
+        glue += f"merge_fpga(_doc, collect_fpga({jtag!r}, {flash!r}))\n"
+    if tinytapeout:
+        extra += "\n" + pkg.joinpath("tinytapeout.py").read_text()
+        glue += "merge_tinytapeout(_doc, collect_tinytapeout())\n"
+    glue += "print(json.dumps(_doc, indent=1))\n"
+    return "RPI_HWID_EMBEDDED = True\n" + probe + extra + glue
 
 
 @dataclass
@@ -68,9 +75,10 @@ def probe_host(
     jtag: bool = False,
     flash: bool = False,
     timeout: int = 180,
+    tinytapeout: bool = False,
 ) -> Result:
     """Run the probe on one host; `host` may carry its own ``user@``."""
-    source = probe_source(fpga, jtag, flash)
+    source = probe_source(fpga, jtag, flash, tinytapeout)
     args = ["--json"]
     if "@" in host:
         user_list: Sequence[str] = [host.split("@", 1)[0]]
@@ -111,18 +119,21 @@ def collect(
     jtag_hosts: Sequence[str] = (),
     flash_hosts: Sequence[str] = (),
     workers: int = 4,
+    tinytapeout: bool = False,
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
     `fpga` appends the FPGA module for every host; `jtag_hosts` and
     `flash_hosts` name the hosts whose JTAG may be driven (and whose Arty
-    flash may be read, which reloads the FPGA).
+    flash may be read, which reloads the FPGA). `tinytapeout` appends the
+    Tiny Tapeout module for every host (its REPL read interrupts whatever
+    a demo board is running).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     def one(host: str) -> Result:
         return probe_host(host, users, jump, fpga or host in jtag_hosts,
-                          host in jtag_hosts, host in flash_hosts)
+                          host in jtag_hosts, host in flash_hosts, tinytapeout=tinytapeout)
 
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:

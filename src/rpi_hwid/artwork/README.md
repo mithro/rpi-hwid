@@ -11,6 +11,7 @@ mark is drawn only on the label of hardware that maker made, to identify it.
 | `alphamax.png` | the Alphamax "αmax libre video" wordmark, the NeTV2's maker | the [AlphamaxMedia GitHub organisation](https://github.com/AlphamaxMedia) avatar, `avatars.githubusercontent.com/u/39319945`, fetched 2026-09-09 and trimmed of its white padding (384 × 135 px); their own site's certificate had expired, so no vector original was reachable | Alphamax's mark. |
 | `digilent.png` | the Digilent triangle and wordmark, the Arty's maker | the [Digilent GitHub organisation](https://github.com/Digilent) avatar, `avatars.githubusercontent.com/u/977222`, fetched 2026-09-09 and trimmed (460 × 417 px) | Digilent's mark. |
 | `usb.svg` | the USB trident | [commons.wikimedia.org File:USB_icon.svg](https://commons.wikimedia.org/wiki/File:USB_icon.svg), fetched 2026-09-09 | Public domain, per the Commons file page. |
+| `tinytapeout.svg` | the circular Tiny Tapeout mark | [tinytapeout.com/ttlogo.svg](https://tinytapeout.com/ttlogo.svg), the "SVG logo black and white" on the [branding page](https://tinytapeout.com/branding/) (`static/ttlogo.svg` in [TinyTapeout/tinytapeout_www](https://github.com/TinyTapeout/tinytapeout_www)), fetched 2026-09-10; the `viewBox` trimmed from the 682 × 459 canvas to the mark itself, the path untouched | Tiny Tapeout's mark. Drawn only on the label of a Tiny Tapeout demo board, to identify it. |
 
 The Wi-Fi arcs on the wireless-adapter label and the NeTV2 mark are drawn
 by the generator, not loaded from a file. SQRL has no logo to be had (the

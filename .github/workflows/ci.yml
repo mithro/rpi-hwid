@@ -50,7 +50,7 @@ jobs:
       - name: Tests + coverage gate
         run: uv run pytest
 
-  # The two probe files must stay runnable by the oldest python3 a Pi in the
+  # The three probe files must stay runnable by the oldest python3 a Pi in the
   # field carries (Raspbian stretch: 3.5). Byte-compile them with a real 3.5
   # from the python:3.5 image (uv has no 3.7 build for this runner, and 3.7
   # would not have been the right grammar anyway); the test suite separately
@@ -63,4 +63,4 @@ jobs:
       - name: Byte-compile the probes with python 3.5
         run: >-
           docker run --rm -v "$PWD:/src" -w /src python:3.5-slim
-          python -W error -m py_compile src/rpi_hwid/probe.py src/rpi_hwid/fpga.py
+          python -W error -m py_compile src/rpi_hwid/probe.py src/rpi_hwid/fpga.py src/rpi_hwid/tinytapeout.py
