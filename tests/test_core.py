@@ -98,7 +98,7 @@ def test_identify_pi_from_revision_and_orange_pi_from_device_tree(docs):
     zero = boards.identify(docs["rpiz-serial"].summary)
     assert zero.wired is False
     assert zero.radio_derivable is True
-    opi = boards.identify(docs["opi1pc-b"].summary)
+    opi = boards.identify(docs["pi-sw2-p22"].summary)
     assert (opi.kind, opi.short, opi.title) == ("opi", "Orange Pi PC", "Orange Pi PC")
     assert opi.subtitle == "1 GB  ·  Allwinner H3  ·  dt orangepi-pc"
     assert opi.mark == "orange-pi.png"
@@ -127,11 +127,8 @@ def test_identify_orange_pi_without_captured_details():
 
 
 def test_sunxi_mac_follows_uboot_rule():
-    # opi1pc-b, both captured: the one full check the fleet allows
-    assert boards.sunxi_mac("02c00181e1ce7d46") == "02:81:e1:ce:7d:46"
-    # opi1pc-a: only the MAC was captured (02:81:3c:1a:db:71); the rule says
-    # its serial ends in 3c1adb71 and, like every H3, has 0x81 in byte 3
-    assert boards.sunxi_mac("02c001813c1adb71") == "02:81:3c:1a:db:71"
+    # pi-sw2-p22, read off the board: SID -> serial -> MAC, all three agree
+    assert boards.sunxi_mac("02c000812eb7a34e") == "02:81:2e:b7:a3:4e"
     with pytest.raises(ValueError, match="sunxi serial"):
         boards.sunxi_mac("abcd")
 
@@ -435,10 +432,10 @@ def test_summary_round_trips_tinytapeout_boards():
 def test_load_collected(data_dir):
     docs = load_collected(data_dir)
     assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi-sw2-p16", "rpiz-serial", "pi-sw2-p47",
-                         "opi1pc-b", "rpi4-tt"}
-    assert docs["opi1pc-b"].summary.compatible == "xunlong,orangepi-pc allwinner,sun8i-h3"
-    assert docs["opi1pc-b"].summary.memory == "1 GB"
-    assert docs["opi1pc-b"].summary.revision == ""
+                         "pi-sw2-p22", "rpi4-tt"}
+    assert docs["pi-sw2-p22"].summary.compatible == "xunlong,orangepi-pc allwinner,sun8i-h3"
+    assert docs["pi-sw2-p22"].summary.memory == "1 GB"
+    assert docs["pi-sw2-p22"].summary.revision == ""
     assert docs["rpi5-netv2"].summary.fpga[0].identity == "0x00742c4e63b9085c"
     assert [b.shuttle for b in docs["rpi4-tt"].summary.tinytapeout] == ["tt06", "ttihp25a"]
     (data_dir / "bad.json").write_text("{}")

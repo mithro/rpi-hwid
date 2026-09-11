@@ -20,10 +20,10 @@ way it is on the Broadcom-OUI Pis: U-Boot (board/sunxi/board.c,
 
     eth0 = 02 : serial[6:8] : serial[8:16]
 
-i.e. the serial's fourth byte, then its last four. Held on opi1pc-b, the
-one fleet board whose serial was captured (02c00181e1ce7d46 gives
-02:81:e1:ce:7d:46); opi1pc-a's recorded MAC 02:81:3c:1a:db:71 fits the
-rule (an H3's chip-id word ends in 0x81) but its serial was never read.
+i.e. the serial's fourth byte, then its last four. Held on pi-sw2-p22
+(02c000812eb7a34e gives 02:81:2e:b7:a3:4e), whose SID, serial and MAC were
+all read off the board, so the derivation is confirmed end to end rather
+than against itself.
 """
 
 from __future__ import annotations
