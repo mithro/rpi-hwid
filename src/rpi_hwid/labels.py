@@ -49,7 +49,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-from rpi_hwid import boards
+from rpi_hwid import boards, tt_boards
 from rpi_hwid import names as naming
 from rpi_hwid import tinytapeout as tt_data
 from rpi_hwid.collect import load_collected
@@ -914,6 +914,13 @@ def tinytapeout_records(docs):
     for host in sorted(docs):
         for b in docs[host].summary.tinytapeout:
             info = tt_data.shuttle_info(b.shuttle)
+            # The spreadsheet first, for the colours and the chip's page: it
+            # is kept honest by CI and it has the boards the hand-written
+            # table in rpi_hwid.tinytapeout never got (TT09, the Sky and GF
+            # shuttles, FabricFox), and the real hex of each. That table
+            # stays as the fallback, and its COLOURS as the palette for a
+            # colour the sheet names but has no hex for.
+            sheet = tt_boards.colours(b.shuttle, tt_data.COLOURS)
             if b.chip == "fpga":
                 headline, parts = "FPGA", ["FPGA breakout, no ASIC"]
             elif b.shuttle:
@@ -925,19 +932,24 @@ def tinytapeout_records(docs):
                 headline, parts = "TT", ["shuttle not read"]
             out.append(TinyTapeoutLabel(
                 host=host, headline=headline, subtitle="  ·  ".join(parts),
-                url=info["url"] or tt_data.CHIPS_INDEX_URL,
+                url=(tt_boards.chip_page(b.shuttle) or info["url"]
+                     or tt_data.CHIPS_INDEX_URL),
                 demoboard_text=demoboard_text(
-                    b.demoboard, b.demoboard_version or info["demoboard_version"]),
+                    b.demoboard, (b.demoboard_version
+                                  or tt_boards.demoboard_version(b.shuttle)
+                                  or info["demoboard_version"])),
                 shuttle=b.shuttle, chip=b.chip, commit=b.commit, usb_serial=b.usb_serial,
                 mcu=b.mcu, marks=tuple(tt_data.shuttle_marks(b.shuttle)),
-                chip_colour=tt_data.COLOURS.get(info["chip_colour"] or ""),
-                chip_colour_name=info["chip_colour"],
-                chip_silk=tt_data.COLOURS.get(info["chip_silk"] or ""),
-                chip_silk_name=info["chip_silk"],
-                demoboard_colour=tt_data.COLOURS.get(info["demoboard_colour"] or ""),
-                demoboard_colour_name=info["demoboard_colour"],
-                demoboard_silk=tt_data.COLOURS.get(info["demoboard_silk"] or ""),
-                demoboard_silk_name=info["demoboard_silk"],
+                chip_colour=sheet["chip"] or tt_data.COLOURS.get(info["chip_colour"] or ""),
+                chip_colour_name=sheet["chip_name"] or info["chip_colour"],
+                chip_silk=sheet["chip_silk"] or tt_data.COLOURS.get(info["chip_silk"] or ""),
+                chip_silk_name=sheet["chip_silk_name"] or info["chip_silk"],
+                demoboard_colour=(sheet["demoboard"]
+                                  or tt_data.COLOURS.get(info["demoboard_colour"] or "")),
+                demoboard_colour_name=sheet["demoboard_name"] or info["demoboard_colour"],
+                demoboard_silk=(sheet["demoboard_silk"]
+                                or tt_data.COLOURS.get(info["demoboard_silk"] or "")),
+                demoboard_silk_name=sheet["demoboard_silk_name"] or info["demoboard_silk"],
             ))
     return out
 
