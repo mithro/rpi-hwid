@@ -279,26 +279,23 @@ def mark_file(name):
 
 
 def marks_widths(names, height, gap=1.2 * mm):
-    """[(file, width)] for the marks that exist, at `height`, and the width
-    the row of them takes. A mark whose file is absent is skipped rather
-    than leaving a hole."""
-    drawn = [(p, height / mark_aspect(p))
-             for p in (mark_file(n) for n in names) if p]
-    total = sum(w for _p, w in drawn) + gap * max(len(drawn) - 1, 0)
+    """[file] for the marks that exist and the width the row of them takes.
+    Every mark gets the same `height` x `height` cell, so a row reads as one
+    set however the individual marks are shaped. A mark whose file is
+    absent is skipped rather than leaving a hole."""
+    drawn = [p for p in (mark_file(n) for n in names) if p]
+    total = height * len(drawn) + gap * max(len(drawn) - 1, 0)
     return drawn, total
 
 
 def marks_row(lab, names, right, y, height, gap=1.2 * mm):
-    """Draw the marks in a row ending flush at `right`, in the order
-    given, each scaled to `height`."""
+    """Draw the marks in a row ending flush at `right`, in the order given,
+    each as large as fits its square cell and centred in it."""
     drawn, total = marks_widths(names, height, gap)
     at = right - total
-    for path, w in drawn:
-        if path.endswith(".svg"):
-            lab.svg(path, at, y, height)
-        else:
-            raster(lab, path, at, y, height)
-        at += w + gap
+    for path in drawn:
+        mark_in_box(lab, path, at, y, height, height)
+        at += height + gap
 
 
 def mark_aspect(path):
@@ -310,21 +307,29 @@ def mark_aspect(path):
     return h0 / w0
 
 
+def mark_in_box(lab, path, x, y, box_w, box_h, align="centre"):
+    """A mark drawn as large as fits inside the box, centred vertically and
+    either centred or flush left across it. Fitting rather than scaling to a
+    height is what lets a row or a column of marks keep one geometry however
+    the individual marks are shaped."""
+    aspect = mark_aspect(path)
+    h = min(box_h, box_w * aspect)
+    left = x if align == "left" else x + (box_w - h / aspect) / 2
+    top = y + (box_h - h) / 2
+    if path.endswith(".svg"):
+        lab.svg(path, left, top, h)
+    else:
+        raster(lab, path, left, top, h)
+
+
 def mark_fitted(lab, name, x, y, box_w, box_h):
     """A mark from the artwork directory drawn as large as fits inside the
     box, flush left and centred vertically, so every board label keeps
     the same geometry whatever shape its maker's mark is. Nothing is drawn
     (and the box stays blank) when the file is absent."""
     path = artwork(name)
-    if not path:
-        return
-    aspect = mark_aspect(path)
-    h = min(box_h, box_w * aspect)
-    top = y + (box_h - h) / 2
-    if path.endswith(".svg"):
-        lab.svg(path, x, top, h)
-    else:
-        raster(lab, path, x, top, h)
+    if path:
+        mark_in_box(lab, path, x, y, box_w, box_h, align="left")
 
 
 def mark_alphamax(lab, x, y, height):
