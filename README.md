@@ -25,38 +25,45 @@ to an A4 sheet (the Avery L7160 grid), from a directory of collected documents.
 Every label carries only what cannot change, and every identifier that might
 otherwise be typed is also a QR code. Cropped from a rendered sheet:
 
-<!-- The first row's td widths and the per-image pixel width are both load
-     bearing, because the two renderers discard opposite halves and size the
-     images by different rules:
-       GitHub keeps the td widths, which make the columns equal thirds, and
-       caps every image at its cell (.markdown-body img { max-width: 100% }),
-       so without them the columns are sized by caption length and the labels
+<!-- Two columns, each image at a fixed pixel width, and td widths on the
+     first row. All three are load bearing, because the two renderers keep
+     opposite halves and size the images by different rules:
+       GitHub keeps the td widths, which make the columns equal, and caps
+       every image at its cell (.markdown-body img { max-width: 100% }), so
+       without them the columns are sized by caption length and the labels
        come out at three different widths.
-       PyPI strips the td widths (readme_renderer.clean.ALLOWED_ATTRIBUTES
-       allows only colspan/rowspan/align on td) but puts no max-width on
-       description images, so there the img width alone decides the size.
-     Drop either one and one of the two renderings goes ragged. The crops are
-     all 500 x 300, so a single width covers all twelve. -->
+       PyPI strips the td widths (readme_renderer.clean allows only
+       colspan/rowspan/align on td, and no attributes at all on col), so
+       there nothing can equalise the columns: the only defence is leaving
+       enough room that the table never has to squeeze them. PyPI's
+       description column is 1150 - 60 padding - 60 gap - 250 sidebar =
+       780px, and at three columns the images had to drop to 200px to fit
+       it; at two they hold 250px down to a 560px column.
+     The crops are all 500 x 300, so a single width covers them all. -->
 <table>
 <tr>
-<td width="33%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5.png" alt="Pi 5, bare header" width="250"><br>Pi 5, bare header</td>
-<td width="33%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5-poe-hat.png" alt="Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read" width="250"><br>Pi 5 with a Waveshare PoE M.2 HAT+ (B); the radio is disabled, so no wlan MAC</td>
-<td width="33%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4-pmod-hat.png" alt="Pi 4 with a Digilent Pmod HAT Adaptor" width="250"><br>Pi 4 with a Digilent Pmod HAT Adaptor</td>
+<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5.png" alt="Pi 5, bare header" width="250"><br>Pi 5, bare header</td>
+<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5-poe-hat.png" alt="Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read" width="250"><br>Pi 5 with a Waveshare PoE M.2 HAT+ (B); the radio is disabled, so no wlan MAC</td>
 </tr>
 <tr>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4-pmod-hat.png" alt="Pi 4 with a Digilent Pmod HAT Adaptor" width="250"><br>Pi 4 with a Digilent Pmod HAT Adaptor</td>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi3bplus.png" alt="Pi 3B+; the wlan MAC is derived from the eth MAC" width="250"><br>Pi 3B+; the wlan MAC is derived from the eth MAC</td>
+</tr>
+<tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi-zero-w-bonnet.png" alt="Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC" width="250"><br>Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC</td>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/orange-pi-pc.png" alt="Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio" width="250"><br>Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio</td>
 </tr>
 <tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png" alt="NeTV2" width="250"><br>NeTV2, carrying the Device DNA and the name derived from it</td>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/arty.png" alt="Arty A7-35T" width="250"><br>Arty A7-35T, with its Digilent serial and flash part</td>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png" alt="Acorn CLE-215+, DNA not yet read" width="250"><br>Acorn CLE-215+, with a line to write the DNA on: it has not been read yet</td>
 </tr>
 <tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="250"><br>TT06 chip on a TT06+ demo board</td>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-ihp.png" alt="TTIHP25a chip on a DBv3 demo board; no colours recorded for that shuttle yet" width="250"><br>TTIHP25a on a DBv3 demo board; no colours recorded for that shuttle yet</td>
+</tr>
+<tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png" alt="ASIX AX88179 USB 3.0 gigabit adapter" width="250"><br>ASIX AX88179 USB 3.0 gigabit adapter</td>
+<td></td>
 </tr>
 </table>
 
