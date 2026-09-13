@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from functools import lru_cache
 from typing import Any
 
@@ -51,23 +52,59 @@ def _demoboard_by_shuttle() -> dict[str, Row]:
     return out
 
 
-def shuttle_boards(shuttle: str | None) -> dict[str, Row | None]:
+@lru_cache(maxsize=1)
+def _demoboard_by_version() -> dict[str, Row]:
+    """'v3.2' -> the demo board row the sheet records under that version.
+
+    The sheet's versions are unique across the demo boards, so this names a
+    board on its own, without a shuttle to go through."""
+    out: dict[str, Row] = {}
+    for name, board in sorted(load().get("demoboards", {}).items()):
+        version = (board.get("version") or "").strip().lower()
+        if version:
+            out.setdefault(version, dict(board, id=name))
+    return out
+
+
+def demoboard_revision(detected: str | None) -> str | None:
+    """The v3 SDK's ``'TTDBv3 [3.2]'`` -> ``'v3.2'``; anything with no
+    bracketed revision (``'TT06+'``) -> None."""
+    m = re.match(r"^.*\[([^\]]+)\]\s*$", detected or "")
+    return "v" + m.group(1).strip().lstrip("vV") if m else None
+
+
+def shuttle_boards(shuttle: str | None, demoboard: str | None = None) -> dict[str, Row | None]:
     """What the sheet knows about `shuttle`'s two boards, as
     ``{"chip": row or None, "demoboard": row or None}``. Both are None for a
     shuttle the sheet does not carry, so a caller can ask without a special
-    case."""
+    case.
+
+    `demoboard` is the board the probe read off the REPL, and it finds the
+    board when the shuttle cannot: an FPGA breakout has no shuttle at all,
+    and a shuttle the sheet has not listed under "Used by" yet (ttihp25a)
+    still sits on a board the sheet does know. The board says which board it
+    is, so believe it."""
     key = "".join((shuttle or "").split()).lower()
-    return {"chip": load().get("asics", {}).get(key),
-            "demoboard": _demoboard_by_shuttle().get(key)}
+    found: dict[str, Row | None] = {
+        "chip": load().get("asics", {}).get(key),
+        "demoboard": _demoboard_by_shuttle().get(key),
+    }
+    if not found["demoboard"]:
+        revision = demoboard_revision(demoboard)
+        if revision:
+            found["demoboard"] = _demoboard_by_version().get(revision)
+    return found
 
 
-def colours(shuttle: str | None, palette: dict[str, str]) -> dict[str, str | None]:
+def colours(shuttle: str | None, palette: dict[str, str],
+            demoboard: str | None = None) -> dict[str, str | None]:
     """The four colours a Tiny Tapeout label paints, as hex or None:
     ``chip``/``chip_silk`` for the carrier and ``demoboard``/
     ``demoboard_silk`` for the board under it, each with the sheet's name
     beside it. `palette` is the name -> hex fallback for a colour the sheet
-    names but has no hex for."""
-    found = shuttle_boards(shuttle)
+    names but has no hex for. `demoboard` is the board read off the REPL, for
+    the boards whose shuttle does not find them."""
+    found = shuttle_boards(shuttle, demoboard)
     out: dict[str, str | None] = {}
     for role, row in (("chip", found["chip"]), ("demoboard", found["demoboard"])):
         for key, suffix in (("colour", ""), ("silk", "_silk")):
@@ -81,9 +118,9 @@ def colours(shuttle: str | None, palette: dict[str, str]) -> dict[str, str | Non
     return out
 
 
-def demoboard_version(shuttle: str | None) -> str | None:
+def demoboard_version(shuttle: str | None, demoboard: str | None = None) -> str | None:
     """The version of the demo board that shipped with `shuttle`'s kit."""
-    return (shuttle_boards(shuttle)["demoboard"] or {}).get("version")
+    return (shuttle_boards(shuttle, demoboard)["demoboard"] or {}).get("version")
 
 
 def chip_page(shuttle: str | None) -> str | None:
