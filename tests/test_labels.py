@@ -23,7 +23,6 @@ def test_board_record_derives_a_broadcom_radio_mac(docs):
     assert p.mark == "raspberry-pi.svg"
     assert p.macs == (("eth", "b8:27:eb:e3:e7:e4"), ("wlan", "b8:27:eb:b6:b2:b1"))
     assert p.wlan_note is None
-    assert p.header_note is None
 
 
 def test_board_record_pi5_without_radio_says_so(docs):
@@ -50,9 +49,11 @@ def test_board_record_orange_pi_pc(docs):
     assert p.macs == (("eth", "02:81:2e:b7:a3:4e"),)
     assert p.wlan_note == "no radio"
     assert p.eth_note is None
-    assert p.header == ()
-    assert p.header_note == "40-pin"
-    assert p.hat_uuid is None
+    # The HAT band is the Pi's, not a special case: this board wears a
+    # Digilent Pmod HAT Adaptor and its label says so exactly as the Pi 4
+    # wearing the same adaptor does.
+    assert p.header == ("Pmod HAT Adaptor",)
+    assert p.hat_uuid == "363bffaa-8824-a94d-7242-3c0955f9126c"
 
 
 def test_fpga_records_named_and_typed(docs):

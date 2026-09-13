@@ -1,9 +1,11 @@
 """Run the probe on many Pis over ssh and keep one JSON file per host.
 
 The probe (``rpi_hwid.probe``) is fed to ``python3 -`` on the host over
-stdin, so nothing is installed there; it needs passwordless sudo for
-i2c-tools and vcgencmd. Each host is tried with each user in turn, and a
-host that no user can reach is reported, never skipped silently.
+stdin, so nothing is installed there; it wants passwordless sudo for the
+Pi's firmware tools (dtparam, vcgencmd) and reads the 40-pin header
+straight from /dev/i2c-*, which needs only the i2c group. Each host is
+tried with each user in turn, and a host that no user can reach is
+reported, never skipped silently.
 
     rpi-hwid collect --out data/ rpi5-netv2 pi@10.21.1.10 -J welland.fpgas.online
     rpi-hwid collect --out data/ --fpga --jtag rpi5-netv2      # with the FPGA module

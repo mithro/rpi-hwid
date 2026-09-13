@@ -40,7 +40,7 @@ fixed-shape `summary` everything else in the package consumes.
   "revision": "9000c1",
   "hat_fw": null,
   "hat_eeproms": {},
-  "i2c1": [],
+  "header_i2c": [],
   "usb": {"1-1": "1a40:0101", "1-1.4": "0bda:8152"},
   "interfaces": ["…"],
   "usb_net": ["…"],

@@ -53,14 +53,15 @@ the switch, not the Pi, so it is outside this package.
 
 The probe runs unchanged on the fleet's Xunlong Orange Pi PCs (Allwinner H3) and
 the document keeps its shape: the board is another `model`, with `revision` empty
-(the 0000 in its cpuinfo is not a code), `header` empty, and `power_class`
-`undetermined`, because an H3 has no PMIC and no firmware report of what feeds it.
-What it does have:
+(the 0000 in its cpuinfo is not a code) and `power_class` `undetermined`, because
+an H3 has no PMIC and no firmware report of what feeds it. Its 40-pin header is
+probed exactly as a Pi's, though — a HAT does not know what it is plugged into —
+so `header` names whatever it wears. What it has:
 
 ```
 $ rpi-hwid probe
 Xunlong Orange Pi PC  serial 02c000812eb7a34e
-  header : 40-pin header not probed: no HAT ID EEPROM convention on this board
+  header : Pmod HAT Adaptor (HAT EEPROM at 0x50, pid 0x0001)
   signal : device tree: compatible xunlong,orangepi-pc allwinner,sun8i-h3; 1 GB (MemTotal 1016504 kB)
   signal : Allwinner SID 0x02c00081 0x35d04620 0x79058814 0x401c0a94 -> serial 02c000812eb7a34e
   power  : no power sensing on this board: nothing on it reports its supply

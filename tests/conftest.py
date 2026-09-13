@@ -18,7 +18,7 @@ def _doc(model, serial, revision, header, power_class, fpga, macs, usb_net, rtc,
         "model": model, "serial": serial, "revision": revision,
         "compatible": compatible.split(),
         "board": "rpi" if model.startswith("Raspberry") else "opi",
-        "hat_fw": None, "hat_eeproms": {}, "i2c1": [], "usb": {},
+        "hat_fw": None, "hat_eeproms": {}, "header_i2c": [], "usb": {},
         "interfaces": [{"kind": m["kind"], "mac": m["mac"], "onboard": True,
                         "name": m["kind"] + "0", "driver": "x", "usb": None, "speed": None}
                        for m in macs],
@@ -77,20 +77,32 @@ ACORN_HOST = _doc(
     [{"kind": "eth", "mac": "98:fe:54:13:f5:75"}], [], True, True, 3000,
 )
 
-# The pool's Orange Pi PC, probed on pi-sw2-p22 on 2026-09-11: no revision
-# code, no HAT convention, no power sensing, a SoC serial from U-Boot and
-# the eth0 MAC U-Boot derives from it. It netboots the pool's Raspbian
-# armhf root like the Pi rigs do, so there is no Armbian release to read.
+# The pool's Orange Pi PC, probed on pi-sw2-p22: no revision code, no power
+# sensing, a SoC serial from U-Boot and the eth0 MAC U-Boot derives from it.
+# It netboots the pool's Raspbian armhf root like the Pi rigs do, so there is
+# no Armbian release to read.
+#
+# It wears a Digilent Pmod HAT Adaptor, and the HAT's ID EEPROM reads off the
+# header exactly as it does on the Pi 4 that wears the same adaptor -- the
+# uuid below is that board's, read off i2c-1 on 2026-09-13. The Orange Pi's
+# header ID pins are i2c-1 where a Pi's are i2c-0; nothing else differs, so
+# the two labels say the same thing. Its power class stays undetermined: a
+# Pmod adaptor is not a PoE HAT and an H3 has nothing to ask.
 OPI_PC = _doc(
-    "Xunlong Orange Pi PC", "02c000812eb7a34e", None, [], "undetermined", [],
+    "Xunlong Orange Pi PC", "02c000812eb7a34e", None, ["Pmod HAT Adaptor"], "undetermined", [],
     [{"kind": "eth", "mac": "02:81:2e:b7:a3:4e"}], [], None, None, None,
     compatible="xunlong,orangepi-pc allwinner,sun8i-h3", memory="1 GB",
 )
 OPI_PC.update(mem_kb=1016504, cpuinfo_serial="02c000812eb7a34e", armbian=None,
               sid=["0x02c00081", "0x35d04620", "0x79058814", "0x401c0a94"],
-              sid_serial="02c000812eb7a34e")
-OPI_PC["verdict"]["header"] = [
-    "40-pin header not probed: no HAT ID EEPROM convention on this board"]
+              sid_serial="02c000812eb7a34e",
+              hat_eeproms={"0x50": {"version": 1, "atoms": [],
+                                    "uuid": "363bffaa-8824-a94d-7242-3c0955f9126c",
+                                    "pid": "0x0001", "pver": "0x0001",
+                                    "vendor": "Digilent", "product": "Pmod HAT Adaptor"}},
+              header_i2c=[])
+OPI_PC["verdict"]["header"] = ["Pmod HAT Adaptor (HAT EEPROM at 0x50, pid 0x0001)"]
+OPI_PC["verdict"]["summary"]["hat_uuid"] = "363bffaa-8824-a94d-7242-3c0955f9126c"
 
 
 # A Pi 4 with two Tiny Tapeout demo boards on USB: a TT06 chip on its TT06+
