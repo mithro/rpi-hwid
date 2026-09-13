@@ -40,21 +40,26 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
        one line. Measured on the live page, that pulled one column to 298px
        and starved its neighbours' images to 217px while others held 250px.
        The <br>s cap max-content at the longest line instead of the whole
-       sentence, which is what makes three columns possible at all. That
-       gives the rule to keep when editing a caption: NO CAPTION LINE MAY BE
-       WIDER THAN THE IMAGE. Once every line fits inside 180px, all three
-       columns want exactly the image's width, ask for the same thing, and
-       split the surplus evenly. Count pixels, not characters -- "Pi Zero W
-       with the Waveshare" is 28 characters and 196px, and on its own it
-       dragged its column to 298px and its neighbours' images down to 217px.
-       PoE-ETH-USB-HUB-HAT is split at a hyphen for the same reason.
-       Below a 780px column the images no longer fit, and each column's floor
-       becomes its caption's min-content -- its longest unbreakable word,
-       which no amount of <br> changes. The remaining defence is an image
-       narrow enough to sit inside the narrowest column: at 180px all eleven
-       render identically down to a 600px column, the same window range the
-       old two-column, 250px gallery held. PyPI's column is 780px at a window
-       of 1150px or wider and narrows with it below that (654px at 1024px).
+       sentence, which is what makes three columns possible at all.
+       Hence the rule when editing a caption: NO LINE MAY BE WIDER THAN THE
+       IMAGE. Once every line fits inside 180px all three columns want
+       exactly the image's width, ask for the same thing, and split the
+       surplus evenly. Count pixels, not characters: "Pi Zero W with the
+       Waveshare" is 28 characters but 196px, and on its own it dragged its
+       column to 298px and its neighbours' images down to 217px.
+       Check the width in GitHub's font, not PyPI's -- GitHub sets 16px in a
+       188px cell against PyPI's ~14px, so it is the tighter of the two and a
+       line that fits there fits both. Wrapping for PyPI alone left GitHub
+       soft-wrapping the hard lines a second time and orphaning words.
+       PoE-ETH-USB-HUB-HAT is split at a hyphen because no wrap can shorten a
+       single word: below a 780px column the images stop fitting and each
+       column's floor becomes its caption's longest unbreakable word, which
+       no amount of <br> changes. The last defence is an image narrow enough
+       to sit inside the narrowest column: at 180px all eleven stay identical
+       down to a 600px column, the range the old two-column 250px gallery
+       held, and the residue below that is far smaller (0.2% at 580px, 0.8%
+       at 560px, against the old layout's 1.2%). PyPI's column is 780px at a
+       window of 1150px or wider and narrows with it below (654px at 1024px).
      The crops are all 500 x 300, so a single width covers them all.
      The captions sit in their own row under each image rather than in the
      cell with it, so a long one cannot push its image's row taller than the
@@ -67,8 +72,8 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 </tr>
 <tr>
 <td>Pi 5, bare header</td>
-<td>Pi 5 with a Waveshare PoE<br>M.2 HAT+ (B); the radio is<br>disabled, so no wlan MAC</td>
-<td>Pi 4 with a Digilent Pmod<br>HAT Adaptor</td>
+<td>Pi 5 with a Waveshare<br>PoE M.2 HAT+ (B);<br>the radio is disabled,<br>so no wlan MAC</td>
+<td>Pi 4 with a Digilent<br>Pmod HAT Adaptor</td>
 </tr>
 <tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi3bplus.png" alt="Pi 3B+; the wlan MAC is derived from the eth MAC" width="180"></td>
@@ -76,8 +81,8 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/orange-pi-pc.png" alt="Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio" width="180"></td>
 </tr>
 <tr>
-<td>Pi 3B+; the wlan MAC is<br>derived from the eth MAC</td>
-<td>Pi Zero W with the<br>Waveshare PoE-ETH-USB-<br>HUB-HAT; the bonnet's<br>RTL8152 is its eth MAC</td>
+<td>Pi 3B+; the wlan<br>MAC is derived<br>from the eth MAC</td>
+<td>Pi Zero W with the<br>Waveshare PoE-<br>ETH-USB-HUB-HAT;<br>the bonnet's RTL8152<br>is its eth MAC</td>
 <td>Orange Pi PC; eth MAC<br>derived by U-Boot from<br>the SoC serial, no radio</td>
 </tr>
 <tr>
@@ -86,9 +91,9 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="180"></td>
 </tr>
 <tr>
-<td>NeTV2, carrying the<br>Device DNA and the name<br>derived from it</td>
-<td>Arty A7-35T, with its<br>Digilent serial and<br>flash part</td>
-<td>TT06 chip on a TT06+<br>demo board</td>
+<td>NeTV2, carrying the<br>Device DNA and the<br>name derived from it</td>
+<td>Arty A7-35T, with<br>its Digilent serial<br>and flash part</td>
+<td>TT06 chip on a<br>TT06+ demo board</td>
 </tr>
 <tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-ihp.png" alt="TTIHP25a chip on a DBv3 demo board; no colours recorded for that shuttle yet" width="180"></td>
@@ -96,8 +101,8 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 <td></td>
 </tr>
 <tr>
-<td>TTIHP25a on a DBv3<br>demo board; no colours<br>recorded for that shuttle<br>yet</td>
-<td>ASIX AX88179 USB 3.0<br>gigabit adapter</td>
+<td>TTIHP25a on a<br>DBv3 demo board;<br>no colours recorded<br>for that shuttle yet</td>
+<td>ASIX AX88179 USB<br>3.0 gigabit adapter</td>
 <td></td>
 </tr>
 </table>
