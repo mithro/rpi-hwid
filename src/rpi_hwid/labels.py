@@ -632,7 +632,9 @@ def swatch(lab, x, y, w, h, mask, silk=None, label=""):
     colour and lettered, like the board itself, in the silkscreen colour.
     A colour that is not recorded leaves the box empty and struck through,
     and the lettering falls back to grey. The keyline matters -- a white
-    soldermask is a white box on white stock."""
+    soldermask is a white box on white stock. A newline in `label` breaks
+    it across lines, which a two-word name needs: set on one line it has
+    to shrink to the box's width, and the box is wider than it is tall."""
     c = lab.c
     px, py = lab.pt(x, y + h)
     c.setStrokeColor(GREY)
@@ -646,9 +648,14 @@ def swatch(lab, x, y, w, h, mask, silk=None, label=""):
     c.setStrokeColor(black)
     c.setFillColor(black)
     if label:
-        size = lab.fitted_size(label, SANS_BOLD, 6, w - 1 * mm, min_size=4.5)
-        lab.text(x + w / 2, y + (h - size * 0.72) / 2, label, SANS_BOLD, size,
-                 align="centre", color=HexColor(silk) if silk else GREY)
+        lines = label.split("\n")
+        size = min(lab.fitted_size(s, SANS_BOLD, 6, w - 1 * mm, min_size=4.5) for s in lines)
+        lead = size * 0.95
+        block = (len(lines) - 1) * lead + size * 0.72
+        top = y + (h - block) / 2
+        for i, s in enumerate(lines):
+            lab.text(x + w / 2, top + i * lead, s, SANS_BOLD, size,
+                     align="centre", color=HexColor(silk) if silk else GREY)
 
 
 def draw_tinytapeout(lab, tt):
@@ -736,7 +743,7 @@ def draw_tinytapeout(lab, tt):
     for i, (cap, mask, silk, mask_name, silk_name) in enumerate((
             ("carrier", tt.chip_colour, tt.chip_silk,
              tt.chip_colour_name, tt.chip_silk_name),
-            ("demo board", tt.demoboard_colour, tt.demoboard_silk,
+            ("demo\nboard", tt.demoboard_colour, tt.demoboard_silk,
              tt.demoboard_colour_name, tt.demoboard_silk_name))):
         sx = x + i * (col_w / 2)
         swatch(lab, sx, y, sw, sh, mask, silk, cap)

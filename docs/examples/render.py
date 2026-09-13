@@ -53,6 +53,13 @@ def main() -> None:
     kinds = set(labels.KINDS)
     titles = [(kind, title) for kind, title, _d, _r in labels.all_labels(docs, kinds)]
 
+    # The crop is a box of one fixed pixel size moved around the page, not four
+    # edges rounded separately: rounding each edge would let a label whose left
+    # edge lands on .5 come out a pixel wider than its neighbours, and the
+    # README lays these out in a grid that only looks right if every crop is
+    # exactly the same size.
+    box_w, box_h = round(labels.LABEL_W * PX), round(labels.LABEL_H * PX)
+
     with tempfile.TemporaryDirectory(dir=HERE) as tmp:
         subprocess.run(["pdftoppm", "-r", str(DPI), "-png", str(pdf), tmp + "/page"], check=True)
         page = Image.open(next(Path(tmp).glob("page*.png")))
@@ -63,13 +70,16 @@ def main() -> None:
                 raise SystemExit(f"{len(hits)} fixture labels match {kind} {needle!r}, want one")
             index = hits[0]
             x, y = labels.label_origin(index)
-            left, bottom = x * PX, page_h - y * PX
-            top, right = bottom - labels.LABEL_H * PX, left + labels.LABEL_W * PX
-            page.crop((round(left), round(top), round(right), round(bottom))).save(
-                HERE / f"{name}.png"
-            )
+            left = round(x * PX)
+            top = round(page_h - y * PX - labels.LABEL_H * PX)
+            page.crop((left, top, left + box_w, top + box_h)).save(HERE / f"{name}.png")
             print(name, "<-", titles[index][1])
     pdf.unlink()
+
+    sizes = {Image.open(HERE / f"{name}.png").size for _kind, _needle, name in EXAMPLES}
+    if sizes != {(box_w, box_h)}:
+        raise SystemExit(f"crops came out at {sorted(sizes)}, want one size {(box_w, box_h)}")
+    print(f"{len(EXAMPLES)} crops, all {box_w} x {box_h}")
 
 
 if __name__ == "__main__":
