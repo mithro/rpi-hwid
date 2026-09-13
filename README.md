@@ -39,30 +39,57 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
        description column is 1150 - 60 padding - 60 gap - 250 sidebar =
        780px, and at three columns the images had to drop to 200px to fit
        it; at two they hold 250px down to a 560px column.
-     The crops are all 500 x 300, so a single width covers them all. -->
+     The crops are all 500 x 300, so a single width covers them all.
+     The captions sit in their own row under each pair of images rather
+     than in the cell with the image, so a long one cannot push its
+     image's row taller than the one beside it. -->
 <table>
 <tr>
-<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5.png" alt="Pi 5, bare header" width="250"><br>Pi 5, bare header</td>
-<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5-poe-hat.png" alt="Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read" width="250"><br>Pi 5 with a Waveshare PoE M.2 HAT+ (B); the radio is disabled, so no wlan MAC</td>
+<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5.png" alt="Pi 5, bare header" width="250"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5-poe-hat.png" alt="Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read" width="250"></td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4-pmod-hat.png" alt="Pi 4 with a Digilent Pmod HAT Adaptor" width="250"><br>Pi 4 with a Digilent Pmod HAT Adaptor</td>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi3bplus.png" alt="Pi 3B+; the wlan MAC is derived from the eth MAC" width="250"><br>Pi 3B+; the wlan MAC is derived from the eth MAC</td>
+<td>Pi 5, bare header</td>
+<td>Pi 5 with a Waveshare PoE M.2 HAT+ (B); the radio is disabled, so no wlan MAC</td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi-zero-w-bonnet.png" alt="Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC" width="250"><br>Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC</td>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/orange-pi-pc.png" alt="Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio" width="250"><br>Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio</td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4-pmod-hat.png" alt="Pi 4 with a Digilent Pmod HAT Adaptor" width="250"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi3bplus.png" alt="Pi 3B+; the wlan MAC is derived from the eth MAC" width="250"></td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png" alt="NeTV2" width="250"><br>NeTV2, carrying the Device DNA and the name derived from it</td>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/arty.png" alt="Arty A7-35T" width="250"><br>Arty A7-35T, with its Digilent serial and flash part</td>
+<td>Pi 4 with a Digilent Pmod HAT Adaptor</td>
+<td>Pi 3B+; the wlan MAC is derived from the eth MAC</td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="250"><br>TT06 chip on a TT06+ demo board</td>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-ihp.png" alt="TTIHP25a chip on a DBv3 demo board; no colours recorded for that shuttle yet" width="250"><br>TTIHP25a on a DBv3 demo board; no colours recorded for that shuttle yet</td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi-zero-w-bonnet.png" alt="Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC" width="250"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/orange-pi-pc.png" alt="Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio" width="250"></td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png" alt="ASIX AX88179 USB 3.0 gigabit adapter" width="250"><br>ASIX AX88179 USB 3.0 gigabit adapter</td>
+<td>Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC</td>
+<td>Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio</td>
+</tr>
+<tr>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png" alt="NeTV2" width="250"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/arty.png" alt="Arty A7-35T" width="250"></td>
+</tr>
+<tr>
+<td>NeTV2, carrying the Device DNA and the name derived from it</td>
+<td>Arty A7-35T, with its Digilent serial and flash part</td>
+</tr>
+<tr>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="250"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-ihp.png" alt="TTIHP25a chip on a DBv3 demo board; no colours recorded for that shuttle yet" width="250"></td>
+</tr>
+<tr>
+<td>TT06 chip on a TT06+ demo board</td>
+<td>TTIHP25a on a DBv3 demo board; no colours recorded for that shuttle yet</td>
+</tr>
+<tr>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png" alt="ASIX AX88179 USB 3.0 gigabit adapter" width="250"></td>
+<td></td>
+</tr>
+<tr>
+<td>ASIX AX88179 USB 3.0 gigabit adapter</td>
 <td></td>
 </tr>
 </table>
