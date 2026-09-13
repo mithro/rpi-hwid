@@ -40,7 +40,14 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
        one line. Measured on the live page, that pulled one column to 298px
        and starved its neighbours' images to 217px while others held 250px.
        The <br>s cap max-content at the longest line instead of the whole
-       sentence, which is what makes three columns possible at all.
+       sentence, which is what makes three columns possible at all. That
+       gives the rule to keep when editing a caption: NO CAPTION LINE MAY BE
+       WIDER THAN THE IMAGE. Once every line fits inside 180px, all three
+       columns want exactly the image's width, ask for the same thing, and
+       split the surplus evenly. Count pixels, not characters -- "Pi Zero W
+       with the Waveshare" is 28 characters and 196px, and on its own it
+       dragged its column to 298px and its neighbours' images down to 217px.
+       PoE-ETH-USB-HUB-HAT is split at a hyphen for the same reason.
        Below a 780px column the images no longer fit, and each column's floor
        becomes its caption's min-content -- its longest unbreakable word,
        which no amount of <br> changes. The remaining defence is an image
@@ -70,8 +77,8 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 </tr>
 <tr>
 <td>Pi 3B+; the wlan MAC is<br>derived from the eth MAC</td>
-<td>Pi Zero W with the Waveshare<br>PoE-ETH-USB-HUB-HAT; the<br>bonnet's RTL8152 is its<br>eth MAC</td>
-<td>Orange Pi PC; eth MAC<br>derived by U-Boot from the<br>SoC serial, no radio</td>
+<td>Pi Zero W with the<br>Waveshare PoE-ETH-USB-<br>HUB-HAT; the bonnet's<br>RTL8152 is its eth MAC</td>
+<td>Orange Pi PC; eth MAC<br>derived by U-Boot from<br>the SoC serial, no radio</td>
 </tr>
 <tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png" alt="NeTV2" width="180"></td>
@@ -79,7 +86,7 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="180"></td>
 </tr>
 <tr>
-<td>NeTV2, carrying the Device<br>DNA and the name derived<br>from it</td>
+<td>NeTV2, carrying the<br>Device DNA and the name<br>derived from it</td>
 <td>Arty A7-35T, with its<br>Digilent serial and<br>flash part</td>
 <td>TT06 chip on a TT06+<br>demo board</td>
 </tr>
@@ -89,7 +96,7 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 <td></td>
 </tr>
 <tr>
-<td>TTIHP25a on a DBv3 demo<br>board; no colours recorded<br>for that shuttle yet</td>
+<td>TTIHP25a on a DBv3<br>demo board; no colours<br>recorded for that shuttle<br>yet</td>
 <td>ASIX AX88179 USB 3.0<br>gigabit adapter</td>
 <td></td>
 </tr>
