@@ -276,3 +276,39 @@ def test_tt_label_carries_the_shuttle_marks(docs, tmp_path, monkeypatch):
     assert labels.marks_widths(("nonesuch",), 3 * labels.mm) == ([], 0)
     n, _sheets = labels.render({"h": doc}, tmp_path / "tt.pdf", only=("tt",))
     assert n == 2
+
+
+def shuttle_mark_names():
+    """Every foundry and shuttle-operator mark the shuttle table names."""
+    from rpi_hwid import tinytapeout as tt_data
+
+    names = sorted({n for marks in tt_data.SHUTTLE_MARKS.values() for n in marks})
+    assert names, "the shuttle table names no marks"
+    return names
+
+
+def test_every_shuttle_mark_takes_the_same_square_cell():
+    """A row of marks is square cells plus gaps, whatever shape the marks
+    themselves are: each is fitted into a `height` x `height` box, so no
+    mark can take more of the row than its neighbours."""
+    names = shuttle_mark_names()
+    h, gap = 3 * labels.mm, 1.2 * labels.mm
+    for name in names:
+        drawn, total = labels.marks_widths((name,), h, gap)
+        assert drawn, name
+        assert total == pytest.approx(h), name
+    drawn, total = labels.marks_widths(tuple(names), h, gap)
+    assert len(drawn) == len(names)
+    assert total == pytest.approx(h * len(names) + gap * (len(names) - 1))
+
+
+def test_no_shuttle_mark_is_a_wordmark():
+    """Fitting keeps a mark inside its cell but cannot make a wide one
+    legible: a 4.5:1 wordmark drew a quarter of its cell's height beside
+    the symbols it sits with, which is why the Efabless artwork is the red
+    "e" alone rather than the "efabless.com" lockup."""
+    for name in shuttle_mark_names():
+        path = labels.mark_file(name)
+        assert path, name
+        wide = 1 / labels.mark_aspect(path)          # width / height
+        assert 0.6 <= wide <= 1.4, (name, round(wide, 3))
