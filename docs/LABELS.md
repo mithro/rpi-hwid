@@ -137,18 +137,29 @@ QR opens the chip's page on tinytapeout.com; the demo board's RP2 unique id —
 its USB serial — runs along the foot with a small QR of its own.
 
 <p>
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="49%">
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-ihp.png" alt="TTIHP25a chip on a DBv3 demo board; no colours recorded for that shuttle yet" width="49%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-ihp.png" alt="TTIHP25a chip on a DBv3 demo board" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-fpga.png" alt="An FPGA breakout standing in for the ASIC on a DBv3 demo board" width="32%">
 </p>
+
+A board with no ASIC on it says so: the FPGA breakout has no shuttle to name, so
+the chip's swatches and its ROM stay empty and the QR falls back to the chips
+index. Its demo board is still coloured, because the board names its own revision
+over the REPL and the spreadsheet has that revision — which is also how the
+TTIHP25a above gets its colours, from a board the sheet has not listed that
+shuttle under.
 
 ## USB network adapters
 
 The descriptors (USB version and speed, driver, VID:PID) beside the MAC's QR, and
 the MAC itself full width along the foot, so a dongle can be matched to a DHCP
-lease from across the room.
+lease from across the room. A wireless adapter is drawn with a WiFi glyph in
+place of the RJ45, so the two kinds are told apart across the room as well.
 
 <p>
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png" alt="ASIX AX88179 USB 3.0 gigabit adapter" width="49%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png" alt="ASIX AX88179 USB 3.0 gigabit adapter" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-wifi.png" alt="Realtek 802.11ac USB WiFi adapter" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-linksys.png" alt="Linksys USB3GIGV1 USB 3.0 gigabit adapter" width="32%">
 </p>
 
 ## Artwork
