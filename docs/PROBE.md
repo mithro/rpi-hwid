@@ -136,6 +136,42 @@ boot, nothing — but never resets it and touches no pin; every read and write h
 deadline, and an unreachable board stays a candidate. `--no-repl` stops at the USB
 tree.
 
+### A port a service already holds
+
+On an fpgas.online rig the demo board's port belongs to `fpgas-tt.service`, the
+site's bridge, which opens it at startup and keeps it for its whole life. Waiting
+can never win it, and sharing it is worse than useless: the bridge does not hold it
+exclusively, so the probe's `open` succeeds and the two readers then split the
+board's answers, which looks exactly like a mute board and means writing into a
+port someone else is streaming. So the module looks for a holder *before* opening
+the port, and if the holder is that service it stops it for the length of the read
+and starts it again after. The restart is guaranteed twice — in a `finally`, and by
+a `systemd-run` timer armed before the stop for the paths a `finally` never
+reaches — and the answer records what was done to the unit, so a bridge that did
+not come back says so on its own line.
+
+Stopping a service is a real interruption, so it happens only when every one of
+these holds, and otherwise the probe leaves the holder alone and names it:
+
+- the machine's device tree says it is a **Raspberry Pi**;
+- the holder is not the probe itself or anything that launched it;
+- the holder sits **directly** in a system service's cgroup
+  (`/system.slice/<unit>.service`) — a process in a scope, such as a terminal, an
+  ssh session or a tmux pane, names no unit;
+- that unit is on the allowlist, which is **`fpgas-tt.service` alone**;
+- `sudo -n` works, so nothing waits on a password prompt.
+
+`--no-stop-service` (on `tinytapeout`, `probe --tinytapeout` and
+`collect --tinytapeout`) turns it off entirely.
+
+These limits exist because an earlier version had fewer. It took the nearest
+`.service` above the holder's cgroup, and for a process in a tmux pane that is the
+user's own manager: its test suite, run on a workstation with passwordless sudo,
+ran `systemctl stop user@1001.service` and ended every terminal and the tmux
+server with it. The suite now fails any test that starts `sudo`, `systemctl`,
+`systemd-run` or the like (`tests/conftest.py`), and a test proves that guard
+works rather than trusting it.
+
 ```
 $ rpi-hwid tinytapeout             # a Pi 4 with a TT06 dev kit on USB
   tt     : TT06 on demo board TT06+ (Tiny Tapeout SDK 2.0.4 on Raspberry Pi Pico with RP2040 (USB 1-1.2); chip ROM shuttle=tt06; demo board TT06+)

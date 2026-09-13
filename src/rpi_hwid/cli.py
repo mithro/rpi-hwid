@@ -1,10 +1,11 @@
 """The rpi-hwid command line.
 
-    rpi-hwid probe [--json] [--fpga] [--jtag] [--flash] [--tinytapeout]
+    rpi-hwid probe [--json] [--fpga] [--jtag] [--flash] [--tinytapeout] [--no-stop-service]
                                                           on a Pi: what is this?
     rpi-hwid fpga [--json] [--jtag] [--flash]             on a Pi: which FPGA board?
-    rpi-hwid tinytapeout [--json] [--no-repl]             on a Pi: which Tiny Tapeout board?
-    rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] HOST…
+    rpi-hwid tinytapeout [--json] [--no-repl] [--no-stop-service]
+                                                          on a Pi: which Tiny Tapeout board?
+    rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--no-stop-service] HOST…
                                                           over ssh: one JSON per host
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
     rpi-hwid name --netv2 DNA… | --arty SERIAL…           the derived board names
@@ -21,6 +22,13 @@ from pathlib import Path
 from rpi_hwid import names, revision
 from rpi_hwid.collect import DEFAULT_USERS
 
+# The Tiny Tapeout module stops the service holding a demo board's port for
+# the length of its read, and starts it again after -- only fpgas-tt.service
+# and only on a Raspberry Pi. This flag is the way to have it leave that alone.
+NO_STOP_SERVICE_HELP = (
+    "leave a service that holds a demo board's port running and say who has it,"
+    " instead of stopping it for the read (only ever fpgas-tt.service, on a Pi)")
+
 
 def cmd_probe(args: argparse.Namespace) -> int:
     from rpi_hwid import probe
@@ -34,7 +42,8 @@ def cmd_probe(args: argparse.Namespace) -> int:
     if args.tinytapeout:
         from rpi_hwid import tinytapeout
 
-        tinytapeout.merge_tinytapeout(doc, tinytapeout.collect_tinytapeout())
+        tinytapeout.merge_tinytapeout(
+            doc, tinytapeout.collect_tinytapeout(take_port=not args.no_stop_service))
     if args.json:
         print(json.dumps(doc, indent=1))
         return 0
@@ -76,7 +85,8 @@ def cmd_fpga(args: argparse.Namespace) -> int:
 def cmd_tinytapeout(args: argparse.Namespace) -> int:
     from rpi_hwid import tinytapeout
 
-    t = tinytapeout.collect_tinytapeout(repl=not args.no_repl)
+    t = tinytapeout.collect_tinytapeout(repl=not args.no_repl,
+                                        take_port=not args.no_stop_service)
     if args.json:
         print(json.dumps(t, indent=1))
     else:
@@ -91,6 +101,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         args.hosts, args.out, users=tuple(args.users.split(",")), jump=args.jump,
         fpga=args.fpga, jtag_hosts=tuple(args.jtag or ()), flash_hosts=tuple(args.flash or ()),
         workers=args.workers, tinytapeout=args.tinytapeout,
+        take_port=not args.no_stop_service,
     )
     failed = 0
     for r in results:
@@ -139,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="also identify an Arty's SPI flash (reloads the FPGA)")
     p.add_argument("--tinytapeout", action="store_true",
                    help="also look for a Tiny Tapeout demo board (reads its REPL)")
+    p.add_argument("--no-stop-service", action="store_true",
+                   help=NO_STOP_SERVICE_HELP)
     p.set_defaults(func=cmd_probe)
 
     p = sub.add_parser("fpga", help="which FPGA board is attached (run on the Pi)")
@@ -152,6 +165,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-repl", action="store_true",
                    help="stop at the USB tree; do not read the board's REPL")
+    p.add_argument("--no-stop-service", action="store_true",
+                   help=NO_STOP_SERVICE_HELP)
     p.set_defaults(func=cmd_tinytapeout)
 
     p = sub.add_parser("collect", help="probe hosts over ssh, one JSON file each")
@@ -167,6 +182,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="identify the Arty flash on this host (reloads the FPGA)")
     p.add_argument("--tinytapeout", action="store_true",
                    help="append the Tiny Tapeout module on every host")
+    p.add_argument("--no-stop-service", action="store_true",
+                   help=NO_STOP_SERVICE_HELP)
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_collect)
 

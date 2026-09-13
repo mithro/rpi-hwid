@@ -4,6 +4,7 @@ evidence."""
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -496,7 +497,7 @@ def test_cli_probe_and_collect_summary_with_tinytapeout(monkeypatch, capsys, tmp
     monkeypatch.setattr(probe, "collect", lambda: {k: v for k, v in raw.items()
                                                     if k not in ("verdict", "tinytapeout")})
     monkeypatch.setattr(probe, "verdict", lambda d: copy.deepcopy(raw["verdict"]))
-    monkeypatch.setattr(tinytapeout, "collect_tinytapeout", lambda repl=True, timeout=10: {
+    monkeypatch.setattr(tinytapeout, "collect_tinytapeout", lambda repl=True, timeout=10, **kw: {
         "usb": raw["tinytapeout"]["usb"], "repl": raw["tinytapeout"]["repl"],
         "boards": raw["verdict"]["tinytapeout"],
         "summary": raw["verdict"]["summary"]["tinytapeout"]})
@@ -510,6 +511,76 @@ def test_cli_probe_and_collect_summary_with_tinytapeout(monkeypatch, capsys, tmp
     assert "TTIHP25a" in capsys.readouterr().out
     assert cli.main(["tinytapeout", "--json"]) == 0
     assert '"shuttle": "ttihp25a"' in capsys.readouterr().out
+
+
+def test_no_stop_service_reaches_every_way_the_tinytapeout_module_runs(
+        monkeypatch, capsys, tmp_path):
+    """--no-stop-service must reach collect_tinytapeout however the module
+    is run: on the Pi (`tinytapeout`, `probe --tinytapeout`) and over ssh
+    (`collect --tinytapeout`, which writes the call into the script it
+    sends). Without it the module takes a port from the service holding
+    it, as designed; a flag that silently did nothing on one of those
+    paths would stop a rig's bridge the operator had asked to leave be."""
+    from rpi_hwid import cli, collect
+
+    seen = []
+
+    def fake_collect_tt(repl=True, timeout=10, take_port=True):
+        seen.append(take_port)
+        return {"usb": [], "repl": None, "boards": [], "summary": []}
+
+    monkeypatch.setattr(tinytapeout, "collect_tinytapeout", fake_collect_tt)
+    assert cli.main(["tinytapeout", "--json"]) == 0
+    assert cli.main(["tinytapeout", "--json", "--no-stop-service"]) == 0
+    assert seen == [True, False]
+
+    seen.clear()
+    monkeypatch.setattr(probe, "collect", lambda: {"model": "x"})
+    monkeypatch.setattr(probe, "verdict", lambda d: {"summary": {}})
+    monkeypatch.setattr(tinytapeout, "merge_tinytapeout", lambda doc, t: None)
+    assert cli.main(["probe", "--json", "--tinytapeout"]) == 0
+    assert cli.main(["probe", "--json", "--tinytapeout", "--no-stop-service"]) == 0
+    assert seen == [True, False]
+    capsys.readouterr()
+
+    # Over ssh the call is text in the script, so the script is what to check.
+    assert "merge_tinytapeout(_doc, collect_tinytapeout())" in probe_source(tinytapeout=True)
+    assert "collect_tinytapeout(take_port=False)" in probe_source(
+        tinytapeout=True, take_port=False)
+    sent = []
+
+    def fake_run(cmd, input, capture_output, text, timeout):
+        sent.append(input)
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(
+            {"model": "m", "verdict": {"summary": {}}}), stderr="")
+
+    monkeypatch.setattr(collect.subprocess, "run", fake_run)
+    cli.main(["collect", "--out", str(tmp_path), "--tinytapeout", "--no-stop-service", "h"])
+    assert sent, "collect sent no script"
+    assert "collect_tinytapeout(take_port=False)" in sent[0]
+
+
+def test_the_suite_cannot_run_privileged_commands_on_this_machine():
+    """tests/conftest.py fails any test that starts sudo, systemctl and the
+    like. This test's code once stopped user@1001.service on a workstation
+    with passwordless sudo -- every terminal and the tmux server with it --
+    so the guard is proven here rather than trusted. Only harmless commands
+    are tried (`true`, `--version`), so a guard that had broken could still
+    not do damage while this test found out."""
+    attempts = (
+        ["sudo", "-n", "true"],
+        ["/usr/bin/sudo", "-n", "true"],
+        ["systemctl", "--version"],
+        ["systemd-run", "--version"],
+    )
+    for args in attempts:
+        with pytest.raises(pytest.fail.Exception, match="a test tried to run"):
+            subprocess.run(args, capture_output=True, check=False)
+    with pytest.raises(pytest.fail.Exception, match="a test tried to run"):
+        subprocess.run("sudo -n true", shell=True, capture_output=True, check=False)
+    with pytest.raises(pytest.fail.Exception, match=r"os\.system"):
+        os.system("true")
+    assert subprocess.run(["true"], check=False).returncode == 0, "ordinary commands still run"
 
 
 # --- the Tiny Tapeout board spreadsheet ---------------------------------------
