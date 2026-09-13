@@ -55,7 +55,7 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
        single word: below a 780px column the images stop fitting and each
        column's floor becomes its caption's longest unbreakable word, which
        no amount of <br> changes. The last defence is an image narrow enough
-       to sit inside the narrowest column: at 180px all eleven stay identical
+       to sit inside the narrowest column: at 180px all twelve stay identical
        down to a 600px column, the range the old two-column 250px gallery
        held, and the residue below that is far smaller (0.2% at 580px, 0.8%
        at 560px, against the old layout's 1.2%). PyPI's column is 780px at a
@@ -63,47 +63,49 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
      The crops are all 500 x 300, so a single width covers them all.
      The captions sit in their own row under each image rather than in the
      cell with it, so a long one cannot push its image's row taller than the
-     ones beside it. -->
+     ones beside it.
+     A row per kind, three to a row: the boards the probe reads, then the
+     FPGA boards, then the Tiny Tapeout boards, then the USB adapters. -->
 <table>
 <tr>
-<td width="33%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5.png" alt="Pi 5, bare header" width="180"></td>
 <td width="33%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5-poe-hat.png" alt="Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read" width="180"></td>
-<td width="33%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4-pmod-hat.png" alt="Pi 4 with a Digilent Pmod HAT Adaptor" width="180"></td>
+<td width="33%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi-zero-w-bonnet.png" alt="Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC" width="180"></td>
+<td width="33%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/orange-pi-pc.png" alt="Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio" width="180"></td>
 </tr>
 <tr>
-<td>Pi 5, bare header</td>
 <td>Pi 5 with a Waveshare<br>PoE M.2 HAT+ (B);<br>the radio is disabled,<br>so no wlan MAC</td>
-<td>Pi 4 with a Digilent<br>Pmod HAT Adaptor</td>
-</tr>
-<tr>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi3bplus.png" alt="Pi 3B+; the wlan MAC is derived from the eth MAC" width="180"></td>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi-zero-w-bonnet.png" alt="Pi Zero W with the Waveshare PoE-ETH-USB-HUB-HAT; the bonnet's RTL8152 is its eth MAC" width="180"></td>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/orange-pi-pc.png" alt="Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio" width="180"></td>
-</tr>
-<tr>
-<td>Pi 3B+; the wlan<br>MAC is derived<br>from the eth MAC</td>
 <td>Pi Zero W with the<br>Waveshare PoE-<br>ETH-USB-HUB-HAT;<br>the bonnet's RTL8152<br>is its eth MAC</td>
 <td>Orange Pi PC; eth MAC<br>derived by U-Boot from<br>the SoC serial, no radio</td>
 </tr>
 <tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png" alt="NeTV2" width="180"></td>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/arty.png" alt="Arty A7-35T" width="180"></td>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="180"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png" alt="Acorn CLE-215+; the die was not read, so the label has a line to write the Device DNA on" width="180"></td>
 </tr>
 <tr>
 <td>NeTV2, carrying the<br>Device DNA and the<br>name derived from it</td>
 <td>Arty A7-35T, with<br>its Digilent serial<br>and flash part</td>
+<td>Acorn CLE-215+;<br>the die was not read,<br>so the DNA gets a<br>line to write it on</td>
+</tr>
+<tr>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="180"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-ihp.png" alt="TTIHP25a chip on a DBv3 demo board" width="180"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-fpga.png" alt="An FPGA breakout standing in for the ASIC on a DBv3 demo board" width="180"></td>
+</tr>
+<tr>
 <td>TT06 chip on a<br>TT06+ demo board</td>
+<td>TTIHP25a on a DBv3<br>board; the carrier's<br>colours are not recorded</td>
+<td>An FPGA breakout<br>standing in for the ASIC,<br>on the same DBv3 board</td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-ihp.png" alt="TTIHP25a chip on a DBv3 demo board; no colours recorded for that shuttle yet" width="180"></td>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-asix.png" alt="ASIX AX88179 USB 3.0 gigabit adapter" width="180"></td>
-<td></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-wifi.png" alt="Realtek 802.11ac USB WiFi adapter" width="180"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-linksys.png" alt="Linksys USB3GIGV1 USB 3.0 gigabit adapter" width="180"></td>
 </tr>
 <tr>
-<td>TTIHP25a on a<br>DBv3 demo board;<br>no colours recorded<br>for that shuttle yet</td>
 <td>ASIX AX88179 USB<br>3.0 gigabit adapter</td>
-<td></td>
+<td>Realtek 802.11ac<br>USB WiFi adapter</td>
+<td>Linksys USB3GIGV1<br>USB 3.0 gigabit adapter</td>
 </tr>
 </table>
 

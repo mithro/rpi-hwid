@@ -36,6 +36,7 @@ EXAMPLES = [
     ("acorn", "Acorn", "acorn"),
     ("tt", "TT06", "tinytapeout"),
     ("tt", "TTIHP25a", "tinytapeout-ihp"),
+    ("tt", "FPGA", "tinytapeout-fpga"),
     ("rpi", "Pi 5 4 GB", "rpi5"),
     ("rpi", "Pi 5 1 GB", "rpi5-poe-hat"),
     ("rpi", "10000000ce8e3593", "rpi4-pmod-hat"),
@@ -43,6 +44,8 @@ EXAMPLES = [
     ("rpi", "Zero", "rpi-zero-w-bonnet"),
     ("opi", "Orange Pi PC", "orange-pi-pc"),
     ("usb", "AX88179", "usb-asix"),
+    ("usb", "802.11ac", "usb-wifi"),
+    ("usb", "USB3GIGV1", "usb-linksys"),
 ]
 
 

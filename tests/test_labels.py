@@ -68,7 +68,7 @@ def test_fpga_records_named_and_typed(docs):
 
 
 def test_tinytapeout_records(docs):
-    tt06, ihp = labels.tinytapeout_records(docs)
+    breakout, tt06, ihp = labels.tinytapeout_records(docs)
     assert tt06.headline == "TT06"
     assert tt06.subtitle == "ASIC  ·  sky130"
     assert tt06.url == "https://tinytapeout.com/chips/tt06/"
@@ -84,9 +84,22 @@ def test_tinytapeout_records(docs):
     assert ihp.subtitle == "ASIC  ·  ihp-sg13g2"
     assert ihp.demoboard_text == "TTDBv3  ·  Rev 3.2"
     assert ihp.mcu == "RP2350"
-    assert ihp.chip_colour is None
+    assert ihp.chip_colour is None, "the sheet has no carrier colours for this shuttle"
     assert ihp.chip_colour_name is None
-    assert ihp.demoboard_colour is None
+    # The board it sits on is a DB ETR v3.2, which the sheet does have, even
+    # though its "Used by" does not list ttihp25a: the board names itself over
+    # the REPL, so the demo board's colours are found by revision.
+    assert (ihp.demoboard_colour, ihp.demoboard_silk) == ("#c98599", "#bae7c6")
+    assert (ihp.demoboard_colour_name, ihp.demoboard_silk_name) == ("purple", "teal")
+
+    # The FPGA breakout has no shuttle at all, so nothing about the chip is
+    # known -- but it is on that same DB ETR v3.2, and those colours are.
+    assert breakout.headline == "FPGA"
+    assert breakout.subtitle == "FPGA breakout, no ASIC"
+    assert breakout.demoboard_text == "TTDBv3  ·  Rev 3.2"
+    assert breakout.usb_serial == "4df39a7a6856f86f"
+    assert breakout.chip_colour is None
+    assert (breakout.demoboard_colour, breakout.demoboard_silk) == ("#c98599", "#bae7c6")
 
 
 def test_demoboard_text_normalises_both_sdk_forms():
@@ -123,10 +136,19 @@ def test_tinytapeout_records_without_a_rom_or_with_the_fpga_breakout():
 
 
 def test_usb_records(docs):
-    (u,) = labels.usb_records(docs)
-    assert u.title == "ASIX Elec. Corp. AX88179"
-    assert ("USB", "3.00 SS 5 Gbit/s") in u.lines
-    assert u.mac == "00:0e:c6:82:b5:e1"
+    linksys, wifi, asix = labels.usb_records(docs)
+    assert asix.title == "ASIX Elec. Corp. AX88179"
+    assert ("USB", "3.00 SS 5 Gbit/s") in asix.lines
+    assert asix.mac == "00:0e:c6:82:b5:e1"
+    assert asix.kind == "ethernet"
+    assert linksys.title == "Linksys Linksys USB3GIGV1"
+    assert linksys.mac == "60:38:e0:e3:56:4f"
+    # The one wireless adapter: its kind is what swaps the RJ45 glyph for
+    # the WiFi one, so it is worth pinning.
+    assert wifi.kind == "wifi"
+    assert wifi.title == "Realtek 802.11ac NIC"
+    assert ("USB", "2.00 HS 480 Mbit/s") in wifi.lines
+    assert ("driver", "rtw88_8821cu") in wifi.lines
 
 
 def test_all_labels_order_and_count(docs):
@@ -134,10 +156,12 @@ def test_all_labels_order_and_count(docs):
     # FPGA boards first in sorted-host order, then Tiny Tapeout boards, then
     # one board per document (the Orange Pi host sorts first), then adapters
     # the Orange Pi's host, pi-sw2-p22, sorts among the pool rigs
-    assert kinds == ["arty", "acorn", "netv2", "tt", "tt",
-                     "rpi", "rpi", "opi", "rpi", "rpi", "rpi", "rpi", "usb"]
+    assert kinds == ["arty", "acorn", "netv2", "tt", "tt", "tt",
+                     "rpi", "rpi", "opi", "rpi", "rpi", "rpi", "rpi", "rpi", "rpi", "rpi",
+                     "usb", "usb", "usb"]
     titles = [t for k, t, _d, _r in labels.all_labels(docs, {"tt"})]
-    assert titles == ["TT06 E6614C311B7A7A37", "TTIHP25a E66360B8A3C1D5F2"]
+    assert titles == ["FPGA 4df39a7a6856f86f", "TT06 E6614C311B7A7A37",
+                      "TTIHP25a E66360B8A3C1D5F2"]
     only_opi = [k for k, _t, _d, _r in labels.all_labels(docs, {"opi"})]
     assert only_opi == ["opi"]
 
@@ -168,14 +192,21 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "98:fe:54:13:f5:75",                              # acorn host
         "02:81:2e:b7:a3:4e",                              # the Orange Pi PC
         "dc:a6:32:8f:2b:11", "dc:a6:32:8f:2b:12",         # the Tiny Tapeout host
-        "00:0e:c6:82:b5:e1",                              # the dongle
+        "e4:5f:01:97:0e:77", "e4:5f:01:97:0e:79",         # the FPGA breakout's host
+        "e4:5f:01:97:1f:7e",                              # the Linksys adapter's host
+        "88:a2:9e:45:c5:5d", "88:a2:9e:45:c5:5e",         # the WiFi adapter's host
+        "00:0e:c6:82:b5:e1",                              # the dongles
+        "60:38:e0:e3:56:4f", "6c:1f:f7:51:2e:a3",
         "https://tinytapeout.com/chips/tt06/",            # the chip pages
         "https://tinytapeout.com/chips/ttihp25a/",
+        "https://tinytapeout.com/chips/",                 # no chip: the index
         "E6614C311B7A7A37", "E66360B8A3C1D5F2",           # the demo boards' RP2 ids
+        "4df39a7a6856f86f",
         # the board serials, as a small QR at the top of each board label's spine
         "d88100008543dc30", "000000004fe3e7e4", "10000000ce8e3593",
         "000000005157f671", "c36b093f773d46b8", "100000003a7e1c9b",
-        "02c000812eb7a34e",
+        "02c000812eb7a34e", "1000000085948b10", "10000000613a4524",
+        "7070c78090a6d6d8",
     }
     assert got == want
 
@@ -189,7 +220,7 @@ def test_list_and_names_cli(data_dir, capsys):
     assert "rpi    Pi 5 4 GB d88100008543dc30" in out
     assert "tt     TT06 E6614C311B7A7A37" in out
     assert cli_main(["labels", "--data", str(data_dir), "--list", "--only", "tt"]) == 0
-    assert capsys.readouterr().out.count("\n") == 2
+    assert capsys.readouterr().out.count("\n") == 3
     assert cli_main(["name", "--netv2", "0x00742c4e63b9085c", "--arty", "210319B301DE"]) == 0
     out = capsys.readouterr().out
     assert "netv2-grove" in out

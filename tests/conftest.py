@@ -215,6 +215,75 @@ TT_HOST["verdict"]["summary"]["tinytapeout"] = [
 ]
 
 
+# One of the pool's four Tiny Tapeout FPGA emulation boards, probed on
+# pi-sw2-p33 on 2026-09-14: a TT demo board v3 carrying a FabricFox iCE40UP5K
+# breakout instead of an ASIC, so the chip is an FPGA simulating one. Its ROM
+# has no shuttle to read -- config.ini forces the string "FPGA", which the
+# probe reports as chip "fpga" with shuttle None -- so the label has no
+# shuttle colours and no chip page to link, the case no other fixture covers.
+TT_FPGA_HOST = _doc(
+    "Raspberry Pi 4 Model B Rev 1.5", "1000000085948b10", "b03115",
+    ["Pmod HAT Adaptor"], "undetermined", [],
+    [{"kind": "eth", "mac": "e4:5f:01:97:0e:77"}, {"kind": "wlan", "mac": "e4:5f:01:97:0e:79"}],
+    [], None, None, None,
+)
+TT_FPGA_HOST["verdict"]["summary"]["hat_uuid"] = "38a7f86d-4c56-4649-9d9d-91eb4c0f7f50"
+TT_FPGA_HOST["usb"] = {"1-1": "2109:3431", "1-1.2": "2e8a:0005"}
+TT_FPGA_HOST["tinytapeout"] = {
+    "usb": [{"path": "1-1.2", "id": "2e8a:0005", "manufacturer": "MicroPython",
+             "product": "Board in FS mode", "serial": "4df39a7a6856f86f",
+             "tty": "/dev/ttyACM0"}],
+    "repl": {
+        "1-1.2": {"machine": "TinyTapeout RP2350B Core with RP2350",
+                  "micropython": "1.29.0-preview", "sdk": "3.1.0",
+                  "sdk_revision": "baaf0a2758b475d6e099b8ef65dbd1b5667ea0aa",
+                  "demoboard": "TTDBv3 [3.2]", "carrier_present": True,
+                  "carrier_version": 2, "rom_forced": True, "rom_cached": True,
+                  "rom": {"shuttle": "FPGA", "repo": "", "commit": ""}},
+    },
+}
+TT_FPGA_HOST["verdict"]["tinytapeout"] = [
+    {"kind": "tinytapeout", "usb": "1-1.2", "usb_serial": "4df39a7a6856f86f",
+     "tty": "/dev/ttyACM0", "shuttle": None, "chip": "fpga", "repo": None, "commit": None,
+     "demoboard": "TTDBv3 [3.2]", "demoboard_version": None, "sdk": "3.1.0",
+     "machine": "TinyTapeout RP2350B Core with RP2350", "mcu": "RP2350", "chip_url": None,
+     "how": "Tiny Tapeout SDK 3.1.0 on TinyTapeout RP2350B Core with RP2350 (USB 1-1.2); "
+            "chip ROM shuttle=FPGA (forced in config.ini); demo board TTDBv3 [3.2]"},
+]
+TT_FPGA_HOST["verdict"]["summary"]["tinytapeout"] = [
+    {"usb_serial": "4df39a7a6856f86f", "mcu": "RP2350", "shuttle": None, "chip": "fpga",
+     "repo": None, "commit": None, "demoboard": "TTDBv3 [3.2]", "demoboard_version": None,
+     "sdk": "3.1.0"},
+]
+
+# A Pi 5 on the IoT network carrying a Realtek RTL8811CU on USB, probed on
+# 2026-09-14. Its wlanE is the only USB *wireless* adapter in the fixtures, so
+# it is the one label that draws the WiFi glyph rather than an RJ45.
+WIFI_HOST = _doc(
+    "Raspberry Pi 5 Model B Rev 1.1", "7070c78090a6d6d8", "b04171", [], "usbc-supply", [],
+    [{"kind": "eth", "mac": "88:a2:9e:45:c5:5d"}, {"kind": "wlan", "mac": "88:a2:9e:45:c5:5e"}],
+    [{"iface": "wlanE", "mac": "6c:1f:f7:51:2e:a3", "driver": "rtw88_8821cu",
+      "vidpid": "0bda:c811", "manufacturer": "Realtek", "product": "802.11ac NIC",
+      "usb_serial": "123456", "bcd_usb": "2.00", "usb_speed": "480", "kind": "wifi"}],
+    False, True, 900,
+)
+
+# A pool Pi 4 with a Linksys USB3GIGV1 on USB 3, probed on pi-sw2-p37 on
+# 2026-09-14: a second USB Ethernet adapter from a different vendor to the
+# ASIX, on the same r8152 driver as the Realtek parts.
+LINKSYS_HOST = _doc(
+    "Raspberry Pi 4 Model B Rev 1.5", "10000000613a4524", "b03115",
+    ["Pmod HAT Adaptor"], "undetermined", [],
+    [{"kind": "eth", "mac": "e4:5f:01:97:1f:7e"}],
+    [{"iface": "eth1", "mac": "60:38:e0:e3:56:4f", "driver": "r8152",
+      "vidpid": "13b1:0041", "manufacturer": "Linksys", "product": "Linksys USB3GIGV1",
+      "usb_serial": "000001000000", "bcd_usb": "3.00", "usb_speed": "5000",
+      "kind": "ethernet"}],
+    None, None, None,
+)
+LINKSYS_HOST["verdict"]["summary"]["hat_uuid"] = "6e28126c-32b3-41fd-aa72-be2554bf69b1"
+
+
 RAW = {
     "rpi5-netv2": PI5_NETV2,
     "pi-sw1-p10": POOL_3BPLUS,
@@ -223,6 +292,9 @@ RAW = {
     "pi-sw2-p47": ACORN_HOST,
     "pi-sw2-p22": OPI_PC,
     "rpi4-tt": TT_HOST,
+    "pi-sw2-p33": TT_FPGA_HOST,
+    "pi-sw2-p37": LINKSYS_HOST,
+    "rpi5-433mhz": WIFI_HOST,
 }
 
 
