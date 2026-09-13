@@ -234,12 +234,17 @@ def sunxi_serial(sid):
 
 # --- I2C ----------------------------------------------------------------------
 #
-# Spoken directly to /dev/i2c-N rather than through i2c-tools: i2cdetect and
-# i2ctransfer are not installed everywhere the probe runs (an Armbian Orange
-# Pi has neither), and the ioctl they wrap needs no more privilege than the
-# device node itself, which on every board in the fleet is group i2c and the
-# login is in that group. So this reads the header with no sudo and no
-# packages -- which is the point of the probe being one dependency-free file.
+# Spoken directly to /dev/i2c-N rather than through i2c-tools. The ioctl the
+# tools wrap needs no more privilege than the device node itself, which is
+# group i2c on every board here with the login in that group, so the header
+# reads with no sudo and no packages at all -- which is the point of the
+# probe being one dependency-free file, and it holds on a board where
+# i2c-tools is not installed.
+#
+# It is installed on this fleet, in /usr/sbin (which is not on a login PATH,
+# only on sudo's). The two agree: checked against i2c-tools 4.3 on the Orange
+# Pi on 2026-09-13, the bus scans match i2cdetect -r on both header buses and
+# eeprom_read returns bytes identical to i2ctransfer's 256.
 
 I2C_SLAVE = 0x0703                 # <linux/i2c-dev.h>: bind this fd to an address
 
