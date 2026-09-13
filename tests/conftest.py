@@ -6,10 +6,60 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import shlex
+import subprocess
 
 import pytest
 
 from rpi_hwid.model import ProbeDocument
+
+# Commands that act on the machine running the tests as root, or on its
+# services and logins. The probes run them on a Pi over ssh; a test must
+# never start one here, whatever the code under test decides. On a
+# workstation with passwordless sudo one stray "systemctl stop" is enough
+# to end the user's session, every terminal and the tmux server.
+PRIVILEGED = frozenset({
+    "sudo", "doas", "pkexec", "su", "run0", "systemctl", "systemd-run", "loginctl",
+    "shutdown", "reboot", "poweroff", "halt",
+})
+
+
+def _privileged(args, shell):
+    """The privileged command `args` would start, else None."""
+    if isinstance(args, (str, bytes)):
+        text = os.fsdecode(args)
+        words = shlex.split(text) if shell else [text]
+    else:
+        words = [os.fsdecode(a) for a in args][:1]
+    for word in words:
+        if os.path.basename(word) in PRIVILEGED:
+            return word
+    return None
+
+
+@pytest.fixture(autouse=True)
+def no_privileged_commands(monkeypatch):
+    """Fail any test that starts sudo, systemctl and the like on this machine.
+
+    Every subprocess helper (run, check_output, call, Popen) goes through
+    subprocess.Popen, so guarding that one class guards them all. The
+    failure is a pytest outcome, not an OSError, so no "never raises"
+    wrapper in the code under test can swallow it.
+    """
+    real_popen = subprocess.Popen
+
+    class GuardedPopen(real_popen):  # type: ignore[misc,valid-type]
+        def __init__(self, args, *rest, **kwargs):
+            shell = kwargs.get("shell", False)
+            found = _privileged(args, shell)
+            if found:
+                pytest.fail(f"a test tried to run {found!r} on this machine: {args!r}")
+            super().__init__(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", GuardedPopen)
+    monkeypatch.setattr(os, "system", lambda cmd: pytest.fail(
+        f"a test tried to run os.system({cmd!r}) on this machine"))
 
 
 def _doc(model, serial, revision, header, power_class, fpga, macs, usb_net, rtc, fan, mc,

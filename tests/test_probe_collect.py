@@ -4,10 +4,12 @@ without a Pi (and without sudo)."""
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import pty
 import struct
+import subprocess
 import termios
 import threading
 
@@ -455,10 +457,277 @@ def test_read_repl_reports_a_traceback_and_junk(monkeypatch):
     assert tinytapeout.read_repl("x")["error"].startswith("bad JSON")
 
 
+# --- taking the port from the service that holds it ---------------------------
+
+def test_unit_for_pid_names_only_a_system_service(tmp_path, monkeypatch):
+    monkeypatch.setattr(tinytapeout, "ROOT", str(tmp_path))
+    _w(tmp_path, "/proc/11559/cgroup", "0::/system.slice/fpgas-tt.service\n")
+    assert tinytapeout.unit_for_pid("11559") == "fpgas-tt.service"
+    # cgroup v1 writes a line per controller; the systemd one carries the unit
+    _w(tmp_path, "/proc/2/cgroup",
+       "12:devices:/system.slice/foo.service\n1:name=systemd:/system.slice/foo.service\n")
+    assert tinytapeout.unit_for_pid("2") == "foo.service"
+    # anything under a user's manager is that user's login, never a rig's
+    # bridge: not even a user's own service is named
+    _w(tmp_path, "/proc/3/cgroup",
+       "0::/user.slice/user-1000.slice/user@1000.service/app.slice/bridge.service\n")
+    assert tinytapeout.unit_for_pid("3") is None
+    # a tmux pane, as captured on ten64 on 2026-09-13: the only .service in
+    # its path is the user manager, and stopping that ended every login,
+    # terminal and tmux session the user had
+    _w(tmp_path, "/proc/5/cgroup",
+       "0::/user.slice/user-1001.slice/user@1001.service/app.slice/"
+       "tmux-spawn-61c6286b-b978-44e3-b06c-0cddf877b052.scope\n")
+    assert tinytapeout.unit_for_pid("5") is None
+    _w(tmp_path, "/proc/6/cgroup", "0::/user.slice/user-1001.slice/user@1001.service/init.scope\n")
+    assert tinytapeout.unit_for_pid("6") is None
+    # a scope beneath a system service is not the service's own process either
+    _w(tmp_path, "/proc/7/cgroup", "0::/system.slice/foo.service/payload.scope\n")
+    assert tinytapeout.unit_for_pid("7") is None
+    # a login session is a scope: nothing here to stop and start again
+    _w(tmp_path, "/proc/4/cgroup", "0::/user.slice/user-1000.slice/session-3.scope\n")
+    assert tinytapeout.unit_for_pid("4") is None
+    assert tinytapeout.unit_for_pid("999") is None          # no such process
+
+
+def test_on_raspberry_pi_reads_the_device_tree_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(tinytapeout, "ROOT", str(tmp_path))
+    assert tinytapeout.on_raspberry_pi() is False, "no device tree: not a Pi"
+    _w(tmp_path, "/proc/device-tree/model", "Traverse Ten64\0")
+    assert tinytapeout.on_raspberry_pi() is False
+    _w(tmp_path, "/proc/device-tree/model", "Xunlong Orange Pi PC\0")
+    assert tinytapeout.on_raspberry_pi() is False
+    _w(tmp_path, "/proc/device-tree/model", "Raspberry Pi 4 Model B Rev 1.4\0")
+    assert tinytapeout.on_raspberry_pi() is True
+
+
+def test_own_pids_include_this_process_and_its_parent():
+    pids = tinytapeout.own_pids()
+    assert str(os.getpid()) in pids
+    assert str(os.getppid()) in pids
+
+
+@pytest.fixture
+def systemctl(monkeypatch):
+    """Record every command the service control runs, in order, and let a
+    test declare which of them fail. Yields (calls, fails); a key of `fails`
+    that appears in a command's text gives that command its result."""
+    calls: list[list[str]] = []
+    fails: dict[str, tuple[int, str]] = {}
+
+    def fake_run_cmd(args, timeout=20):
+        calls.append(list(args))
+        for needle, result in fails.items():
+            if needle in " ".join(args):
+                return result
+        return (0, "")
+    monkeypatch.setattr(tinytapeout, "run_cmd", fake_run_cmd)
+    return calls, fails
+
+
+@pytest.fixture
+def busy_board(monkeypatch):
+    """A port that is busy on the first open and answers on the next, held
+    by pid 11559 of fpgas-tt.service."""
+    opens = []
+
+    def open_tty(path):
+        opens.append(path)
+        if len(opens) == 1:
+            raise OSError(errno.EBUSY, "Device or resource busy")
+        return os.open("/dev/null", os.O_RDWR)
+    monkeypatch.setattr(tinytapeout, "open_tty", open_tty)
+    monkeypatch.setattr(tinytapeout, "port_holder_info", lambda tty: ("python3", "11559"))
+    monkeypatch.setattr(tinytapeout, "unit_for_pid", lambda pid: "fpgas-tt.service")
+    monkeypatch.setattr(tinytapeout, "on_raspberry_pi", lambda: True)
+    monkeypatch.setattr(tinytapeout, "raw_repl_exec",
+                        lambda fd, code, timeout: (json.dumps(TT06_ANSWER), ""))
+    return opens
+
+
+def test_a_busy_port_is_taken_from_its_service_and_given_back(busy_board, systemctl):
+    calls, _ = systemctl
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=5)
+
+    assert answer["sdk"] == TT06_ANSWER["sdk"], "the board was read once the port was free"
+    assert answer["service"] == {"unit": "fpgas-tt.service", "stopped": True,
+                                 "deadman": True, "restored": True}
+    ran = [" ".join(c) for c in calls]
+    armed = next(i for i, c in enumerate(ran) if "systemd-run" in c)
+    # matched exactly, not by suffix: what the deadman is armed *with* is
+    # itself "systemctl start fpgas-tt.service", so a loose match here
+    # would find the arming and call it the restart
+    stopped = ran.index("sudo -n systemctl stop fpgas-tt.service")
+    started = ran.index("sudo -n systemctl start fpgas-tt.service")
+    # the deadman is armed before the stop, never after: the window it
+    # covers has to begin where the risk does
+    assert armed < stopped < started
+    assert f"--on-active={tinytapeout.RESTORE_DELAY}s" in ran[armed]
+    assert "--unit=" + tinytapeout.RESTORE_UNIT in ran[armed]
+    # and it is cancelled only once the service is back by the normal path
+    assert ran[-1].endswith(f"stop {tinytapeout.RESTORE_UNIT}.timer")
+    assert all(c[:2] == ["sudo", "-n"] for c in calls), "every one of these needs root"
+
+
+def test_a_failed_restart_leaves_the_deadman_armed(busy_board, systemctl):
+    calls, fails = systemctl
+    fails["start fpgas-tt.service"] = (1, "Job for fpgas-tt.service failed")
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=5)
+
+    assert answer["service"]["restored"] is False
+    assert answer["service"]["restore_error"].startswith("Job for")
+    # the timer is now the only thing left that will bring the service
+    # back, so it must not be cancelled: the one mention of it is the
+    # stale-timer clear that arming does first
+    assert sum(tinytapeout.RESTORE_UNIT in " ".join(c) for c in calls) == 2
+    assert "systemd-run" in " ".join(calls[2])
+
+
+def test_nothing_is_stopped_without_passwordless_sudo(busy_board, systemctl):
+    calls, fails = systemctl
+    fails["true"] = (1, "sudo: a password is required")
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=5)
+
+    assert "no passwordless sudo" in answer["error"]
+    assert "fpgas-tt.service" in answer["error"]
+    assert not any("systemctl stop" in " ".join(c) for c in calls)
+
+
+def test_nothing_is_stopped_when_the_holder_is_not_a_service(busy_board, systemctl,
+                                                             monkeypatch):
+    calls, _ = systemctl
+    monkeypatch.setattr(tinytapeout, "unit_for_pid", lambda pid: None)
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=5)
+
+    assert "python3 (pid 11559) is not part of a system service" in answer["error"]
+    assert calls == []
+
+
+def test_nothing_is_stopped_on_a_machine_that_is_not_a_pi(busy_board, systemctl, monkeypatch):
+    calls, _ = systemctl
+    monkeypatch.setattr(tinytapeout, "on_raspberry_pi", lambda: False)
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=1)
+
+    assert "not a Raspberry Pi" in answer["error"]
+    assert "service" not in answer
+    assert calls == [], "not even sudo is asked about off a Pi"
+
+
+@pytest.mark.parametrize("unit", ["user@1001.service", "tmux-server.service", "ssh.service",
+                                  "getty@ttyACM0.service", "fpgas-tt-other.service"])
+def test_only_the_tiny_tapeout_bridge_is_ever_stopped(busy_board, systemctl, monkeypatch, unit):
+    calls, _ = systemctl
+    monkeypatch.setattr(tinytapeout, "unit_for_pid", lambda pid: unit)
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=1)
+
+    assert f"{unit} holds it and is left alone" in answer["error"]
+    assert "service" not in answer
+    assert calls == [], "not even sudo is asked about"
+
+
+def test_a_port_held_by_the_probe_itself_is_never_taken(busy_board, systemctl, monkeypatch):
+    calls, _ = systemctl
+    monkeypatch.setattr(tinytapeout, "port_holder_info",
+                        lambda tty: ("python3", str(os.getppid())))
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=1)
+
+    assert "is this probe itself" in answer["error"]
+    assert calls == []
+
+
+@pytest.mark.parametrize(("unit", "pi"), [("user@1001.service", True),
+                                          ("fpgas-tt.service", False)])
+def test_take_port_from_refuses_on_its_own(systemctl, monkeypatch, unit, pi):
+    calls, _ = systemctl
+    monkeypatch.setattr(tinytapeout, "on_raspberry_pi", lambda: pi)
+    with pytest.raises(ValueError, match="refusing to stop"):
+        tinytapeout.take_port_from("/dev/ttyACM0", 1, unit)
+    assert calls == []
+
+
+@pytest.mark.parametrize(("args", "shell"), [
+    (["sudo", "-n", "true"], False), (["/usr/bin/systemctl", "stop", "x"], False),
+    ("sudo -n true", True), ("echo hi; systemd-run true", True),
+])
+def test_tests_cannot_start_privileged_commands_here(args, shell):
+    # the guard in conftest.py fails the test before the process exists,
+    # so none of these ever reaches the machine running the suite
+    with pytest.raises(pytest.fail.Exception, match="tried to run"):
+        subprocess.run(args, shell=shell)
+
+
+def test_the_guard_cannot_be_swallowed_by_run_cmd():
+    # run_cmd turns every OSError into a return code; the guard's failure
+    # is not an OSError, so it still ends the test
+    with pytest.raises(pytest.fail.Exception, match="tried to run"):
+        tinytapeout.run_cmd(["sudo", "-n", "true"])
+    with pytest.raises(pytest.fail.Exception, match="tried to run"):
+        tinytapeout.can_sudo()
+
+
+def test_no_stop_service_leaves_a_busy_port_alone(busy_board, systemctl):
+    """--no-stop-service leaves the service running AND leaves its port
+    alone. It does not open the port instead: the bridge does not hold it
+    exclusively, so the open would succeed and the two readers would split
+    the board's answers between them."""
+    calls, _ = systemctl
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=1, take_port=False)
+    assert "fpgas-tt.service holds /dev/ttyACM0" in answer["error"]
+    assert "--no-stop-service" in answer["error"]
+    assert answer["holder"] == "python3 (pid 11559)"
+    assert "service" not in answer
+    assert calls == [], "the service was never even asked about"
+
+
+def test_a_port_that_stays_busy_after_the_stop_is_reported(busy_board, systemctl,
+                                                           monkeypatch):
+    def always_busy(path):
+        raise OSError(errno.EBUSY, "Device or resource busy")
+    monkeypatch.setattr(tinytapeout, "open_tty", always_busy)
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=1)
+
+    assert "was stopped but /dev/ttyACM0 stayed busy" in answer["error"]
+    # still handed back, even though the read got nothing out of it
+    assert answer["service"]["restored"] is True
+
+
+def test_service_note_says_what_happened_to_the_unit():
+    note = tinytapeout.service_note
+    assert note({"unit": "x.service", "stopped": True, "restored": True}) == (
+        "x.service was stopped for the read and started again")
+    assert note({"unit": "x.service", "stopped": False}) == (
+        "x.service holds the port and was left running")
+    assert note({"unit": "x.service", "stopped": True, "restored": False,
+                 "restore_error": "boom", "deadman": True}) == (
+        "x.service was stopped for the read and DID NOT restart: boom (a timer will retry)")
+
+
+def test_the_verdict_carries_what_was_done_to_the_service(busy_board, systemctl):
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=5)
+    d = {"usb": [{"id": "2e8a:0005", "path": "1-1.2", "serial": "E6", "tty": "/dev/ttyACM0",
+                  "manufacturer": "MicroPython", "product": "Board in FS mode"}],
+         "repl": {"1-1.2": answer}}
+    board = tinytapeout.tinytapeout_verdict(d)[0]
+    assert "fpgas-tt.service was stopped for the read and started again" in board["how"]
+
+
+def test_run_cmd_never_raises():
+    assert tinytapeout.run_cmd(["/nonexistent/binary"])[0] == 127
+    assert tinytapeout.run_cmd(["sleep", "5"], timeout=1) == (124, "timed out after 1 s")
+    assert tinytapeout.run_cmd(["echo", "hello"]) == (0, "hello")
+
+
 def test_tinytapeout_collect_walks_the_usb_tree(fake_root, monkeypatch):
     asked = []
 
-    def fake_read_repl(tty, timeout=10):
+    def fake_read_repl(tty, timeout=10, take_port=True):
         asked.append(tty)
         return TT06_ANSWER
     monkeypatch.setattr(tinytapeout, "read_repl", fake_read_repl)
@@ -478,7 +747,8 @@ def test_tinytapeout_collect_walks_the_usb_tree(fake_root, monkeypatch):
 
 
 def test_merge_tinytapeout_into_probe_document(fake_root, monkeypatch):
-    monkeypatch.setattr(tinytapeout, "read_repl", lambda tty, timeout=10: TT06_ANSWER)
+    monkeypatch.setattr(tinytapeout, "read_repl",
+                        lambda tty, timeout=10, take_port=True: TT06_ANSWER)
     d = probe.collect()
     d["verdict"] = probe.verdict(d)
     tinytapeout.merge_tinytapeout(d, tinytapeout.collect_tinytapeout())
@@ -488,7 +758,8 @@ def test_merge_tinytapeout_into_probe_document(fake_root, monkeypatch):
 
 
 def test_tinytapeout_main_prints_text_and_json(fake_root, capsys, monkeypatch):
-    monkeypatch.setattr(tinytapeout, "read_repl", lambda tty, timeout=10: TT06_ANSWER)
+    monkeypatch.setattr(tinytapeout, "read_repl",
+                        lambda tty, timeout=10, take_port=True: TT06_ANSWER)
     monkeypatch.setattr("sys.argv", ["tinytapeout.py"])
     tinytapeout.main()
     out = capsys.readouterr().out
@@ -582,3 +853,39 @@ def test_a_board_with_no_declared_header_buses_is_not_scanned(fake_root, monkeyp
     assert d["board"] == "other"
     assert d["hat_eeproms"] == {}
     assert d["header_i2c"] is None
+
+
+def test_a_held_port_is_never_shared(busy_board, systemctl, monkeypatch):
+    """A port someone else holds is taken or left alone, never shared.
+
+    The holder does not have to hold it exclusively -- the rig's bridge
+    does not -- so open() would succeed and the two readers would split the
+    board's answers, which reads as a mute board and writes into a stream
+    someone else is reading. So nothing is opened when the port cannot be
+    had outright, whether that is because --no-stop-service was given or
+    because the holder is not one this probe may stop.
+    """
+    calls, _ = systemctl
+    opened = []
+    monkeypatch.setattr(tinytapeout, "open_tty",
+                        lambda path: opened.append(path) or os.open("/dev/null", os.O_RDWR))
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=1, take_port=False)
+    assert opened == [], "--no-stop-service must not open a port the bridge is streaming"
+    assert "--no-stop-service" in answer["error"]
+    assert answer["holder"] == "python3 (pid 11559)"
+    assert calls == [], "and it asks nothing of systemd"
+
+    monkeypatch.setattr(tinytapeout, "unit_for_pid", lambda pid: "something-else.service")
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=1)
+    assert opened == [], "a holder that may not be stopped is not shared with either"
+    assert "something-else.service holds it and is left alone" in answer["error"]
+
+
+def test_a_port_this_probe_itself_holds_is_still_read(monkeypatch):
+    """The probe's own fd is not a competing reader: the pty tests hold one
+    end themselves, and a rig where the probe's own parent has the port is
+    not a port being streamed by anyone else."""
+    monkeypatch.setattr(tinytapeout, "port_holder_info",
+                        lambda tty: ("pytest", str(os.getpid())))
+    assert tinytapeout.foreign_holder("/dev/ttyACM0") is None

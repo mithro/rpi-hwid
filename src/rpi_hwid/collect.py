@@ -34,6 +34,7 @@ DEFAULT_USERS = (getpass.getuser(), "pi")
 
 def probe_source(
     fpga: bool = False, jtag: bool = False, flash: bool = False, tinytapeout: bool = False,
+    take_port: bool = True,
 ) -> str:
     """The script to feed to ``python3 -`` on a host.
 
@@ -53,7 +54,10 @@ def probe_source(
         glue += f"merge_fpga(_doc, collect_fpga({jtag!r}, {flash!r}))\n"
     if tinytapeout:
         extra += "\n" + pkg.joinpath("tinytapeout.py").read_text()
-        glue += "merge_tinytapeout(_doc, collect_tinytapeout())\n"
+        # Written out only when it differs from the module's default, so the
+        # script a host is sent reads the same as it always has otherwise.
+        call = "collect_tinytapeout()" if take_port else "collect_tinytapeout(take_port=False)"
+        glue += f"merge_tinytapeout(_doc, {call})\n"
     glue += "print(json.dumps(_doc, indent=1))\n"
     return "RPI_HWID_EMBEDDED = True\n" + probe + extra + glue
 
@@ -78,9 +82,10 @@ def probe_host(
     flash: bool = False,
     timeout: int = 180,
     tinytapeout: bool = False,
+    take_port: bool = True,
 ) -> Result:
     """Run the probe on one host; `host` may carry its own ``user@``."""
-    source = probe_source(fpga, jtag, flash, tinytapeout)
+    source = probe_source(fpga, jtag, flash, tinytapeout, take_port)
     args = ["--json"]
     if "@" in host:
         user_list: Sequence[str] = [host.split("@", 1)[0]]
@@ -122,6 +127,7 @@ def collect(
     flash_hosts: Sequence[str] = (),
     workers: int = 4,
     tinytapeout: bool = False,
+    take_port: bool = True,
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
@@ -129,13 +135,16 @@ def collect(
     `flash_hosts` name the hosts whose JTAG may be driven (and whose Arty
     flash may be read, which reloads the FPGA). `tinytapeout` appends the
     Tiny Tapeout module for every host (its REPL read interrupts whatever
-    a demo board is running).
+    a demo board is running). `take_port` False leaves a service that holds
+    a demo board's port running, where the module would otherwise stop it for
+    the read -- only fpgas-tt.service, and only on a Raspberry Pi.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     def one(host: str) -> Result:
         return probe_host(host, users, jump, fpga or host in jtag_hosts,
-                          host in jtag_hosts, host in flash_hosts, tinytapeout=tinytapeout)
+                          host in jtag_hosts, host in flash_hosts, tinytapeout=tinytapeout,
+                          take_port=take_port)
 
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:

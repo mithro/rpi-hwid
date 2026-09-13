@@ -11,7 +11,9 @@ and how to read that from Python. For what the probe itself reads, see
 installed on the Pi), in parallel, and writes `<host>.json` per host. The FPGA
 module is appended with `--fpga` for every host, or with `--jtag HOST` and
 `--flash HOST` for the hosts that should drive JTAG; the Tiny Tapeout module with
-`--tinytapeout`. A login banner before the JSON is skipped.
+`--tinytapeout`, which on a rig stops `fpgas-tt.service` for the length of its
+read unless `--no-stop-service` is given (see [PROBE.md](PROBE.md#a-port-a-service-already-holds)).
+A login banner before the JSON is skipped.
 
 ```
 $ rpi-hwid collect --out data/ -J jump.example.org --fpga --jtag pi@10.21.2.16 \
