@@ -2,7 +2,9 @@
 """What is this Raspberry Pi wearing, and what powers it?
 
 This module is deliberately a single, dependency-free file that runs on any
-Raspberry Pi with python3 >= 3.5 (needs sudo and i2c-tools), so it can be
+Raspberry Pi with python3 >= 3.5 (sudo is wanted for the Pi's own firmware
+tools; the I2C header is read directly, needing neither sudo nor
+i2c-tools), so it can be
 sent to a host over ssh without installing anything:
 
     ssh pi@host 'python3 -' --json < src/rpi_hwid/probe.py
@@ -26,10 +28,11 @@ HAT ID EEPROM at another address (0x51-0x57)
     yet fully identifiable: product "Waveshare PoE M.2 HAT+ (B)", pid
     0x6d87. (Its vendor string is the literal placeholder "vendor " and
     every unit shares one UUID, so it names the model, not the unit.)
-I2C devices on bus 1
+I2C devices on the header's user bus (pins 3/5)
     Waveshare PoE HAT (B) for 3B+/4B has an SSD1306 OLED at 0x3c and a
     PCF8574 fan controller at 0x20. Nothing else in the line-up puts
-    anything on bus 1.
+    anything there. The pair is the HAT's own silicon, so it names the HAT
+    on whatever board the HAT is fitted to.
 USB tree
     Waveshare's PoE-ETH-USB-HUB-HAT for a Pi Zero is a Terminus 1a40:0101
     hub on the root port with an RTL8152 (0bda:8152) on its port 4.
@@ -77,12 +80,22 @@ Other boards: the Orange Pi PC (Xunlong, Allwinner H3, Armbian)
     derives eth0's MAC from the same serial: 02, the serial's fourth byte,
     then its last four (02:81:2e:b7:a3:4e from 02c000812eb7a34e on
     pi-sw2-p22), so the MAC is not independent evidence. RAM is MemTotal
-    rounded up to the fitted size, the Armbian release is
-    /etc/armbian-release, and the Pi-only pokes (dtparam, vcgencmd, the ID
-    bus, the I2C-1 scan, the bonnet rule) are skipped: an H3 has no PMIC,
-    no firmware power report and no HAT convention, so nothing here can
-    say what powers it.
+    rounded up to the fitted size and the Armbian release is
+    /etc/armbian-release. The Pi-only pokes (dtparam, vcgencmd) are
+    skipped: an H3 has no PMIC and no firmware power report, so unless a
+    HAT names the supply nothing here can say what powers it.
+
+    The 40-pin header, though, is probed exactly as a Pi's. A HAT does not
+    know what it is plugged into: pi-sw2-p22 carries a Digilent Pmod HAT
+    Adaptor whose ID EEPROM answers at 0x50 with the same R-Pi magic and
+    the same atoms it would on a Pi (measured 2026-09-13). Only the bus
+    numbering differs, and that is what HEADER_BUSES is for -- the Orange
+    Pi PC's header pins 27/28 are TWI1 (i2c-1) and pins 3/5 are TWI0
+    (i2c-0), the reverse of the Pi. Its i2c-2 is the R_TWI the SY8106A
+    regulator sits on, and its i2c-3 is the HDMI DDC line, which
+    acknowledges every address: neither is declared, so neither is read.
 """
+import fcntl
 import glob
 import json
 import os
@@ -219,17 +232,79 @@ def sunxi_serial(sid):
     return "%08x%08x" % (words[0], tail)
 
 
+# --- I2C ----------------------------------------------------------------------
+#
+# Spoken directly to /dev/i2c-N rather than through i2c-tools: i2cdetect and
+# i2ctransfer are not installed everywhere the probe runs (an Armbian Orange
+# Pi has neither), and the ioctl they wrap needs no more privilege than the
+# device node itself, which on every board in the fleet is group i2c and the
+# login is in that group. So this reads the header with no sudo and no
+# packages -- which is the point of the probe being one dependency-free file.
+
+I2C_SLAVE = 0x0703                 # <linux/i2c-dev.h>: bind this fd to an address
+
+
+def i2c_open(bus, addr):
+    """An fd on /dev/i2c-`bus` bound to the 7-bit `addr`, or None when the
+    bus is absent, the address is already claimed by a kernel driver (what
+    i2cdetect shows as "UU"), or this user is not in the i2c group."""
+    try:
+        fd = os.open(ROOT + "/dev/i2c-%d" % bus, os.O_RDWR)
+    except OSError:
+        return None
+    try:
+        fcntl.ioctl(fd, I2C_SLAVE, addr)
+    except (OSError, IOError):     # 3.5: ioctl on a non-device raises IOError
+        os.close(fd)
+        return None
+    return fd
+
+
+def i2c_present(bus, addr):
+    """Whether `addr` answers a one-byte read. That read is what
+    `i2cdetect -r` does, and it is the safer of its two probes: a quick
+    write can disturb a write-only device, a read cannot."""
+    fd = i2c_open(bus, addr)
+    if fd is None:
+        return False
+    try:
+        os.read(fd, 1)
+        return True
+    except (OSError, IOError):
+        return False
+    finally:
+        os.close(fd)
+
+
+def i2c_scan(bus, first=0x03, last=0x77):
+    """The addresses answering on `bus`, lower-case hex without the 0x, the
+    way i2cdetect prints them and the way the rest of this file expects
+    them."""
+    return ["%02x" % a for a in range(first, last + 1) if i2c_present(bus, a)]
+
+
 # --- HAT EEPROM -------------------------------------------------------------
 
 def eeprom_read(bus, addr, length=256):
+    """The first `length` bytes of an EEPROM with a 16-bit word address:
+    seek to 0 by writing the two offset bytes, then read. None when the
+    address does not answer or the read fails part way."""
+    fd = i2c_open(bus, addr)
+    if fd is None:
+        return None
     out = b""
-    for off in range(0, length, 128):
-        r = sh(["sudo", "i2ctransfer", "-y", str(bus), "w2@0x%02x" % addr,
-                "0x%02x" % (off >> 8), "0x%02x" % (off & 0xff), "r128"])
-        if not r or "Error" in r:
-            return None
-        out += bytes(int(x, 16) for x in r.split())
-    return out
+    try:
+        os.write(fd, b"\x00\x00")
+        while len(out) < length:
+            chunk = os.read(fd, min(128, length - len(out)))
+            if not chunk:
+                break
+            out += chunk
+    except (OSError, IOError):
+        return None
+    finally:
+        os.close(fd)
+    return out if len(out) == length else None
 
 
 def eeprom_decode(blob):
@@ -254,17 +329,44 @@ def eeprom_decode(blob):
     return info
 
 
-def id_bus_scan():
-    """Find HAT EEPROMs on the ID bus, enabling it at runtime if needed."""
+# Where the 40-pin header's two I2C pairs land, per board. The roles are the
+# header's, not the SoC's: "id" is pins 27/28 (ID_SD/ID_SC, where the HAT
+# spec puts the ID EEPROM) and "user" is pins 3/5 (SDA1/SCL1, where a HAT
+# puts anything else it carries). The bus numbers are each board's own and
+# do not agree between boards -- measured on the fleet on 2026-09-13 by
+# reading the R-Pi magic off the EEPROM of a HAT known to be fitted:
+#   Raspberry Pi 4, Pi 5    id 0, user 1
+#   Xunlong Orange Pi PC    id 1 (i2c@1c2b000, PA18/PA19), user 0
+#                           (i2c@1c2ac00, PA11/PA12) -- the reverse of the Pi
+# "enable" brings the ID bus up when it is not already there, and is the
+# board's own command: the Pi's dtparam does not exist on Armbian, which
+# needs a reboot to add an overlay, so an Orange Pi takes the buses it has.
+#
+# Only a declared bus is ever scanned. An undeclared one may be an HDMI DDC
+# line -- the Orange Pi's i2c-3 acknowledges all 117 addresses -- and
+# scanning it would invent a HAT out of an empty socket.
+HEADER_BUSES = {
+    "rpi": {"id": 0, "user": 1, "enable": ["sudo", "dtparam", "i2c_vc=on"]},
+    "opi": {"id": 1, "user": 0, "enable": None},
+}
+
+
+def id_bus_scan(bus, enable=None):
+    """HAT ID EEPROMs on `bus`, enabling it at runtime if `enable` says how
+    and it is not already there. Keyed by address, as the HAT spec allows
+    0x50 through 0x57. Only a blob carrying the R-Pi magic counts, so a bus
+    that answers at every address yields nothing rather than eight HATs."""
     enabled_here = False
-    if not os.path.exists(ROOT + "/dev/i2c-0"):
-        sh(["sudo", "dtparam", "i2c_vc=on"])
-        enabled_here = os.path.exists(ROOT + "/dev/i2c-0")
+    if not os.path.exists(ROOT + "/dev/i2c-%d" % bus):
+        if not enable:
+            return {}
+        sh(enable)
+        enabled_here = os.path.exists(ROOT + "/dev/i2c-%d" % bus)
         if not enabled_here:
             return {}
     found = {}
     for addr in range(0x50, 0x58):
-        info = eeprom_decode(eeprom_read(0, addr))
+        info = eeprom_decode(eeprom_read(bus, addr))
         if info:
             found["0x%02x" % addr] = info
     if enabled_here:
@@ -330,19 +432,6 @@ def usb_net_adapters(ifaces):
     return out
 
 
-def parse_i2cdetect(text):
-    """Addresses that answered, from i2cdetect's grid: each row is
-    "R0: xx xx -- ..." and only the cells after the colon count."""
-    found = []
-    for line in text.split("\n"):
-        if ":" not in line:
-            continue
-        for cell in line.split(":", 1)[1].split():
-            if re.match(r"^[0-7][0-9a-f]$", cell):
-                found.append(cell)
-    return sorted(set(found))
-
-
 # --- collect ------------------------------------------------------------------
 
 def collect():
@@ -376,14 +465,20 @@ def collect():
     if os.path.isdir(ROOT + "/proc/device-tree/hat"):
         d["hat_fw"] = {k: read(ROOT + "/proc/device-tree/hat/" + k)
                        for k in ("vendor", "product", "product_id", "product_ver", "uuid")}
-    # The ID bus and bus 1 are HAT evidence, and HATs are a Pi convention:
-    # on another board a device on bus 1 is the board's own (an Orange Pi
-    # PC's CPU regulator), so the scans are skipped rather than misread.
-    d["hat_eeproms"] = id_bus_scan() if is_pi else {}
-    if is_pi and os.path.exists(ROOT + "/dev/i2c-1"):
-        d["i2c1"] = parse_i2cdetect(sh(["sudo", "i2cdetect", "-y", "1"]))
+    # The header's two I2C pairs are HAT evidence on any board that has a
+    # 40-pin header, not only a Pi: the fleet's Orange Pi PC carries a
+    # Digilent Pmod HAT Adaptor whose ID EEPROM reads exactly like the one
+    # on a Pi. Which bus is which is the board's to say (HEADER_BUSES); a
+    # board that declares nothing is left alone rather than guessed at.
+    header_buses = HEADER_BUSES.get(d["board"])
+    if header_buses:
+        d["hat_eeproms"] = id_bus_scan(header_buses["id"], header_buses["enable"])
+        d["header_i2c"] = (i2c_scan(header_buses["user"])
+                           if os.path.exists(ROOT + "/dev/i2c-%d" % header_buses["user"])
+                           else None)
     else:
-        d["i2c1"] = None
+        d["hat_eeproms"] = {}
+        d["header_i2c"] = None
     usb = {}
     for p in glob.glob(ROOT + "/sys/bus/usb/devices/*"):
         v, pr = read(p + "/idVendor"), read(p + "/idProduct")
@@ -444,12 +539,6 @@ def verdict(d):
         a = d["armbian"]
         ev.append("Armbian %s on board id %s (%s)" % (
             a.get("VERSION", "?"), a.get("BOARD", "?"), a.get("LINUXFAMILY", "?")))
-    if not is_pi:
-        # HATs are a Pi convention, and the supply is unsensed: an H3 has
-        # no PMIC and no firmware to report what feeds the board.
-        return {"header": ["40-pin header not probed: no HAT ID EEPROM convention on this board"],
-                "power": "no power sensing on this board: nothing on it reports its supply",
-                "evidence": ev, "summary": summary(d, [], "undetermined")}
     for addr, e in d["hat_eeproms"].items():
         header.append("%s (HAT EEPROM at %s, pid %s%s)" % (
             e.get("product", "?").strip(), addr, e.get("pid"),
@@ -461,12 +550,17 @@ def verdict(d):
         header.append(fw_name + " (firmware-read HAT EEPROM)")
         if "PoE" in (d["hat_fw"]["product"] or ""):
             power = "PoE HAT on the GPIO header: " + fw_name
-    i2c1 = d.get("i2c1") or []
-    if "3c" in i2c1 and "20" in i2c1:
-        header.append("Waveshare PoE HAT (B) (SSD1306 at 0x3c + PCF8574 at 0x20 on bus 1)")
+    # A HAT that carries devices rather than an EEPROM, read off the header's
+    # user bus (pins 3/5) whichever bus number that is on this board. The
+    # pair is the HAT's own silicon, so it identifies the HAT on any board
+    # the HAT fits: a Waveshare PoE HAT (B) is one on an Orange Pi too.
+    devices = d.get("header_i2c") or []
+    if "3c" in devices and "20" in devices:
+        header.append("Waveshare PoE HAT (B) "
+                      "(SSD1306 at 0x3c + PCF8574 at 0x20 on the header's user bus)")
         power = "PoE HAT on the GPIO header: Waveshare PoE HAT (B)"
-    elif i2c1:
-        ev.append("bus 1 devices: " + " ".join(i2c1))
+    elif devices:
+        ev.append("header user bus devices: " + " ".join(devices))
     usb = d["usb"]
     roots = [k for k, v in usb.items() if v == "1a40:0101" and k.count(".") == 0 and "-" in k]
     for r in roots:
@@ -499,9 +593,13 @@ def verdict(d):
         ev.append("power port: throttled=%s%s%s" % (
             d["throttled"], ", under-voltage NOW" if d["undervoltage_now"] else "",
             ", under-voltage since boot" if d["undervoltage_since_boot"] else ""))
-    if not power:
+    if not power and is_pi:
         power = ("nothing on the Pi distinguishes it: a HAT with no ID EEPROM and no I2C devices "
                  "(Waveshare C, D, E) or an external splitter; use the switch's PD class or look")
+    elif not power:
+        # A HAT found above still names the supply; this is only what is left
+        # when it did not. An H3 has no PMIC and no firmware to ask.
+        power = "no power sensing on this board: nothing on it reports its supply"
     return {"header": header or ["nothing identifiable on the header"], "power": power,
             "evidence": ev, "summary": summary(d, header, power)}
 

@@ -139,7 +139,7 @@ def test_sunxi_mac_follows_uboot_rule():
 def _evidence(**over):
     base = {
         "model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "c36b093f773d46b8",
-        "revision": "a04171", "hat_fw": None, "hat_eeproms": {}, "i2c1": [],
+        "revision": "a04171", "hat_fw": None, "hat_eeproms": {}, "header_i2c": [],
         "usb": {"usb1": "1d6b:0002"}, "interfaces": [], "usb_net": [],
         "throttled": "0x0", "undervoltage_now": False, "undervoltage_since_boot": False,
         "pi5": True, "max_current_ma": 3000, "usbpd_pdos": [], "ext5v_v": 5.34,
@@ -198,7 +198,7 @@ def test_verdict_zero_bonnet_and_onboard_macs():
 
 
 def test_verdict_poe_hat_b_by_i2c_devices():
-    d = _evidence(model="Raspberry Pi 4 Model B Rev 1.5", pi5=False, i2c1=["20", "3c"])
+    d = _evidence(model="Raspberry Pi 4 Model B Rev 1.5", pi5=False, header_i2c=["20", "3c"])
     v = probe.verdict(d)
     assert v["summary"]["power_class"] == "gpio-poe-hat"
     assert "Waveshare PoE HAT (B)" in v["summary"]["header"]

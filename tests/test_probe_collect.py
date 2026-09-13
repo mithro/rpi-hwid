@@ -152,10 +152,10 @@ def test_collect_orange_pi_pc(opi_root):
     assert d["armbian"] is None, "the pool's Orange Pis netboot Raspbian, not Armbian"
     assert d["hat_fw"] is None
     assert d["hat_eeproms"] == {}
-    assert d["i2c1"] is None
+    assert d["header_i2c"] is None, "this fake tree has no /dev/i2c-0 to scan"
     assert d["throttled"] is None
     assert d["pi5"] is False
-    assert calls == [], "no sudo, dtparam, i2cdetect or vcgencmd on a board without them"
+    assert calls == [], "no sudo, dtparam or vcgencmd on a board without them"
     ifaces = {i["name"]: i for i in d["interfaces"]}
     assert ifaces["eth0"]["onboard"] is True
     assert ifaces["eth0"]["driver"] == "dwmac-sun8i"
@@ -165,7 +165,8 @@ def test_collect_orange_pi_pc(opi_root):
     assert ifaces["usb0"]["usb"] is None, "a gadget is not a USB device on the host side"
     assert d["usb_net"] == []
     v = probe.verdict(d)
-    assert v["header"] == ["40-pin header not probed: no HAT ID EEPROM convention on this board"]
+    assert v["header"] == ["nothing identifiable on the header"], (
+        "an Orange Pi with nothing fitted says what a bare Pi says")
     assert "no power sensing" in v["power"]
     assert any(e.startswith("Allwinner SID 0x02c00081") for e in v["evidence"])
     assert not any(e.startswith("Armbian") for e in v["evidence"])
@@ -255,7 +256,7 @@ def test_collect_walks_the_tree(fake_root):
     assert d["fan_rpm"] == 2471
     assert d["hat_fw"] is None
     assert d["hat_eeproms"] == {}
-    assert d["i2c1"] is None
+    assert d["header_i2c"] is None
     assert d["throttled"] == "0x0"
     ifaces = {i["name"]: i for i in d["interfaces"]}
     assert ifaces["eth0"]["onboard"] is True
@@ -305,23 +306,19 @@ def test_hat_firmware_dir_and_id_bus(fake_root, monkeypatch):
         _w(fake_root, "/proc/device-tree/hat/" + k, v + "\0")
     _w(fake_root, "/dev/i2c-1", "")
     _w(fake_root, "/dev/i2c-0", "")
-    i2cdetect = ("     0  1  2  3  4  5  6  7  8  9  a  b  c  d  e  f\n"
-                 "00:                         -- -- -- -- -- -- -- --\n"
-                 "20: 20 -- -- -- -- -- -- -- -- -- -- -- -- -- -- --\n"
-                 "30: -- -- -- -- -- -- -- -- -- -- -- -- 3c -- -- --\n")
 
     def fake_sh(args, timeout=15):
-        if args[:3] == ["sudo", "i2cdetect", "-y"]:
-            return i2cdetect
-        if args[:2] == ["sudo", "i2ctransfer"]:
-            return ""       # no EEPROM answers on the ID bus
         if args == ["vcgencmd", "get_throttled"]:
             return "throttled=0x10000"
         return ""
     monkeypatch.setattr(probe, "sh", fake_sh)
+    # The I2C seam: a Pi's user bus is 1, and the Waveshare PoE HAT (B)'s
+    # two chips answer there. Nothing answers on the ID bus (0).
+    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: ["20", "3c"] if bus == 1 else [])
+    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
     d = probe.collect()
     assert d["hat_fw"]["product"] == "Pmod HAT Adaptor"
-    assert d["i2c1"] == ["20", "3c"]
+    assert d["header_i2c"] == ["20", "3c"]
     assert d["undervoltage_since_boot"] is True
     v = probe.verdict(d)
     assert "Digilent Pmod HAT Adaptor" in v["summary"]["header"]
@@ -525,3 +522,63 @@ def test_armbian_release_is_read_when_a_board_has_one(opi_root):
     assert d["armbian"]["BOARD_NAME"] == "Orange Pi PC"
     assert any(e.startswith("Armbian 26.8.0-trunk.170 on board id orangepipc")
                for e in probe.verdict(d)["evidence"])
+
+
+# The first 64 bytes of the ID EEPROM on the Digilent Pmod HAT Adaptor fitted
+# to pi-sw2-p22, the fleet's Orange Pi PC, read off i2c-1 on 2026-09-13. A
+# HAT does not know what it is plugged into: this is byte for byte the
+# format a Pi would read, which is the whole reason the probe can share one
+# code path across the two boards.
+OPI_PMOD_EEPROM = bytes.fromhex(
+    "522d5069010002006c0000000100000030000000"
+    "aaff3b3624884da972423c0955f9126c01000100"
+    "0810446967696c656e74506d6f64204841542041646170746f72"
+)
+
+
+def test_orange_pi_reads_a_hat_eeprom_off_its_own_id_bus(opi_root, monkeypatch):
+    """An Orange Pi is probed exactly as a Pi is. Its header's ID pins are
+    i2c-1, not the Pi's i2c-0, so a scan of the wrong bus would find
+    nothing: this pins the bus the board declares as much as the decode."""
+    root, _calls = opi_root
+    _w(root, "/dev/i2c-0", "")
+    _w(root, "/dev/i2c-1", "")
+
+    read_from = []
+
+    def fake_eeprom_read(bus, addr, length=256):
+        read_from.append((bus, addr))
+        if bus == 1 and addr == 0x50:
+            return OPI_PMOD_EEPROM.ljust(length, b"\xff")
+        return None
+
+    monkeypatch.setattr(probe, "eeprom_read", fake_eeprom_read)
+    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
+    d = probe.collect()
+
+    assert {bus for bus, _addr in read_from} == {1}, "only the declared ID bus is read"
+    assert list(d["hat_eeproms"]) == ["0x50"]
+    assert d["hat_eeproms"]["0x50"]["product"] == "Pmod HAT Adaptor"
+    assert d["hat_eeproms"]["0x50"]["vendor"] == "Digilent"
+    v = probe.verdict(d)
+    assert "Pmod HAT Adaptor" in v["summary"]["header"]
+
+
+def test_a_board_with_no_declared_header_buses_is_not_scanned(fake_root, monkeypatch):
+    """An unknown board declares no buses, so nothing is read. Scanning
+    whatever /dev/i2c-* happens to exist would be unsafe: the Orange Pi's
+    i2c-3 is an HDMI DDC line that acknowledges all 117 addresses."""
+    _w(fake_root, "/proc/device-tree/model", "Some Other SBC\0")
+    _w(fake_root, "/proc/device-tree/compatible", "vendor,other-sbc\0")
+    _w(fake_root, "/dev/i2c-0", "")
+    _w(fake_root, "/dev/i2c-3", "")
+
+    def boom(*a, **k):
+        raise AssertionError("an undeclared bus must never be touched")
+
+    monkeypatch.setattr(probe, "eeprom_read", boom)
+    monkeypatch.setattr(probe, "i2c_scan", boom)
+    d = probe.collect()
+    assert d["board"] == "other"
+    assert d["hat_eeproms"] == {}
+    assert d["header_i2c"] is None

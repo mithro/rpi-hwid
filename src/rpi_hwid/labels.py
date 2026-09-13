@@ -536,15 +536,14 @@ def draw_board(lab, b):
     lab.fit(tx, y + 4.6 * mm, b.subtitle, SANS, 6.5, col_w)
 
     # HAT band: the HAT line, then the uuid line centred in the rest of the
-    # band (regular weight: bold mono at 6 pt fills in under toner). A
-    # board without the HAT convention keeps the row, captioned "header"
-    # and saying in grey that nothing was probed there.
+    # band (regular weight: bold mono at 6 pt fills in under toner). Every
+    # board with a 40-pin header gets the same band: a HAT does not know
+    # what it is plugged into, and the probe reads an Orange Pi's header
+    # the same way it reads a Pi's, so the two labels say the same thing.
     y = PAD + max(logo_h, title_h) + 0.8 * mm
     band_top = y
     if b.header:
         lab.captioned(x, tx, y, "HAT", "; ".join(b.header), SANS, 7, col_w)
-    elif b.header_note:
-        lab.captioned(x, tx, y, "header", b.header_note, SANS, 7, col_w)
     else:
         lab.captioned(x, tx, y, "HAT", "none", SANS, 7, col_w)
     y += 3.2 * mm
@@ -785,7 +784,6 @@ class BoardLabel:
     macs: tuple[tuple[str, str], ...]        # (kind, mac), eth first
     header: tuple[str, ...]
     hat_uuid: str | None = None
-    header_note: str | None = None   # in place of the HAT line, on a board with no HATs
     eth_note: str | None = None      # why there is no eth MAC
     wlan_note: str | None = None     # why there is no wlan MAC
 
@@ -867,7 +865,6 @@ def board_record(doc):
         kind=ident.kind, short=ident.short, title=ident.title, subtitle=ident.subtitle,
         mark=ident.mark, serial=s.serial, memory=ident.memory, macs=tuple(macs),
         header=tuple(s.header), hat_uuid=s.hat_uuid,
-        header_note=None if ident.kind == "rpi" else "40-pin",
         eth_note="no wired port" if ident.wired is False else None,
         wlan_note=wlan_note,
     )

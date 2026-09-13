@@ -87,9 +87,11 @@ off. On a Pi 4 or 5 it cannot be derived, so a disabled radio is stated as such.
 The same layout, band for band, with the Orange Pi orange in the raspberry's box.
 Title and subtitle come from the device tree instead of a revision code: model,
 fitted RAM, SoC, and the device-tree id `dt orangepi-pc`, the board's canonical id
-since Xunlong sells it by name with no part number. The HAT row is kept but reads
-`header  40-pin` — nothing to probe, and the distribution is left off because
-it changes — and the wlan row says `no radio` on a PC or One. The SoC serial runs
+since Xunlong sells it by name with no part number. The HAT row is the Pi's row,
+read the same way and saying the same thing: the header is probed on any board
+that has one, so an Orange Pi wearing a Digilent Pmod HAT Adaptor says
+`HAT  Pmod HAT Adaptor` with the adaptor's uuid under it, exactly as a Pi
+wearing the same adaptor does. The wlan row says `no radio` on a PC or One. The SoC serial runs
 up the spine as on a Pi.
 
 <p>

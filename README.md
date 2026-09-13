@@ -94,9 +94,10 @@ ssh pi@host 'python3 -' < src/rpi_hwid/probe.py
 ssh pi@host 'python3 - --json' < src/rpi_hwid/probe.py
 ```
 
-On the Pi it wants `i2c-tools` and passwordless `sudo` (for `i2cdetect`,
-`i2ctransfer`, `dtparam` and `vcgencmd`). Without them it still reports what it
-can.
+On the Pi it wants passwordless `sudo` for the firmware tools (`dtparam` and
+`vcgencmd`). The 40-pin header is read straight from `/dev/i2c-*`, so it needs
+neither `sudo` nor `i2c-tools` — only membership of the `i2c` group. Without any
+of it the probe still reports what it can.
 
 ## Quick start
 
