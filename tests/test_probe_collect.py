@@ -672,9 +672,15 @@ def test_the_guard_cannot_be_swallowed_by_run_cmd():
 
 
 def test_no_stop_service_leaves_a_busy_port_alone(busy_board, systemctl):
+    """--no-stop-service leaves the service running AND leaves its port
+    alone. It does not open the port instead: the bridge does not hold it
+    exclusively, so the open would succeed and the two readers would split
+    the board's answers between them."""
     calls, _ = systemctl
     answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=1, take_port=False)
-    assert answer["error"].startswith("cannot open /dev/ttyACM0")
+    assert "fpgas-tt.service holds /dev/ttyACM0" in answer["error"]
+    assert "--no-stop-service" in answer["error"]
+    assert answer["holder"] == "python3 (pid 11559)"
     assert "service" not in answer
     assert calls == [], "the service was never even asked about"
 
@@ -847,3 +853,39 @@ def test_a_board_with_no_declared_header_buses_is_not_scanned(fake_root, monkeyp
     assert d["board"] == "other"
     assert d["hat_eeproms"] == {}
     assert d["header_i2c"] is None
+
+
+def test_a_held_port_is_never_shared(busy_board, systemctl, monkeypatch):
+    """A port someone else holds is taken or left alone, never shared.
+
+    The holder does not have to hold it exclusively -- the rig's bridge
+    does not -- so open() would succeed and the two readers would split the
+    board's answers, which reads as a mute board and writes into a stream
+    someone else is reading. So nothing is opened when the port cannot be
+    had outright, whether that is because --no-stop-service was given or
+    because the holder is not one this probe may stop.
+    """
+    calls, _ = systemctl
+    opened = []
+    monkeypatch.setattr(tinytapeout, "open_tty",
+                        lambda path: opened.append(path) or os.open("/dev/null", os.O_RDWR))
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=1, take_port=False)
+    assert opened == [], "--no-stop-service must not open a port the bridge is streaming"
+    assert "--no-stop-service" in answer["error"]
+    assert answer["holder"] == "python3 (pid 11559)"
+    assert calls == [], "and it asks nothing of systemd"
+
+    monkeypatch.setattr(tinytapeout, "unit_for_pid", lambda pid: "something-else.service")
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=1)
+    assert opened == [], "a holder that may not be stopped is not shared with either"
+    assert "something-else.service holds it and is left alone" in answer["error"]
+
+
+def test_a_port_this_probe_itself_holds_is_still_read(monkeypatch):
+    """The probe's own fd is not a competing reader: the pty tests hold one
+    end themselves, and a rig where the probe's own parent has the port is
+    not a port being streamed by anyone else."""
+    monkeypatch.setattr(tinytapeout, "port_holder_info",
+                        lambda tty: ("pytest", str(os.getpid())))
+    assert tinytapeout.foreign_holder("/dev/ttyACM0") is None

@@ -492,23 +492,41 @@ def open_tty(path):
     return fd
 
 
-def port_holder_info(tty):
-    """(command, pid) for a process holding `tty` open, else None.
+def port_holders(tty):
+    """(command, pid) for every process holding `tty` open.
 
     Only processes this user owns are readable in /proc, which is the case
     that matters: a bridge or console service running as the same user is
-    what usually has the port, and it swallows the REPL's answers so the
-    board looks mute. Anything unreadable is skipped, not guessed at.
+    the usual reason a demo board will not answer.
     """
+    found = []
     for proc in glob.glob(ROOT + "/proc/[0-9]*"):
         try:
             for fd in glob.glob(proc + "/fd/*"):
                 if os.path.realpath(fd) != tty:
                     continue
-                return (read(proc + "/comm") or "?", os.path.basename(proc))
+                found.append((read(proc + "/comm") or "?", os.path.basename(proc)))
+                break
         except OSError:
             continue
-    return None
+    return found
+
+
+def port_holder_info(tty):
+    """(command, pid) for a process holding `tty`, this probe's own first.
+
+    The scan's order is whatever /proc lists, and a port can appear to have
+    more than one holder: a pty number is reused once its last holder lets
+    go, so a stale fd elsewhere can match a port that another process now
+    has. A port this probe holds itself is not someone else's to report, so
+    it is named ahead of any other.
+    """
+    holders = port_holders(tty)
+    mine = own_pids()
+    for holder in holders:
+        if holder[1] in mine:
+            return holder
+    return holders[0] if holders else None
 
 
 def port_holder(tty):
@@ -641,6 +659,34 @@ def wait_for_port(tty, timeout):
         if time.monotonic() >= deadline:
             return (None, last)
         time.sleep(0.2)
+
+
+def foreign_holder(tty):
+    """A process other than this probe (or whatever launched it) holding
+    `tty`, else None. Our own fd is not a competing reader; anyone else's
+    is."""
+    holder = port_holder_info(tty)
+    if not holder or holder[1] in own_pids():
+        return None
+    return holder
+
+
+def service_holder(tty):
+    """(unit, holder) when a system service other than this probe holds
+    `tty`; (None, holder) for any other holder; (None, None) for a free
+    port.
+
+    Only a service is worth refusing to read for. A pty number is reused
+    once its last holder lets go, so a stale fd elsewhere on the machine
+    can make an unrelated process look like the holder of a port that is
+    in fact free -- seen on the workstation running these tests. A bridge
+    streaming a board, the case that must never be shared, is always a
+    service.
+    """
+    holder = foreign_holder(tty)
+    if not holder:
+        return (None, None)
+    return (unit_for_pid(holder[1]), holder)
 
 
 def service_holding(tty):
@@ -779,11 +825,23 @@ def read_repl(tty, timeout=10, take_port=True):
     for the read and started again after (see take_port_from), because the
     service that holds it holds it for its whole life. take_port=False
     leaves any such service alone and reports who has the port instead, as
-    does a holder that is not a service or cannot be stopped.
+    does a holder that is not a service or cannot be stopped. In neither
+    case is the port opened: a reader that cannot have the port to itself
+    does not take half of it.
     """
     unit, why = service_holding(tty) if take_port else (None, None)
     if unit:
         return take_port_from(tty, timeout, unit)
+    held, _holder = service_holder(tty)
+    if held:
+        # A service has it and it is not ours to take. Opening it anyway
+        # would not fail -- a holder that never asked for the port
+        # exclusively does not stop anyone else opening it -- it would split
+        # the board's answers between two readers and write into a stream
+        # someone else is reading. A reader that cannot have the port to
+        # itself does not take half of it.
+        return blame(tty, why or ("%s holds %s and --no-stop-service was given"
+                                  % (held, tty)))
     try:
         fd = open_tty(tty)
     except (OSError, termios.error) as e:      # termios.error is not an OSError

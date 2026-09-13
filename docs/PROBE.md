@@ -161,8 +161,15 @@ these holds, and otherwise the probe leaves the holder alone and names it:
 - that unit is on the allowlist, which is **`fpgas-tt.service` alone**;
 - `sudo -n` works, so nothing waits on a password prompt.
 
+When the port cannot be had outright — `--no-stop-service` was given, or the
+holder is a service this probe may not stop — the port is **not opened at all**
+and the holder is named instead. Opening it would not fail, which is the trap: a
+holder that never asked for the port exclusively does not stop anyone else
+opening it, and two readers then split the board's answers. A reader that cannot
+have the port to itself does not take half of it.
+
 `--no-stop-service` (on `tinytapeout`, `probe --tinytapeout` and
-`collect --tinytapeout`) turns it off entirely.
+`collect --tinytapeout`) turns the stopping off entirely.
 
 These limits exist because an earlier version had fewer. It took the nearest
 `.service` above the holder's cgroup, and for a process in a tmux pane that is the
