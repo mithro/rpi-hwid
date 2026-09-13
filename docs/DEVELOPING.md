@@ -49,6 +49,29 @@ regeneration on another machine may differ by a few pixels. GitHub has no API fo
 the repository's social preview: after regenerating it, upload the file by hand
 under Settings → Social preview.
 
+## The Tiny Tapeout board data
+
+The chip carrier and demo board colours come from the published board
+spreadsheet, not from the boards:
+
+```sh
+uv run tools/fetch_tt_boards.py           # rewrite src/rpi_hwid/tt_boards.json
+uv run tools/fetch_tt_boards.py --check   # what CI runs: fail if the sheet has moved
+```
+
+Edit the spreadsheet, re-run the script, commit the JSON. The `--check` run is a
+workflow of its own (`.github/workflows/tt-boards.yml`) on a weekly schedule,
+deliberately not a job in `ci.yml`: a green `ci.yml` on main is what triggers the
+PyPI publish, and a release should not be at the mercy of a spreadsheet edit or a
+bad afternoon at docs.google.com.
+
+The check compares the *derived* document rather than the raw CSV, because the
+sheets also carry Stock and Buy Link columns that move on their own; a check that
+went red when something sold out would be noise. Columns are found by their
+headings, read from the sheet's two header rows together, so a column can be
+added or moved without touching the script — but one that is renamed fails
+loudly, naming the headings it did find.
+
 ## Building the Debian package locally
 
 ```sh

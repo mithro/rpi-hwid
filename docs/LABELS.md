@@ -123,7 +123,16 @@ the way the board itself is, in its silkscreen colour — so the box shows both
 colours at once — with the two named beside it, soldermask over silkscreen, for
 the reader whose eye the print cannot be trusted by. A TT05 kit, say, is a
 yellow carrier lettered in black beside a black demo board lettered in white. A
-box whose colours are not recorded is left empty and struck through. The large
+box whose colours are not recorded is left empty and struck through.
+
+The colours themselves are not readable from the board. They come from the
+published Tiny Tapeout board spreadsheet, pulled into
+`src/rpi_hwid/tt_boards.json` by `tools/fetch_tt_boards.py` and kept honest by
+a scheduled CI job that re-derives the file and fails when the sheet has moved.
+A swatch is the board's own hex out of that sheet rather than one generic hex
+per colour name, so TT06's rose and TT08's light blue are the pink and the blue
+those boards actually are. Where the sheet names a colour but records no hex,
+the name falls back to the palette in `rpi_hwid.tinytapeout`. The large
 QR opens the chip's page on tinytapeout.com; the demo board's RP2 unique id —
 its USB serial — runs along the foot with a small QR of its own.
 

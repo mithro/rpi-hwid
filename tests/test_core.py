@@ -510,3 +510,54 @@ def test_cli_probe_and_collect_summary_with_tinytapeout(monkeypatch, capsys, tmp
     assert "TTIHP25a" in capsys.readouterr().out
     assert cli.main(["tinytapeout", "--json"]) == 0
     assert '"shuttle": "ttihp25a"' in capsys.readouterr().out
+
+
+# --- the Tiny Tapeout board spreadsheet ---------------------------------------
+
+def test_tt_boards_json_ships_with_the_package():
+    """The generated data is package data, so `pip install rpi-hwid` has it
+    without a network round trip at label time."""
+    from rpi_hwid import tt_boards
+
+    doc = tt_boards.load()
+    assert doc["asics"], "no asic rows: was tools/fetch_tt_boards.py run?"
+    assert doc["demoboards"]
+    for key, row in doc["asics"].items():
+        assert key == key.lower(), key
+        assert " " not in key, key
+        for field in ("colour_hex", "silk_hex"):
+            value = row.get(field)
+            assert value is None or (len(value) == 7 and value[0] == "#"), (key, field, value)
+
+
+def test_tt_boards_joins_a_shuttle_to_both_its_boards():
+    """A shuttle's carrier is its own row; its demo board is whichever board
+    lists the shuttle under "Used by". TT09 and the ETR board it ships with
+    are the case the hand-written table never had."""
+    from rpi_hwid import tt_boards
+
+    found = tt_boards.shuttle_boards("tt09")
+    assert found["chip"]["colour"] == "Yellow"
+    assert found["demoboard"]["version"] == "v3.2"
+    assert "tt09" in found["demoboard"]["used_by"]
+    assert tt_boards.demoboard_version("tt09") == "v3.2"
+    assert tt_boards.chip_page("tt09") == "https://tinytapeout.com/chips/tt09/"
+    # A shuttle the sheet does not carry asks without a special case.
+    assert tt_boards.shuttle_boards("nosuchshuttle") == {"chip": None, "demoboard": None}
+    assert tt_boards.demoboard_version(None) is None
+
+
+def test_tt_boards_colours_prefer_the_sheet_then_the_palette():
+    """The sheet's own hex wins, the name is lower-cased for the label, and a
+    colour the sheet names but has no hex for falls back to the palette."""
+    from rpi_hwid import tinytapeout as tt_data
+    from rpi_hwid import tt_boards
+
+    c = tt_boards.colours("tt06", tt_data.COLOURS)
+    assert (c["chip"], c["chip_name"]) == ("#c98599", "pink")
+    # TT06's teal silkscreen has a Pantone in the sheet but no hex, so the
+    # palette supplies one and the sheet still supplies the word.
+    assert c["chip_silk_name"] == "teal"
+    assert c["chip_silk"] == tt_data.COLOURS.get("teal")
+    blank = tt_boards.colours(None, tt_data.COLOURS)
+    assert set(blank.values()) == {None}

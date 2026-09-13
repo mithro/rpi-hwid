@@ -76,7 +76,9 @@ def test_tinytapeout_records(docs):
     assert tt06.commit == "0f5a1b2c"
     assert tt06.usb_serial == "E6614C311B7A7A37"
     assert tt06.mcu == "RP2040"
-    assert (tt06.chip_colour, tt06.demoboard_colour) == ("#f28cb3", "#f28cb3")
+    # The spreadsheet's own hex, not the one generic pink in COLOURS: a
+    # swatch is meant to be a sample of the board it names.
+    assert (tt06.chip_colour, tt06.demoboard_colour) == ("#c98599", "#c98599")
     assert (tt06.chip_colour_name, tt06.demoboard_colour_name) == ("pink", "pink")
     assert ihp.headline == "TTIHP25a"
     assert ihp.subtitle == "ASIC  ·  ihp-sg13g2"
@@ -117,7 +119,7 @@ def test_tinytapeout_records_without_a_rom_or_with_the_fpga_breakout():
     (t35,) = labels.tinytapeout_records({"h": doc({"shuttle": "tt03p5", "chip": "asic"})})
     assert t35.url == "https://tinytapeout.com/chips/"
     assert t35.demoboard_text == "Rev 1.2.1"
-    assert t35.chip_colour == "#5c2d91"
+    assert t35.chip_colour == "#5e355f", "TT03p5's own purple, from the sheet"
 
 
 def test_usb_records(docs):
