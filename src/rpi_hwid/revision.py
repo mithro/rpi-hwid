@@ -11,6 +11,12 @@ when a host's ``/proc/device-tree/model`` string is worded differently:
     bits 20-22 memory size
     bit  23    "new-style" flag, always set on these codes
 
+The models before that were given sequential codes from ``0002`` to
+``0015`` with no fields in them at all, so bit 23 is clear and the board
+has to be looked up (``OLD_STYLE``). Both kinds decode to the same
+``Revision``, and the old boards borrow ``PI_TYPE``'s spellings of their
+own names, so a Model B reads the same however it reports itself.
+
 From https://www.raspberrypi.com/documentation/computers/raspberry-pi.html
 under "Raspberry Pi revision codes".
 
@@ -43,6 +49,30 @@ PI_MEMORY = {0: "256 MB", 1: "512 MB", 2: "1 GB", 3: "2 GB", 4: "4 GB",
              5: "8 GB", 6: "16 GB"}
 PI_SOC = {0: "BCM2835", 1: "BCM2836", 2: "BCM2837", 3: "BCM2711", 4: "BCM2712"}
 
+# The sequential codes, as (board, revision, memory). Every one of these
+# boards is a BCM2835, which is why no SoC is carried here. The 0015 A+
+# shipped with either memory size and the code does not say which, which is
+# what the "/" is: it is the one code whose answer MemTotal has to settle.
+OLD_STYLE = {
+    0x0002: ("Model B", "1.0", "256 MB"),
+    0x0003: ("Model B", "1.0", "256 MB"),
+    0x0004: ("Model B", "2.0", "256 MB"),
+    0x0005: ("Model B", "2.0", "256 MB"),
+    0x0006: ("Model B", "2.0", "256 MB"),
+    0x0007: ("Model A", "2.0", "256 MB"),
+    0x0008: ("Model A", "2.0", "256 MB"),
+    0x0009: ("Model A", "2.0", "256 MB"),
+    0x000D: ("Model B", "2.0", "512 MB"),
+    0x000E: ("Model B", "2.0", "512 MB"),
+    0x000F: ("Model B", "2.0", "512 MB"),
+    0x0010: ("Model B+", "1.2", "512 MB"),
+    0x0011: ("Compute Module 1", "1.0", "512 MB"),
+    0x0012: ("Model A+", "1.1", "256 MB"),
+    0x0013: ("Model B+", "1.2", "512 MB"),
+    0x0014: ("Compute Module 1", "1.0", "512 MB"),
+    0x0015: ("Model A+", "1.1", "256 MB / 512 MB"),
+}
+
 BROADCOM_OUI = "b8:27:eb"
 
 
@@ -61,10 +91,10 @@ class Revision:
 
 
 def decode_revision(code: str) -> Revision:
-    """Turn a revision code like 'c04170' into its named fields."""
+    """Turn a revision code like 'c04170' or '000f' into its named fields."""
     n = int(code, 16)
     if not n & (1 << 23):
-        raise ValueError(f"{code} is an old-style revision code")
+        return _old_style(code, n)
     try:
         model = PI_TYPE[(n >> 4) & 0xFF]
     except KeyError as exc:
@@ -73,6 +103,21 @@ def decode_revision(code: str) -> Revision:
         code=code.lower(), model=model, revision=f"1.{n & 0xF}",
         soc=PI_SOC[(n >> 12) & 0xF], memory=PI_MEMORY[(n >> 20) & 0x7],
     )
+
+
+def _old_style(code: str, n: int) -> Revision:
+    """A pre-2012 sequential code, looked up rather than unpacked.
+
+    Only the low 16 bits are looked up, so a code carrying flag bits above
+    them still names its board; the documentation gives these codes no
+    fields, so nothing is read out of those bits either.
+    """
+    try:
+        model, board_rev, memory = OLD_STYLE[n & 0xFFFF]
+    except KeyError:
+        raise ValueError(f"{code}: no model is listed for this old-style code") from None
+    return Revision(code=code.lower(), model=model, revision=board_rev,
+                    soc=PI_SOC[0], memory=memory)
 
 
 def broadcom_macs(serial: str) -> tuple[str, str]:

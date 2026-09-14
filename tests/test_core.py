@@ -70,9 +70,22 @@ def test_decode_revision(code, model, memory, rev):
     assert (r.model, r.memory, r.revision) == (model, memory, rev)
 
 
-def test_decode_revision_rejects_old_style():
-    with pytest.raises(ValueError, match="old-style"):
-        revision.decode_revision("0002")
+@pytest.mark.parametrize(("code", "model", "memory", "rev"), [
+    ("0002", "Model B", "256 MB", "1.0"),
+    ("000f", "Model B", "512 MB", "2.0"),          # rpib-serial
+    ("0011", "Compute Module 1", "512 MB", "1.0"),  # rpicm1-serial
+    ("0013", "Model B+", "512 MB", "1.2"),
+    ("0015", "Model A+", "256 MB / 512 MB", "1.1"),  # the one code that does not say
+    ("1000000f", "Model B", "512 MB", "2.0"),      # flag bits above the code itself
+])
+def test_decode_revision_old_style(code, model, memory, rev):
+    r = revision.decode_revision(code)
+    assert (r.model, r.memory, r.revision, r.soc) == (model, memory, rev, "BCM2835")
+
+
+def test_decode_revision_refuses_an_unlisted_old_style_code():
+    with pytest.raises(ValueError, match="no model is listed"):
+        revision.decode_revision("000a")
 
 
 def test_broadcom_macs_from_serial():
