@@ -34,7 +34,7 @@ sheet 1 row 1 col 1  arty   arty-hawk
 sheet 1 row 1 col 2  acorn  Acorn CLE-215+
 sheet 1 row 1 col 3  netv2  netv2-grove
 sheet 1 row 2 col 1  tt     TT06 E6614C311B7A7A37
-sheet 1 row 2 col 2  tt     TTIHP25a E66360B8A3C1D5F2
+sheet 1 row 2 col 2  tt     TTGF0p2 E66360B8A3C1D5F2
 sheet 1 row 2 col 3  rpi    Pi 3 Model B+ 1 GB 000000004fe3e7e4
 sheet 1 row 3 col 1  rpi    Pi 4 Model B 2 GB 10000000ce8e3593
 sheet 1 row 3 col 2  opi    Orange Pi PC 1 GB 02c000812eb7a34e
@@ -151,7 +151,7 @@ its USB serial — runs along the foot with a small QR of its own.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="32%">
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-ihp.png" alt="TTIHP25a chip on a DBv3 demo board" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-gf.png" alt="TTGF0p2 chip on a DBv3 demo board" width="32%">
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-fpga.png" alt="An FPGA breakout standing in for the ASIC on a DBv3 demo board" width="32%">
 </p>
 
@@ -161,11 +161,15 @@ the QR falls back to the chips index.
 
 Both its boards are still coloured, because neither needs the shuttle to be
 found. The demo board names its own revision over the REPL and the sheet has
-that revision, which is how the TTIHP25a above is coloured too, from a board the
-sheet has not listed that shuttle under. The carrier is the sheet's one row for
-an FPGA rather than a packaged die (FabricFox, an iCE40UP5K). TTIHP25a's carrier
-stays `unknown` for the honest reason: the sheet has the row and its colours are
-blank.
+that revision, so a shuttle the sheet has not listed under any board's "Used by"
+is still coloured from the board it is actually sitting on. The carrier is the
+sheet's one row for an FPGA rather than a packaged die (FabricFox, an
+iCE40UP5K).
+
+Where the sheet records no colours at all, the box is left empty and struck
+through rather than guessed at. That is not hypothetical: every IHP shuttle is
+in that state today, carrier and silkscreen both, which is why the example above
+is a GlobalFoundries part and not an IHP one.
 
 ## USB network adapters
 

@@ -503,7 +503,7 @@ def test_load_collected(data_dir):
     assert docs["pi-sw2-p22"].summary.memory == "1 GB"
     assert docs["pi-sw2-p22"].summary.revision == ""
     assert docs["rpi5-netv2"].summary.fpga[0].identity == "0x00742c4e63b9085c"
-    assert [b.shuttle for b in docs["rpi4-tt"].summary.tinytapeout] == ["tt06", "ttihp25a"]
+    assert [b.shuttle for b in docs["rpi4-tt"].summary.tinytapeout] == ["tt06", "ttgf0p2"]
     (data_dir / "bad.json").write_text("{}")
     with pytest.raises(ValueError, match="not a probe document"):
         load_collected(data_dir)
@@ -530,9 +530,9 @@ def test_cli_probe_and_collect_summary_with_tinytapeout(monkeypatch, capsys, tmp
     rc = cli.main(["collect", "--out", str(tmp_path), "--tinytapeout", "rpi4-tt"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "tinytapeout tt06, ttihp25a" in out
+    assert "tinytapeout tt06, ttgf0p2" in out
     assert ProbeDocument.from_json("x", (tmp_path / "rpi4-tt.json").read_text()).summary \
-        .tinytapeout[1].shuttle == "ttihp25a"
+        .tinytapeout[1].shuttle == "ttgf0p2"
 
     monkeypatch.setattr(probe, "collect", lambda: {k: v for k, v in raw.items()
                                                     if k not in ("verdict", "tinytapeout")})
@@ -544,13 +544,13 @@ def test_cli_probe_and_collect_summary_with_tinytapeout(monkeypatch, capsys, tmp
     assert cli.main(["probe", "--tinytapeout"]) == 0
     out = capsys.readouterr().out
     assert "tt     : TT06 on demo board TT06+" in out
-    assert "tt     : TTIHP25a on demo board TTDBv3 [3.2]" in out
+    assert "tt     : TTGF0p2 on demo board TTDBv3 [3.2]" in out
     assert "DemoBoard.get" not in tinytapeout.REPL_SNIPPET, "the snippet must not init the board"
     assert ".contents" not in tinytapeout.REPL_SNIPPET, "ChipROM.contents drives the chip's pins"
     assert cli.main(["tinytapeout"]) == 0
-    assert "TTIHP25a" in capsys.readouterr().out
+    assert "TTGF0p2" in capsys.readouterr().out
     assert cli.main(["tinytapeout", "--json"]) == 0
-    assert '"shuttle": "ttihp25a"' in capsys.readouterr().out
+    assert '"shuttle": "ttgf0p2"' in capsys.readouterr().out
 
 
 def test_no_stop_service_reaches_every_way_the_tinytapeout_module_runs(

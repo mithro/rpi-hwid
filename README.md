@@ -89,12 +89,12 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 </tr>
 <tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="180"></td>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-ihp.png" alt="TTIHP25a chip on a DBv3 demo board" width="180"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-gf.png" alt="TTGF0p2 chip on a DBv3 demo board" width="180"></td>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-fpga.png" alt="An FPGA breakout standing in for the ASIC on a DBv3 demo board" width="180"></td>
 </tr>
 <tr>
 <td>TT06 chip on a<br>TT06+ demo board</td>
-<td>TTIHP25a on a DBv3<br>board; the carrier's<br>colours are not recorded</td>
+<td>TTGF0p2 on a DBv3 board;<br>wafer.space ran it on<br>GlobalFoundries</td>
 <td>An FPGA breakout<br>standing in for the ASIC,<br>on the same DBv3 board</td>
 </tr>
 <tr>

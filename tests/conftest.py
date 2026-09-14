@@ -156,8 +156,11 @@ OPI_PC["verdict"]["summary"]["hat_uuid"] = "363bffaa-8824-a94d-7242-3c0955f9126c
 
 
 # A Pi 4 with two Tiny Tapeout demo boards on USB: a TT06 chip on its TT06+
-# board (RP2040, v2 SDK) and a TTIHP25a on a DBv3 "ETR" board (RP2350, v3
-# SDK), whose colours the table does not record.
+# board (RP2040, v2 SDK) and a TTGF0p2 on a DBv3 "ETR" board (RP2350, v3
+# SDK). The pair is chosen for contrast: two SDK generations, two demo
+# boards, two PDKs (sky130 and gf180mcu), and one mark against two --
+# Efabless ran TT06 on SkyWater's silicon, wafer.space ran TTGF0p2 on
+# GlobalFoundries'.
 TT_HOST = _doc(
     "Raspberry Pi 4 Model B Rev 1.4", "100000003a7e1c9b", "c03114", [], "undetermined", [],
     [{"kind": "eth", "mac": "dc:a6:32:8f:2b:11"}, {"kind": "wlan", "mac": "dc:a6:32:8f:2b:12"}],
@@ -181,10 +184,10 @@ TT_HOST["tinytapeout"] = {
         "1-1.3": {"machine": "TinyTapeout RP2350B Core with RP2350", "micropython": "1.26.0",
                   "sdk": "3.1.1", "sdk_revision": "9c2e4d1a", "demoboard": "TTDBv3 [3.2]",
                   "carrier_present": True, "carrier_version": 1,
-                  "rom": {"shuttle": "ttihp25a", "repo": "TinyTapeout/tinytapeout-ihp-25a",
-                          "commit": "7b3d9e02"},
-                  "rom_text": "shuttle=ttihp25a\nrepo=TinyTapeout/tinytapeout-ihp-25a\n"
-                              "commit=7b3d9e02\n"},
+                  "rom": {"shuttle": "ttgf0p2", "repo": "TinyTapeout/tinytapeout-gf-0p2",
+                          "commit": "4150e965"},
+                  "rom_text": "shuttle=ttgf0p2\nrepo=TinyTapeout/tinytapeout-gf-0p2\n"
+                              "commit=4150e965\n"},
     },
 }
 TT_HOST["verdict"]["tinytapeout"] = [
@@ -197,20 +200,20 @@ TT_HOST["verdict"]["tinytapeout"] = [
      "how": "Tiny Tapeout SDK 2.0.4 on Raspberry Pi Pico with RP2040 (USB 1-1.2); "
             "chip ROM shuttle=tt06; demo board TT06+"},
     {"kind": "tinytapeout", "usb": "1-1.3", "usb_serial": "E66360B8A3C1D5F2",
-     "tty": "/dev/ttyACM1", "shuttle": "ttihp25a", "chip": "asic",
-     "repo": "TinyTapeout/tinytapeout-ihp-25a", "commit": "7b3d9e02",
+     "tty": "/dev/ttyACM1", "shuttle": "ttgf0p2", "chip": "asic",
+     "repo": "TinyTapeout/tinytapeout-gf-0p2", "commit": "4150e965",
      "demoboard": "TTDBv3 [3.2]", "demoboard_version": None, "sdk": "3.1.1",
      "machine": "TinyTapeout RP2350B Core with RP2350", "mcu": "RP2350",
-     "chip_url": "https://tinytapeout.com/chips/ttihp25a/",
+     "chip_url": "https://tinytapeout.com/chips/ttgf0p2/",
      "how": "Tiny Tapeout SDK 3.1.1 on TinyTapeout RP2350B Core with RP2350 (USB 1-1.3); "
-            "chip ROM shuttle=ttihp25a; demo board TTDBv3 [3.2]"},
+            "chip ROM shuttle=ttgf0p2; demo board TTDBv3 [3.2]"},
 ]
 TT_HOST["verdict"]["summary"]["tinytapeout"] = [
     {"usb_serial": "E6614C311B7A7A37", "mcu": "RP2040", "shuttle": "tt06", "chip": "asic",
      "repo": "TinyTapeout/tinytapeout-06", "commit": "0f5a1b2c", "demoboard": "TT06+",
      "demoboard_version": "v2.0.1", "sdk": "2.0.4"},
-    {"usb_serial": "E66360B8A3C1D5F2", "mcu": "RP2350", "shuttle": "ttihp25a", "chip": "asic",
-     "repo": "TinyTapeout/tinytapeout-ihp-25a", "commit": "7b3d9e02",
+    {"usb_serial": "E66360B8A3C1D5F2", "mcu": "RP2350", "shuttle": "ttgf0p2", "chip": "asic",
+     "repo": "TinyTapeout/tinytapeout-gf-0p2", "commit": "4150e965",
      "demoboard": "TTDBv3 [3.2]", "demoboard_version": None, "sdk": "3.1.1"},
 ]
 

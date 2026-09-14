@@ -35,7 +35,7 @@ EXAMPLES = [
     ("arty", "arty-hawk", "arty"),
     ("acorn", "Acorn", "acorn"),
     ("tt", "TT06", "tinytapeout"),
-    ("tt", "TTIHP25a", "tinytapeout-ihp"),
+    ("tt", "TTGF0p2", "tinytapeout-gf"),
     ("tt", "FPGA", "tinytapeout-fpga"),
     ("rpi", "Pi 5 4 GB", "rpi5"),
     ("rpi", "Pi 5 1 GB", "rpi5-poe-hat"),
