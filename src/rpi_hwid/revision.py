@@ -36,6 +36,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rpi_hwid import probe
+
 PI_TYPE = {
     0x00: "Model A", 0x01: "Model B", 0x02: "Model A+", 0x03: "Model B+",
     0x04: "2 Model B", 0x06: "Compute Module 1", 0x08: "3 Model B",
@@ -121,11 +123,17 @@ def _old_style(code: str, n: int) -> Revision:
 
 
 def broadcom_macs(serial: str) -> tuple[str, str]:
-    """The (eth, wlan) MAC pair a Broadcom-OUI Pi derives from its serial."""
-    tail = bytes.fromhex(serial)[-3:]
-    eth = bytes.fromhex(BROADCOM_OUI.replace(":", "")) + tail
-    wlan = bytes.fromhex(BROADCOM_OUI.replace(":", "")) + bytes(b ^ 0x55 for b in tail)
-    return tuple(":".join(f"{b:02x}" for b in m) for m in (eth, wlan))  # type: ignore[return-value]
+    """The (eth, wlan) MAC pair a Broadcom-OUI Pi derives from its serial.
+
+    The probe owns the rule, because it has to sort a board's own ports
+    from its dongles by it while standing on the board; this is the same
+    answer in the order a label wants it, so the two sides of the wire
+    cannot come to disagree about which MACs are the board's.
+    """
+    by_kind = {kind: mac for mac, kind in probe.board_macs(serial).items()}
+    if len(by_kind) != 2:
+        raise ValueError(f"{serial!r} is not a serial a MAC pair follows from")
+    return by_kind["eth"], by_kind["wlan"]
 
 
 def derived_wlan_mac(serial: str, macs: list[dict[str, str]]) -> str | None:

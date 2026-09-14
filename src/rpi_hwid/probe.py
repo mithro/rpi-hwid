@@ -58,6 +58,21 @@ Network interfaces
     separately with their USB descriptors, so a label can be printed for
     each dongle and the Pi's own label carries only its own MACs.
 
+    Driver names run out before the older boards do. Every Pi up to the
+    3B reaches Ethernet through a USB chip soldered beside the SoC -- the
+    LAN9512/9514, driver smsc95xx -- and that driver serves removable
+    SMSC dongles too, so it cannot be the test. Their MAC can: those
+    boards derive both of their own from the serial number, so a MAC that
+    matches is by definition the board's own port, and one that does not
+    is by definition not. Measured on rpib-serial, a Model B, whose eth0
+    is 0424:ec00 on an internal hub wearing b8:27:eb:0a:ee:d6 against a
+    serial of 00000000110aeed6, beside a USB radio (0bda:818b) whose MAC
+    matches nothing and which stays a dongle (2026-09-14).
+
+    sysfs `removable` looks like it should answer this and does not: on a
+    3B+ the two genuinely removable dongles both read "fixed", because it
+    describes the internal hub's port rather than what is plugged into it.
+
 What still cannot be told apart from the Pi: an EEPROM-less GPIO HAT on a
 Pi 5 (Waveshare F, G, H, J) from a 3 A USB-C splitter, and on a 3B+/4 an
 EEPROM-less, I2C-less HAT (Waveshare C, D, E) from any splitter -- and the
@@ -379,11 +394,6 @@ def id_bus_scan(bus, enable=None):
     return found
 
 
-# Soldered-down interface drivers: the SoC Ethernet (macb on Pi 5,
-# bcmgenet on Pi 4, dwmac-sun8i for the Allwinner H3's EMAC and stmmaceth
-# for other Synopsys DWMAC platforms), the onboard SDIO radio (brcmfmac),
-# and the 3B+'s LAN7800, which is on an internal USB bus but cannot be
-# unplugged.
 # Soldered-down wired ports: the Pi's own controllers (macb on a Pi 5,
 # bcmgenet on a Pi 4, the 3B+'s LAN7800), the Allwinner H3's dwmac-sun8i,
 # and stmmaceth, the name the generic DesignWare MAC platform driver
@@ -393,9 +403,44 @@ def id_bus_scan(bus, enable=None):
 SOC_ETHERNET_DRIVERS = ("macb", "bcmgenet", "lan78xx", "dwmac-sun8i", "stmmaceth")
 ONBOARD_DRIVERS = SOC_ETHERNET_DRIVERS + ("brcmfmac",)
 
+# The Broadcom-OUI boards (3B+, Zero W and earlier) derive both of their own
+# MACs from their serial number, which rpi_hwid.revision says the same way
+# for the collecting side and records where it was established.
+BROADCOM_OUI = (0xB8, 0x27, 0xEB)
 
-def net_interfaces():
+
+def board_macs(serial):
+    """The MACs this board derives for itself, as mac -> "eth" or "wlan".
+
+    This is how an interface on an internal USB bus is told from a dongle
+    on an external one. Driver names cannot do it: every Pi before the 3B+
+    reaches Ethernet through a USB chip soldered beside the SoC (the
+    LAN9512/9514, driver smsc95xx), and that same driver serves removable
+    SMSC dongles, so naming it would sweep them in too. A MAC the board
+    computes from its own serial is the one thing no dongle can be wearing.
+
+    Safe to ask of any board, without first asking which board it is: a
+    derived MAC that no interface has classifies nothing, so a Pi 5 (whose
+    MACs follow no such rule) and an Allwinner board (whose own rule is
+    U-Boot's, and whose wired port its driver already names) are simply
+    left alone. Empty for a serial that is not hex.
+    """
+    try:
+        tail = bytes.fromhex(serial or "")[-3:]
+    except ValueError:
+        return {}
+    if len(tail) != 3:
+        return {}
+    fmt = "%02x:%02x:%02x:%02x:%02x:%02x"
+    return {
+        fmt % (BROADCOM_OUI + tuple(bytearray(tail))): "eth",
+        fmt % (BROADCOM_OUI + tuple(b ^ 0x55 for b in bytearray(tail))): "wlan",
+    }
+
+
+def net_interfaces(serial=None):
     """Every non-loopback interface: name, MAC, driver, whether onboard."""
+    own = board_macs(serial)
     out = []
     for p in sorted(glob.glob(ROOT + "/sys/class/net/*")):
         name = os.path.basename(p)
@@ -410,11 +455,18 @@ def net_interfaces():
         m = re.search(r"/(\d+-[\d.]+):\d+\.\d+(?:/|$)", dev)
         if m:
             usb_dev = m.group(1)
+        mac = read(p + "/address")
         onboard = drv in ONBOARD_DRIVERS
         kind = ("eth" if name.startswith("eth") or drv in SOC_ETHERNET_DRIVERS
                 else "wlan" if name.startswith("wl") or drv == "brcmfmac"
                 else "other")
-        out.append({"name": name, "mac": read(p + "/address"), "driver": drv,
+        # A MAC this board derives for itself settles both questions at
+        # once, and better than the name does: it says the port is the
+        # board's own, and which of its two ports it is, whatever the
+        # interface ended up being called.
+        if mac in own:
+            onboard, kind = True, own[mac]
+        out.append({"name": name, "mac": mac, "driver": drv,
                     "onboard": onboard, "kind": kind, "usb": usb_dev,
                     "speed": read(p + "/speed")})
     return out
@@ -501,7 +553,7 @@ def collect():
     d["throttled"] = ("0x%x" % t) if t is not None else None
     d["undervoltage_now"] = bool(t & 0x1) if t is not None else None
     d["undervoltage_since_boot"] = bool(t & 0x10000) if t is not None else None
-    d["interfaces"] = net_interfaces()
+    d["interfaces"] = net_interfaces(d["serial"])
     d["usb_net"] = usb_net_adapters(d["interfaces"])
     pi5 = "Pi 5" in d["model"]
     d["pi5"] = pi5
