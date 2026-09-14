@@ -982,31 +982,50 @@ KINDS = ("fpga", "tt", "rpi", "opi", "usb")
 
 
 def all_labels(docs, only, pinned_names=None):
+    """Every label as (host, kind, title, draw, record), host by host.
+
+    A machine's labels come out together and in the order someone works
+    through it: the board itself, then what is plugged into it -- FPGA, Tiny
+    Tapeout, then the USB adapters -- so a Pi and its dongles are peeled off
+    the sheet side by side instead of from three different pages. Positions
+    are still filled tightly, so a host whose group will not fit is split
+    across the sheet break rather than wasting the stickers before it.
+    """
     only = set(only)
-    if "fpga" in only:
-        for b in fpga_records(docs, pinned_names):
-            yield b.kind, b.name or b.model, draw_fpga, b
-    if "tt" in only:
-        for t in tinytapeout_records(docs):
-            yield "tt", f"{t.headline} {t.usb_serial or ''}".strip(), draw_tinytapeout, t
-    if only & {"rpi", "opi"}:
-        for host in sorted(docs):
+    attached = {}
+    for record_kind, records in (
+            ("fpga", fpga_records(docs, pinned_names) if "fpga" in only else ()),
+            ("tt", tinytapeout_records(docs) if "tt" in only else ()),
+            ("usb", usb_records(docs) if "usb" in only else ())):
+        for r in records:
+            if record_kind == "fpga":
+                row = (r.kind, r.name or r.model, draw_fpga, r)
+            elif record_kind == "tt":
+                row = ("tt", f"{r.headline} {r.usb_serial or ''}".strip(), draw_tinytapeout, r)
+            else:
+                row = ("usb", f"{r.title} {r.mac}", draw_usb, r)
+            attached.setdefault(r.host, []).append(row)
+
+    for host in sorted(docs):
+        if only & {"rpi", "opi"}:
             # A board that cannot be named is one label lost, not the sheet:
             # every board is asked for at once, so an unreadable revision
-            # code used to take the whole print run with it.
+            # code used to take the whole print run with it. What is attached
+            # to it is still labelled -- a dongle's identity does not depend
+            # on the revision code of the Pi it happens to be plugged into.
             try:
                 b = board_record(docs[host])
             except ValueError as exc:
                 print("%s: %s, skipped" % (host, exc), file=sys.stderr)
-                continue
-            if b is None:
-                print("%s: not a board this package labels, skipped" % host, file=sys.stderr)
-                continue
-            if b.kind in only:
-                yield b.kind, f"{b.short} {b.memory} {b.serial}", draw_board, b
-    if "usb" in only:
-        for u in usb_records(docs):
-            yield "usb", f"{u.title} {u.mac}", draw_usb, u
+                b = None
+            else:
+                if b is None:
+                    print("%s: not a board this package labels, skipped" % host,
+                          file=sys.stderr)
+            if b is not None and b.kind in only:
+                yield host, b.kind, f"{b.short} {b.memory} {b.serial}", draw_board, b
+        for row in attached.get(host, ()):
+            yield (host,) + row
 
 
 def label_origin(index):
@@ -1026,7 +1045,7 @@ def render(docs, out, only=KINDS, start=0, outline=False,
     c.setTitle("Hardware identity labels")
     c.setAuthor("rpi-hwid labels")
     per_sheet = COLS * ROWS
-    for i, (_kind, _title, draw, data) in enumerate(labels):
+    for i, (_host, _kind, _title, draw, data) in enumerate(labels):
         pos = i + start
         if pos and pos % per_sheet == 0:
             c.showPage()
@@ -1060,11 +1079,16 @@ def main(argv=None):
     pinned = json.loads(args.names.read_text()) if args.names else None
     only = args.only or list(KINDS)
     if args.list:
-        for i, (kind, title, _, _) in enumerate(all_labels(docs, set(only), pinned)):
+        rows = list(all_labels(docs, set(only), pinned))
+        # The host column is as wide as the widest host and no wider: these
+        # are fully qualified names on some fleets and bare ones on others,
+        # and a fixed width either truncates the long or strands the short.
+        width = max([len(r[0]) for r in rows] or [0])
+        for i, (host, kind, title, _, _) in enumerate(rows):
             pos = i + args.start
-            print("sheet %d row %d col %d  %-6s %s" % (
+            print("sheet %d row %d col %d  %-*s  %-6s %s" % (
                 pos // (COLS * ROWS) + 1, pos % (COLS * ROWS) // COLS + 1, pos % COLS + 1,
-                kind, title))
+                width, host, kind, title))
         return 0
     n, sheets = render(docs, args.out, only, args.start, args.outline, pinned)
     print("%d labels on %d sheet%s -> %s" % (n, sheets, "" if sheets == 1 else "s", args.out))
