@@ -142,12 +142,17 @@ its USB serial — runs along the foot with a small QR of its own.
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout-fpga.png" alt="An FPGA breakout standing in for the ASIC on a DBv3 demo board" width="32%">
 </p>
 
-A board with no ASIC on it says so: the FPGA breakout has no shuttle to name, so
-the chip's swatches and its ROM stay empty and the QR falls back to the chips
-index. Its demo board is still coloured, because the board names its own revision
-over the REPL and the spreadsheet has that revision — which is also how the
-TTIHP25a above gets its colours, from a board the sheet has not listed that
-shuttle under.
+A board with no ASIC on it says so: the FPGA breakout's ROM has no shuttle to
+name — `config.ini` forces the string `FPGA` — so the ROM line stays empty and
+the QR falls back to the chips index.
+
+Both its boards are still coloured, because neither needs the shuttle to be
+found. The demo board names its own revision over the REPL and the sheet has
+that revision, which is how the TTIHP25a above is coloured too, from a board the
+sheet has not listed that shuttle under. The carrier is the sheet's one row for
+an FPGA rather than a packaged die (FabricFox, an iCE40UP5K). TTIHP25a's carrier
+stays `unknown` for the honest reason: the sheet has the row and its colours are
+blank.
 
 ## USB network adapters
 
