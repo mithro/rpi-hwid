@@ -44,7 +44,7 @@ EXAMPLES = [
     ("rpi", "Zero", "rpi-zero-w-bonnet"),
     ("opi", "Orange Pi PC", "orange-pi-pc"),
     ("usb", "AX88179", "usb-asix"),
-    ("usb", "802.11ac", "usb-wifi"),
+    ("usb", "6c:1f:f7:51:2e:a3", "usb-wifi"),
     ("usb", "USB3GIGV1", "usb-linksys"),
 ]
 
@@ -63,16 +63,24 @@ def main() -> None:
     # exactly the same size.
     box_w, box_h = round(labels.LABEL_W * PX), round(labels.LABEL_H * PX)
 
+    per_sheet = labels.COLS * labels.ROWS
+
     with tempfile.TemporaryDirectory(dir=HERE) as tmp:
         subprocess.run(["pdftoppm", "-r", str(DPI), "-png", str(pdf), tmp + "/page"], check=True)
-        page = Image.open(next(Path(tmp).glob("page*.png")))
-        page_h = page.height
+        # One image per sheet, in order. The fixtures outgrew a single sheet,
+        # and label_origin() is sheet-relative -- it never wraps at 21 -- so
+        # cropping page one for every label put the later ones off the page
+        # and saved a blank.
+        sheets = [Image.open(p) for p in sorted(Path(tmp).glob("page*.png"))]
         for kind, needle, name in EXAMPLES:
             hits = [i for i, (k, t) in enumerate(titles) if k == kind and needle in t]
             if len(hits) != 1:
                 raise SystemExit(f"{len(hits)} fixture labels match {kind} {needle!r}, want one")
+            sheet, pos = divmod(hits[0], per_sheet)
             index = hits[0]
-            x, y = labels.label_origin(index)
+            page = sheets[sheet]
+            page_h = page.height
+            x, y = labels.label_origin(pos)
             left = round(x * PX)
             top = round(page_h - y * PX - labels.LABEL_H * PX)
             page.crop((left, top, left + box_w, top + box_h)).save(HERE / f"{name}.png")
