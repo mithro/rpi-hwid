@@ -10,12 +10,13 @@ modules for boards attached to the Pi. For installing and running it, see the
 |---|---|
 | HAT ID EEPROM at `0x50` | what the firmware read: `/proc/device-tree/hat` (official PoE HATs, Digilent Pmod HAT Adaptor, Google VoiceBonnet…) |
 | HAT ID EEPROM at `0x51`–`0x57`, read off the ID bus | boards the firmware **never reads**: Waveshare's PoE M.2 HAT+ (B) puts a well-formed HAT+ EEPROM at `0x52` (product string, pid `0x6d87`, a DT atom naming `pciex1`) |
-| devices on I2C bus 1 | Waveshare PoE HAT (B): SSD1306 at `0x3c` and PCF8574 at `0x20` |
+| devices on the header's user bus | Waveshare PoE HAT (B): SSD1306 at `0x3c` and PCF8574 at `0x20`. The bus is brought up for the scan when the board has it disabled — as most of the fleet does — and put back afterwards |
 | USB tree | Waveshare PoE-ETH-USB-HUB-HAT on a Zero: a Terminus `1a40:0101` hub on the root port with an RTL8152 on its port 4. That RTL8152 is reported as the Zero's wired port, not as a removable adapter |
 | Pi 5 `max_current` | the firmware's USB-C verdict: 5000 after a PD contract, **3000 both for a 3 A resistor source and for no USB-C source at all** (a HAT on the GPIO 5 V pins), 1500 or 900 for a resistor source advertising that much, so 900/1500 proves an external USB-C supply |
 | Pi 5 PMIC ADC | 5 V input (GPIO-fed HATs 5.1–5.4 V, splitters 4.8–5.0 V) and the RTC cell (about 3 V fitted, under 0.01 V not) |
 | Pi 5 `cooling_fan` node | a fan on the Pi's own header |
 | interface drivers | soldered-down (SoC Ethernet, SDIO radio, the 3B+'s LAN7800) versus removable USB adapters, which are listed with their descriptors |
+| a MAC the board derives from its own serial | the port is the board's own and which one it is, whatever bus it sits on. Every Pi up to the 3B reaches Ethernet through a soldered USB chip (LAN9512/9514, `smsc95xx`) that also serves removable dongles, so the driver cannot say and the MAC can |
 | throttle flags | under-voltage now or since boot: all a 3B+, Zero or Pi 4 can say about its supply |
 
 A Pi Zero W wearing Waveshare's PoE-ETH-USB-HUB-HAT bonnet, which has no ID
@@ -29,6 +30,18 @@ Raspberry Pi Zero W Rev 1.1  serial 000000005157f671  rev 9000c1
   power  : PoE through the Waveshare PoE-ETH-USB-HUB-HAT bonnet
   onboard: wlan   b8:27:eb:02:a3:24  brcmfmac
   usb net: 0bda:8152 Realtek USB 10/100 LAN  00:e0:4c:36:0b:0a  ethernet
+```
+
+Nothing found on the header and nowhere to look are kept apart, because only
+the first rules a HAT out. A bus the board declares but has disabled is brought
+up for the scan and put back; one that will not come up at all — an image with
+no I2C support, or an Armbian board, which needs a reboot to add an overlay — is
+reported as unread rather than counted as empty:
+
+```
+  header : nothing identifiable on the header, and it was not fully read
+  signal : header id and user bus could not be read (i2c-0, i2c-1): a HAT known
+           only by what answers there cannot be ruled out
 ```
 
 ## What powers it
@@ -82,7 +95,8 @@ confirmed on hardware: the SID read out of the e-fuses reproduces the device-tre
 serial exactly through U-Boot's CRC rule.
 
 Older `sunxi_sid` kernels read those words the other way round. The Pi-only pokes
-(`dtparam`, `vcgencmd`, the ID bus, the bus-1 scan, the bonnet rule) are skipped,
+(`dtparam`, `vcgencmd`, the bonnet rule) are skipped — an Orange Pi's two header
+buses are scanned exactly as a Pi's, but only if it is already carrying them —
 and the Armbian release, where the board has one, is recorded as evidence
 only: the fleet's Orange Pi netboots the pool's Raspbian armhf root and so
 carries none.

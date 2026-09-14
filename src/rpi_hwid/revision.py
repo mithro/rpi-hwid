@@ -11,6 +11,12 @@ when a host's ``/proc/device-tree/model`` string is worded differently:
     bits 20-22 memory size
     bit  23    "new-style" flag, always set on these codes
 
+The models before that were given sequential codes from ``0002`` to
+``0015`` with no fields in them at all, so bit 23 is clear and the board
+has to be looked up (``OLD_STYLE``). Both kinds decode to the same
+``Revision``, and the old boards borrow ``PI_TYPE``'s spellings of their
+own names, so a Model B reads the same however it reports itself.
+
 From https://www.raspberrypi.com/documentation/computers/raspberry-pi.html
 under "Raspberry Pi revision codes".
 
@@ -29,6 +35,16 @@ and eth + 2 on others), so their radio MAC has to be read.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from rpi_hwid import probe
+
+# The probe is annotation-free (it has to run on a Pi's python 3.5), so its
+# derivation is bound to a typed name once here rather than called untyped.
+_probe_board_macs: Callable[[str], dict[str, str]] = probe.board_macs
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 PI_TYPE = {
     0x00: "Model A", 0x01: "Model B", 0x02: "Model A+", 0x03: "Model B+",
@@ -42,6 +58,30 @@ PI_TYPE = {
 PI_MEMORY = {0: "256 MB", 1: "512 MB", 2: "1 GB", 3: "2 GB", 4: "4 GB",
              5: "8 GB", 6: "16 GB"}
 PI_SOC = {0: "BCM2835", 1: "BCM2836", 2: "BCM2837", 3: "BCM2711", 4: "BCM2712"}
+
+# The sequential codes, as (board, revision, memory). Every one of these
+# boards is a BCM2835, which is why no SoC is carried here. The 0015 A+
+# shipped with either memory size and the code does not say which, which is
+# what the "/" is: it is the one code whose answer MemTotal has to settle.
+OLD_STYLE = {
+    0x0002: ("Model B", "1.0", "256 MB"),
+    0x0003: ("Model B", "1.0", "256 MB"),
+    0x0004: ("Model B", "2.0", "256 MB"),
+    0x0005: ("Model B", "2.0", "256 MB"),
+    0x0006: ("Model B", "2.0", "256 MB"),
+    0x0007: ("Model A", "2.0", "256 MB"),
+    0x0008: ("Model A", "2.0", "256 MB"),
+    0x0009: ("Model A", "2.0", "256 MB"),
+    0x000D: ("Model B", "2.0", "512 MB"),
+    0x000E: ("Model B", "2.0", "512 MB"),
+    0x000F: ("Model B", "2.0", "512 MB"),
+    0x0010: ("Model B+", "1.2", "512 MB"),
+    0x0011: ("Compute Module 1", "1.0", "512 MB"),
+    0x0012: ("Model A+", "1.1", "256 MB"),
+    0x0013: ("Model B+", "1.2", "512 MB"),
+    0x0014: ("Compute Module 1", "1.0", "512 MB"),
+    0x0015: ("Model A+", "1.1", "256 MB / 512 MB"),
+}
 
 BROADCOM_OUI = "b8:27:eb"
 
@@ -61,10 +101,10 @@ class Revision:
 
 
 def decode_revision(code: str) -> Revision:
-    """Turn a revision code like 'c04170' into its named fields."""
+    """Turn a revision code like 'c04170' or '000f' into its named fields."""
     n = int(code, 16)
     if not n & (1 << 23):
-        raise ValueError(f"{code} is an old-style revision code")
+        return _old_style(code, n)
     try:
         model = PI_TYPE[(n >> 4) & 0xFF]
     except KeyError as exc:
@@ -75,12 +115,33 @@ def decode_revision(code: str) -> Revision:
     )
 
 
+def _old_style(code: str, n: int) -> Revision:
+    """A pre-2012 sequential code, looked up rather than unpacked.
+
+    Only the low 16 bits are looked up, so a code carrying flag bits above
+    them still names its board; the documentation gives these codes no
+    fields, so nothing is read out of those bits either.
+    """
+    try:
+        model, board_rev, memory = OLD_STYLE[n & 0xFFFF]
+    except KeyError:
+        raise ValueError(f"{code}: no model is listed for this old-style code") from None
+    return Revision(code=code.lower(), model=model, revision=board_rev,
+                    soc=PI_SOC[0], memory=memory)
+
+
 def broadcom_macs(serial: str) -> tuple[str, str]:
-    """The (eth, wlan) MAC pair a Broadcom-OUI Pi derives from its serial."""
-    tail = bytes.fromhex(serial)[-3:]
-    eth = bytes.fromhex(BROADCOM_OUI.replace(":", "")) + tail
-    wlan = bytes.fromhex(BROADCOM_OUI.replace(":", "")) + bytes(b ^ 0x55 for b in tail)
-    return tuple(":".join(f"{b:02x}" for b in m) for m in (eth, wlan))  # type: ignore[return-value]
+    """The (eth, wlan) MAC pair a Broadcom-OUI Pi derives from its serial.
+
+    The probe owns the rule, because it has to sort a board's own ports
+    from its dongles by it while standing on the board; this is the same
+    answer in the order a label wants it, so the two sides of the wire
+    cannot come to disagree about which MACs are the board's.
+    """
+    by_kind = {kind: mac for mac, kind in _probe_board_macs(serial).items()}
+    if len(by_kind) != 2:
+        raise ValueError(f"{serial!r} is not a serial a MAC pair follows from")
+    return by_kind["eth"], by_kind["wlan"]
 
 
 def derived_wlan_mac(serial: str, macs: list[dict[str, str]]) -> str | None:

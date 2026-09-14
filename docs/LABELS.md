@@ -82,6 +82,19 @@ MAC. On a 3B+ or a Zero the wlan MAC follows from the eth MAC (the Broadcom-OUI
 rule: same serial digits, XOR `55:55:55`), so it is printed even when the radio is
 off. On a Pi 4 or 5 it cannot be derived, so a disabled radio is stated as such.
 
+The boards older than the packed revision code get the same label, from a lookup
+rather than a decode: a Model B is `000f`, a Compute Module 1 `0011`. What they
+have *not* got is printed too, because on these boards a blank would be read as
+something unrecorded rather than something absent — a Model B says `no radio`
+and a Compute Module 1 says both `no radio` and `no wired port`. That is also
+why the wlan MAC is not derived for them: the Broadcom rule works off the serial
+alone and would happily supply one for a radio that is not there.
+
+A Pi up to the 3B reaches Ethernet through a USB chip soldered beside the SoC,
+so its wired MAC sits on the Pi's own label and not on a dongle's — the port is
+recognised by carrying a MAC the board derives from its own serial, which a real
+removable adapter never does.
+
 ## Orange Pi
 
 The same layout, band for band, with the Orange Pi orange in the raspberry's box.
