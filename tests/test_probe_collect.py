@@ -294,9 +294,89 @@ def test_fpga_collect_finds_the_acorn_not_the_rp1(fake_root):
     assert f["jtag"] is None
 
 
-def test_fpga_jtag_without_tool_is_an_error_record(fake_root):
+def test_fpga_jtag_without_either_tool_is_an_error_record(fake_root, monkeypatch):
+    # Stubbed rather than left to the real `which`: with openocd now a
+    # fallback, a developer who happens to have it installed would otherwise
+    # have the suite run `sudo openocd` against their own machine's GPIO.
+    monkeypatch.setattr(fpga, "sh", lambda *a, **k: "")
     f = fpga.collect_fpga(jtag=True)
     assert f["jtag"] == {"error": "openFPGALoader not installed"}
+
+
+# The two raw shifts below were taken off real boards, each on a host that
+# also had openFPGALoader, and each openFPGALoader answer is what the
+# transform has to reproduce. They pin the bit order: a DNA that is subtly
+# wrong still looks like a DNA, and names.netv2_name is a pure function of it,
+# so a wrong transform would mint a plausible but permanently wrong name onto
+# a printed sticker.
+DNA_SHIFTS = [
+    # rpi5-netv2's NeTV2 (XC7A100T) over the GPIO harness
+    ("3a109dc672342e63", "0x00742c4e63b9085c"),
+    # an Arty A7-35T (210319B301DE) over its own Digilent FT2232
+    ("3A1578A440A14647", "0x00628502251ea85c"),
+]
+
+
+@pytest.mark.parametrize(("raw", "expected"), DNA_SHIFTS)
+def test_openocd_dna_transform_matches_openfpgaloader(raw, expected, fake_root, monkeypatch):
+    monkeypatch.setattr(fpga, "sh", lambda *a, **k: "/usr/bin/openocd")
+    monkeypatch.setattr(fpga, "openocd_adapter", lambda *a, **k: ["adapter driver dummy"])
+    monkeypatch.setattr(fpga, "sh_all", lambda *a, **k: (
+        "Info : JTAG tap: fpga.tap tap/device found: 0x0362d093 (mfg: 0x049 (Xilinx))\n"
+        f"RAWDNA={raw}\n"))
+    assert fpga.openocd_probe()["dna"] == expected
+
+
+def test_openocd_names_the_cable_it_used(fake_root, monkeypatch):
+    # fpga_verdict splits netv2 from arty on this key, so it has to be right.
+    monkeypatch.setattr(fpga, "sh", lambda *a, **k: "/usr/bin/openocd")
+    monkeypatch.setattr(fpga, "openocd_adapter", lambda *a, **k: ["adapter driver dummy"])
+    monkeypatch.setattr(fpga, "sh_all", lambda *a, **k:
+                        "tap/device found: 0x0362d093 (mfg: 0x049 (Xilinx))")
+    assert fpga.openocd_probe()["cable"] == "gpio"
+    assert fpga.openocd_probe("210319B301DE")["cable"] == "digilent"
+
+
+@pytest.mark.parametrize("raw", ["0000000000000000", "ffffffffffffffff"])
+def test_openocd_refuses_a_dead_chains_dna(raw, fake_root, monkeypatch):
+    # All-zero or all-ones is an absent or unpowered chain. The idcode still
+    # stands; only the DNA is withheld, so the board is labelled but unnamed.
+    monkeypatch.setattr(fpga, "sh", lambda *a, **k: "/usr/bin/openocd")
+    monkeypatch.setattr(fpga, "openocd_adapter", lambda *a, **k: ["adapter driver dummy"])
+    monkeypatch.setattr(fpga, "sh_all", lambda *a, **k: (
+        f"tap/device found: 0x0362d093 (mfg: 0x049 (Xilinx))\nRAWDNA={raw}\n"))
+    res = fpga.openocd_probe()
+    assert res["idcode"] == "0x0362d093"
+    assert res["dna"] is None
+
+
+def test_openocd_drives_a_digilent_cable_when_openfpgaloader_is_absent(fake_root, monkeypatch):
+    # openocd speaks to the FT2232 too, so an Arty is not left unread either.
+    seen = {}
+
+    def fake_sh_all(argv, **k):
+        seen["argv"] = argv
+        return "tap/device found: 0x0362d093 (mfg: 0x049 (Xilinx))\nRAWDNA=3A1578A440A14647\n"
+
+    monkeypatch.setattr(fpga, "sh", lambda a, **k: (
+        "" if "openFPGALoader" in a else "/usr/bin/openocd"))
+    monkeypatch.setattr(fpga, "digilent_cables", lambda: [{"serial": "210319B301DE"}])
+    monkeypatch.setattr(fpga, "sh_all", fake_sh_all)
+    res = fpga.jtag_probe()
+    assert res["cable"] == "digilent"
+    assert res["dna"] == "0x00628502251ea85c"
+    joined = " ".join(seen["argv"])
+    assert "digilent-hs1.cfg" in joined
+    assert "210319B301DE" in joined
+
+
+def test_peripheral_base_follows_the_board(fake_root, monkeypatch, tmp_path):
+    for model, base in [("Raspberry Pi 4 Model B Rev 1.4", "0xFE000000"),
+                        ("Raspberry Pi 3 Model B Plus Rev 1.3", "0x3F000000"),
+                        ("Raspberry Pi Model B Rev 2", "0x20000000")]:
+        _w(tmp_path, "/proc/device-tree/model", model)
+        monkeypatch.setattr(fpga, "ROOT", str(tmp_path))
+        assert fpga.peripheral_base() == base
 
 
 def test_merge_fpga_into_probe_document(fake_root):
