@@ -100,8 +100,36 @@ def test_tinytapeout_records(docs):
     assert breakout.demoboard_text == "TTDBv3  ·  Rev 3.2"
     assert breakout.usb_serial == "4df39a7a6856f86f"
     assert (breakout.chip_colour, breakout.chip_silk) == ("#c36eb1", "#c7dbce")
-    assert (breakout.chip_colour_name, breakout.chip_silk_name) == ("purple", "light green")
+    # "light green" would elide to "light gr..." in the box beside the
+    # swatch, and the swatch already shows the shade.
+    assert (breakout.chip_colour_name, breakout.chip_silk_name) == ("purple", "green")
     assert (breakout.demoboard_colour, breakout.demoboard_silk) == ("#c98599", "#bae7c6")
+
+
+def test_plain_colour_drops_only_the_shade():
+    from rpi_hwid import tt_boards
+
+    assert tt_boards.plain_colour("light green") == "green"
+    assert tt_boards.plain_colour("dark blue") == "blue"
+    assert tt_boards.plain_colour("pink") == "pink"
+    # the qualifier on its own is the whole name, so it stays
+    assert tt_boards.plain_colour("light") == "light"
+    assert tt_boards.plain_colour(None) is None
+    # only the shade goes: a two-word colour that is not one keeps both
+    assert tt_boards.plain_colour("burnt orange") == "burnt orange"
+
+
+def test_plain_colour_does_not_change_the_hex(monkeypatch):
+    """The palette is keyed on the sheet's spelling, so it must be asked
+    before the qualifier is dropped."""
+    from rpi_hwid import tt_boards
+
+    monkeypatch.setattr(tt_boards, "shuttle_boards", lambda *a, **k: {
+        "chip": {"colour": "Light Green", "colour_hex": None, "silk": None, "silk_hex": None},
+        "demoboard": None})
+    got = tt_boards.colours("whatever", {"light green": "#abcdef", "green": "#000000"})
+    assert got["chip"] == "#abcdef", "looked up under the sheet's own name"
+    assert got["chip_name"] == "green"
 
 
 def test_demoboard_text_normalises_both_sdk_forms():

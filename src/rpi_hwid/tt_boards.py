@@ -117,6 +117,20 @@ def shuttle_boards(shuttle: str | None, demoboard: str | None = None,
     return found
 
 
+def plain_colour(name: str | None) -> str | None:
+    """``'light green'`` -> ``'green'``, ``'pink'`` -> ``'pink'``.
+
+    The caption beside a swatch sits in a box about as wide as the swatch,
+    and the label elides what does not fit, so "light green" arrived as
+    "light gr...". The swatch is painted in the colour itself, and the
+    shade is the part of the name it already shows: the word only has to
+    say which colour, so the qualifier is the part worth losing."""
+    if not name:
+        return None
+    first, _, rest = name.partition(" ")
+    return rest if first in ("light", "dark") and rest else name
+
+
 def colours(shuttle: str | None, palette: dict[str, str],
             demoboard: str | None = None,
             chip: str | None = None) -> dict[str, str | None]:
@@ -136,8 +150,10 @@ def colours(shuttle: str | None, palette: dict[str, str],
             # ("Light Blue" one row, "Light green" the next).
             name = ((row or {}).get(key) or "").lower() or None
             hexed = (row or {}).get(key + "_hex")
+            # The palette is keyed on the sheet's own spelling, so it is
+            # asked before the qualifier is dropped.
             out[role + suffix] = hexed or palette.get(name or "")
-            out[role + suffix + "_name"] = name
+            out[role + suffix + "_name"] = plain_colour(name)
     return out
 
 
