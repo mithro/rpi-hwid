@@ -9,6 +9,7 @@ import pathlib
 import subprocess
 import sys
 import tokenize
+from dataclasses import replace
 
 import pytest
 
@@ -117,6 +118,31 @@ def test_identify_pi_from_revision_and_orange_pi_from_device_tree(docs):
     assert opi.subtitle == "1 GB  ·  Allwinner H3  ·  dt orangepi-pc"
     assert opi.mark == "orange-pi.png"
     assert (opi.wired, opi.radio, opi.radio_derivable) == (True, False, False)
+
+
+def test_identify_the_boards_older_than_the_packed_revision_code(docs):
+    """The two pre-2012 boards, and the ports they are missing. Getting the
+    ports wrong here is not cosmetic: the wlan MAC is derivable from the
+    serial on both, so a board left merely "not known" would be labelled
+    with a radio MAC when it has no radio."""
+    b = boards.identify(docs["rpib-serial"].summary)
+    assert (b.kind, b.short, b.title) == ("rpi", "Pi Model B", "Raspberry Pi Model B")
+    assert b.subtitle == "512 MB  ·  Rev 2.0  ·  rev code 000f"
+    assert (b.wired, b.radio) == (True, False)      # a wired port, no radio
+    cm = boards.identify(docs["rpicm1-serial"].summary)
+    assert cm.title == "Raspberry Pi Compute Module 1"
+    assert (cm.wired, cm.radio) == (False, False)   # neither, on the module
+
+
+def test_identify_settles_the_one_ambiguous_memory_size_from_memtotal():
+    """0015 covers an A+ that shipped with either size and does not say
+    which; the measurement does."""
+    s = Summary(model="Raspberry Pi Model A Plus Rev 1.1", serial="s", revision="0015",
+                power_class="undetermined", memory="512 MB")
+    assert boards.identify(s).memory == "512 MB"
+    assert "512 MB" in boards.identify(s).subtitle
+    # and where nothing was measured, the code's own answer is kept whole
+    assert boards.identify(replace(s, memory=None)).memory == "256 MB / 512 MB"
 
 
 def test_identify_orange_pi_without_captured_details():
@@ -471,7 +497,8 @@ def test_summary_round_trips_tinytapeout_boards():
 def test_load_collected(data_dir):
     docs = load_collected(data_dir)
     assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi-sw2-p16", "rpiz-serial", "pi-sw2-p47",
-                         "pi-sw2-p22", "rpi4-tt", "pi-sw2-p33", "pi-sw2-p37", "rpi5-433mhz"}
+                         "pi-sw2-p22", "rpi4-tt", "pi-sw2-p33", "pi-sw2-p37", "rpi5-433mhz",
+                         "rpib-serial", "rpicm1-serial"}
     assert docs["pi-sw2-p22"].summary.compatible == "xunlong,orangepi-pc allwinner,sun8i-h3"
     assert docs["pi-sw2-p22"].summary.memory == "1 GB"
     assert docs["pi-sw2-p22"].summary.revision == ""

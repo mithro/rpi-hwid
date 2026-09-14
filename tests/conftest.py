@@ -284,8 +284,38 @@ LINKSYS_HOST = _doc(
 LINKSYS_HOST["verdict"]["summary"]["hat_uuid"] = "6e28126c-32b3-41fd-aa72-be2554bf69b1"
 
 
+# The two boards on the fleet whose revision codes predate the packed
+# format, probed on 2026-09-14. Between them they carry every way an older
+# board differs from the rest: an old-style code (000f, 0011), a wired port
+# on an internal USB bus whose MAC is the board's own (the Model B's
+# smsc95xx), a board with no wired port at all and no radio (the Compute
+# Module 1), and USB adapters standing in for both.
+MODEL_B = _doc(
+    "Raspberry Pi Model B Rev 2", "00000000110aeed6", "000f", [], "undetermined", [],
+    [{"kind": "eth", "mac": "b8:27:eb:0a:ee:d6"}],
+    [{"iface": "wlan0", "mac": "80:3f:5d:13:8e:67", "driver": "rtl8xxxu",
+      "vidpid": "0bda:818b", "manufacturer": "Realtek", "product": "802.11n NIC",
+      "usb_serial": "00e04c000001", "bcd_usb": "2.10", "usb_speed": "480", "kind": "wifi"}],
+    None, None, None, compatible="raspberrypi,model-b brcm,bcm2835", memory="512 MB",
+)
+
+COMPUTE_MODULE_1 = _doc(
+    "Raspberry Pi Compute Module Rev 1.0", "0000000067bdbf54", "0011", [], "undetermined", [],
+    [],
+    [{"iface": "eth0", "mac": "00:e0:4c:68:36:95", "driver": "r8152",
+      "vidpid": "0bda:8153", "manufacturer": "Realtek", "product": "USB 10/100/1000 LAN",
+      "usb_serial": "00E04C683695", "bcd_usb": "2.10", "usb_speed": "480", "kind": "ethernet"},
+     {"iface": "wlanE", "mac": "6c:1f:f7:51:2d:d6", "driver": "rtw88_8821cu",
+      "vidpid": "0bda:c811", "manufacturer": "Realtek", "product": "802.11ac NIC",
+      "usb_serial": "123456", "bcd_usb": "2.00", "usb_speed": "480", "kind": "wifi"}],
+    None, None, None, compatible="raspberrypi,compute-module brcm,bcm2835", memory="512 MB",
+)
+
+
 RAW = {
     "rpi5-netv2": PI5_NETV2,
+    "rpib-serial": MODEL_B,
+    "rpicm1-serial": COMPUTE_MODULE_1,
     "pi-sw1-p10": POOL_3BPLUS,
     "pi-sw2-p16": ARTY_HOST,
     "rpiz-serial": ZERO_BONNET,

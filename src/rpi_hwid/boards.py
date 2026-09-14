@@ -63,6 +63,23 @@ ORANGE_PI_PORTS = {"xunlong,orangepi-pc": (True, False), "xunlong,orangepi-one":
 
 MAKER_PREFIX = {"opi": "Xunlong "}
 
+# The Pis with nothing soldered down where the general rule would leave the
+# question open. Saying a board has no radio matters more than it looks:
+# the wlan MAC is a function of the serial on exactly these Broadcom-OUI
+# boards, so a Model B left unsaid would be labelled with a radio MAC it
+# has no radio to use.
+#
+# Read off the fleet rather than assumed: rpib-serial, a Model B, reaches
+# the network through a USB radio (rtl8xxxu 0bda:818b), and rpicm1-serial,
+# a Compute Module 1, through a USB Ethernet dongle (r8152 0bda:8153) --
+# neither of which a board with its own would be wearing. The rest of their
+# generation is listed beside them, because the cost of being wrong here is
+# one-sided: a MAC withheld can be read off the board, an invented one is
+# already on the sticker. Anything not named stays not known.
+PI_NO_RADIO = frozenset(("Model A", "Model B", "Model A+", "Model B+", "2 Model B",
+                         "Zero", "Compute Module 1"))
+PI_NO_WIRED = frozenset(("Zero", "Zero W", "Zero 2 W", "Compute Module 1"))
+
 
 @dataclass(frozen=True)
 class BoardIdentity:
@@ -93,11 +110,16 @@ def identify(s: Summary) -> BoardIdentity | None:
         return None
     if kind == "rpi":
         rev = decode_revision(s.revision)
+        # One old code (0015) covers an A+ that shipped with either memory
+        # size, and says so with a "/". MemTotal settles it, and where the
+        # code does say, the two agreed on all 33 boards of the fleet.
+        memory = (s.memory or rev.memory) if "/" in rev.memory else rev.memory
         return BoardIdentity(
             kind="rpi", short=f"Pi {rev.model}", title="Raspberry Pi " + rev.model,
-            subtitle=f"{rev.memory}  ·  Rev {rev.revision}  ·  rev code {rev.code}",
-            mark="raspberry-pi.svg", memory=rev.memory,
-            wired="Zero" not in rev.model, radio=None,
+            subtitle=f"{memory}  ·  Rev {rev.revision}  ·  rev code {rev.code}",
+            mark="raspberry-pi.svg", memory=memory,
+            wired=rev.model not in PI_NO_WIRED,
+            radio=False if rev.model in PI_NO_RADIO else None,
             radio_derivable=not (rev.is_pi5 or rev.model.startswith("4")),
         )
     compat = s.compatible.split()

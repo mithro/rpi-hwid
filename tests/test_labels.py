@@ -166,19 +166,29 @@ def test_tinytapeout_records_without_a_rom_or_with_the_fpga_breakout():
 
 
 def test_usb_records(docs):
-    linksys, wifi, asix = labels.usb_records(docs)
+    linksys, wifi, asix, old_wifi, cm_eth, cm_wifi = labels.usb_records(docs)
     assert asix.title == "ASIX Elec. Corp. AX88179"
     assert ("USB", "3.00 SS 5 Gbit/s") in asix.lines
     assert asix.mac == "00:0e:c6:82:b5:e1"
     assert asix.kind == "ethernet"
     assert linksys.title == "Linksys Linksys USB3GIGV1"
     assert linksys.mac == "60:38:e0:e3:56:4f"
-    # The one wireless adapter: its kind is what swaps the RJ45 glyph for
-    # the WiFi one, so it is worth pinning.
+    # A wireless adapter's kind is what swaps the RJ45 glyph for the WiFi
+    # one, so it is worth pinning.
     assert wifi.kind == "wifi"
     assert wifi.title == "Realtek 802.11ac NIC"
     assert ("USB", "2.00 HS 480 Mbit/s") in wifi.lines
     assert ("driver", "rtw88_8821cu") in wifi.lines
+    # The older boards reach the network entirely through adapters, and each
+    # one gets its own label: a radio for the Model B, which has none of its
+    # own, and both a wired port and a radio for the Compute Module 1.
+    assert (old_wifi.kind, old_wifi.title) == ("wifi", "Realtek 802.11n NIC")
+    assert (cm_eth.kind, cm_eth.mac) == ("ethernet", "00:e0:4c:68:36:95")
+    assert (cm_wifi.kind, cm_wifi.mac) == ("wifi", "6c:1f:f7:51:2d:d6")
+    # The Model B's own wired port is NOT among them: it is on an internal
+    # USB bus, but its MAC is the one the board derives from its own serial,
+    # so it belongs on the Pi's label, not on a dongle's.
+    assert "b8:27:eb:0a:ee:d6" not in [u.mac for u in labels.usb_records(docs)]
 
 
 def test_all_labels_order_and_count(docs):
@@ -188,7 +198,8 @@ def test_all_labels_order_and_count(docs):
     # the Orange Pi's host, pi-sw2-p22, sorts among the pool rigs
     assert kinds == ["arty", "acorn", "netv2", "tt", "tt", "tt",
                      "rpi", "rpi", "opi", "rpi", "rpi", "rpi", "rpi", "rpi", "rpi", "rpi",
-                     "usb", "usb", "usb"]
+                     "rpi", "rpi",
+                     "usb", "usb", "usb", "usb", "usb", "usb"]
     titles = [t for k, t, _d, _r in labels.all_labels(docs, {"tt"})]
     assert titles == ["FPGA 4df39a7a6856f86f", "TT06 E6614C311B7A7A37",
                       "TTIHP25a E66360B8A3C1D5F2"]
@@ -225,8 +236,11 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "e4:5f:01:97:0e:77", "e4:5f:01:97:0e:79",         # the FPGA breakout's host
         "e4:5f:01:97:1f:7e",                              # the Linksys adapter's host
         "88:a2:9e:45:c5:5d", "88:a2:9e:45:c5:5e",         # the WiFi adapter's host
+        "b8:27:eb:0a:ee:d6",                              # the Model B's own wired port
         "00:0e:c6:82:b5:e1",                              # the dongles
         "60:38:e0:e3:56:4f", "6c:1f:f7:51:2e:a3",
+        "80:3f:5d:13:8e:67",                              # the Model B's radio
+        "00:e0:4c:68:36:95", "6c:1f:f7:51:2d:d6",         # both of the CM1's
         "https://tinytapeout.com/chips/tt06/",            # the chip pages
         "https://tinytapeout.com/chips/ttihp25a/",
         "https://tinytapeout.com/chips/",                 # no chip: the index
@@ -236,8 +250,12 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "d88100008543dc30", "000000004fe3e7e4", "10000000ce8e3593",
         "000000005157f671", "c36b093f773d46b8", "100000003a7e1c9b",
         "02c000812eb7a34e", "1000000085948b10", "10000000613a4524",
-        "7070c78090a6d6d8",
+        "7070c78090a6d6d8", "00000000110aeed6", "0000000067bdbf54",
     }
+    # b8:27:eb:5f:bb:83 is deliberately absent: it is what the Broadcom rule
+    # derives from the Model B's serial, and that board has no radio to
+    # carry it. A MAC is only printed where something has one.
+    assert "b8:27:eb:5f:bb:83" not in got
     assert got == want
 
 
@@ -296,6 +314,22 @@ def test_a_board_with_no_label_design_is_skipped(docs, capsys):
     kinds = [k for k, _t, _d, _r in labels.all_labels(with_other, {"rpi", "opi"})]
     assert kinds == [k for k, _t, _d, _r in labels.all_labels(docs, {"rpi", "opi"})]
     assert "minnow: not a board this package labels" in capsys.readouterr().err
+
+
+def test_a_board_whose_revision_cannot_be_read_costs_one_label_not_the_sheet(docs, capsys):
+    """Every board is asked for in one pass, so a Pi whose revision code
+    names no model has to be skipped the way an unlabellable board is --
+    with the reason, and without taking the other labels with it."""
+    from dataclasses import replace
+
+    doc = copy.deepcopy(docs["rpib-serial"])
+    doc.summary = replace(doc.summary, revision="000a")     # a code with no model listed
+    with_bad = dict(docs, unreadable=doc)
+    kinds = [k for k, _t, _d, _r in labels.all_labels(with_bad, {"rpi", "opi"})]
+    assert kinds == [k for k, _t, _d, _r in labels.all_labels(docs, {"rpi", "opi"})]
+    err = capsys.readouterr().err
+    assert "unreadable: 000a: no model is listed" in err
+    assert "skipped" in err
 
 
 def test_tt_label_tells_an_empty_rom_commit_from_an_unread_rom(docs, tmp_path):

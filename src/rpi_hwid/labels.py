@@ -852,7 +852,11 @@ def board_record(doc):
     macs = [(m.kind, m.mac) for m in s.macs if m.kind in ("eth", "wlan")]
     wlan_note = None
     if not any(k == "wlan" for k, _ in macs):
-        derived = derived_wlan_mac(s.serial, [{"kind": m.kind, "mac": m.mac} for m in s.macs])
+        # Whether a radio exists is asked before its MAC is worked out: the
+        # Broadcom rule derives a wlan MAC from the serial alone, so a board
+        # with no radio at all would otherwise be given one.
+        derived = None if ident.radio is False else derived_wlan_mac(
+            s.serial, [{"kind": m.kind, "mac": m.mac} for m in s.macs])
         if derived:
             macs.append(("wlan", derived))
         elif ident.radio is False:
@@ -987,7 +991,14 @@ def all_labels(docs, only, pinned_names=None):
             yield "tt", f"{t.headline} {t.usb_serial or ''}".strip(), draw_tinytapeout, t
     if only & {"rpi", "opi"}:
         for host in sorted(docs):
-            b = board_record(docs[host])
+            # A board that cannot be named is one label lost, not the sheet:
+            # every board is asked for at once, so an unreadable revision
+            # code used to take the whole print run with it.
+            try:
+                b = board_record(docs[host])
+            except ValueError as exc:
+                print("%s: %s, skipped" % (host, exc), file=sys.stderr)
+                continue
             if b is None:
                 print("%s: not a board this package labels, skipped" % host, file=sys.stderr)
                 continue
