@@ -166,9 +166,15 @@ def test_collect_orange_pi_pc(opi_root):
     assert ifaces["usb0"]["kind"] == "other"
     assert ifaces["usb0"]["usb"] is None, "a gadget is not a USB device on the host side"
     assert d["usb_net"] == []
+    assert d["header_buses_read"] == {"id": False, "user": False}
     v = probe.verdict(d)
-    assert v["header"] == ["nothing identifiable on the header"], (
-        "an Orange Pi with nothing fitted says what a bare Pi says")
+    # An Orange Pi declares both header buses but has no command to bring
+    # one up (Armbian needs a reboot for an overlay), so a tree without
+    # them is a header that went unlooked-at -- which is not the same
+    # answer as an empty one, and says so.
+    assert v["header"] == ["nothing identifiable on the header, and it was not fully read"]
+    assert any("header id and user bus could not be read (i2c-1, i2c-0)" in e
+               for e in v["evidence"])
     assert "no power sensing" in v["power"]
     assert any(e.startswith("Allwinner SID 0x02c00081") for e in v["evidence"])
     assert not any(e.startswith("Armbian") for e in v["evidence"])
@@ -326,6 +332,36 @@ def test_hat_firmware_dir_and_id_bus(fake_root, monkeypatch):
     assert "Digilent Pmod HAT Adaptor" in v["summary"]["header"]
     assert "Waveshare PoE HAT (B)" in v["summary"]["header"]
     assert v["summary"]["hat_uuid"] == "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a"
+
+
+def test_a_user_bus_that_is_off_is_brought_up_for_the_scan_and_put_back(fake_root, monkeypatch):
+    """Most of the fleet leaves the header's user bus disabled, and a HAT
+    known only by the devices it puts there is invisible without it. So the
+    bus gets the same on-demand enable the ID bus has -- and the same
+    tidying up, because the host is not ours to reconfigure."""
+    _w(fake_root, "/dev/i2c-0", "")                  # the ID bus is already up
+    calls = []
+
+    def fake_sh(args, timeout=15):
+        calls.append(args)
+        if args == ["sudo", "dtparam", "i2c_arm=on"]:
+            _w(fake_root, "/dev/i2c-1", "")          # the overlay creates it
+        elif args == ["sudo", "dtparam", "-r"]:
+            (fake_root / "dev/i2c-1").unlink()       # and removing it takes it away
+        return ""
+    monkeypatch.setattr(probe, "sh", fake_sh)
+    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: ["20", "3c"] if bus == 1 else [])
+    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
+
+    d = probe.collect()
+    assert d["header_i2c"] == ["20", "3c"], "the HAT's two chips, on a bus that was off"
+    assert d["header_buses_read"] == {"id": True, "user": True}
+    assert ["sudo", "dtparam", "i2c_arm=on"] in calls
+    assert ["sudo", "dtparam", "-r"] in calls, "brought up here, so put back here"
+    assert not (fake_root / "dev/i2c-1").exists(), "left as it was found"
+    # The ID bus was already up, so it is not taken down with it.
+    assert calls.count(["sudo", "dtparam", "-r"]) == 1
+    assert "Waveshare PoE HAT (B)" in probe.verdict(d)["summary"]["header"]
 
 
 def test_probe_main_prints_text_and_json(fake_root, capsys, monkeypatch):

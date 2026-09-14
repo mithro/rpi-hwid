@@ -358,40 +358,73 @@ def eeprom_decode(blob):
 #   Raspberry Pi 4, Pi 5    id 0, user 1
 #   Xunlong Orange Pi PC    id 1 (i2c@1c2b000, PA18/PA19), user 0
 #                           (i2c@1c2ac00, PA11/PA12) -- the reverse of the Pi
-# "enable" brings the ID bus up when it is not already there, and is the
-# board's own command: the Pi's dtparam does not exist on Armbian, which
-# needs a reboot to add an overlay, so an Orange Pi takes the buses it has.
+# "enable" brings a bus up when it is not already there, and is the board's
+# own command: the Pi's dtparam does not exist on Armbian, which needs a
+# reboot to add an overlay, so an Orange Pi takes the buses it has. Both
+# buses get one. Most of the fleet leaves the user bus off -- 12 of the 35
+# Pis had no /dev/i2c-1 -- and without an enable those hosts were never
+# looked at, so a Waveshare PoE HAT (B), which is known only by the devices
+# it puts there, could not have been seen on any of them. Whatever this
+# brings up is put back afterwards: the host is left as it was found.
 #
 # Only a declared bus is ever scanned. An undeclared one may be an HDMI DDC
 # line -- the Orange Pi's i2c-3 acknowledges all 117 addresses -- and
 # scanning it would invent a HAT out of an empty socket.
 HEADER_BUSES = {
-    "rpi": {"id": 0, "user": 1, "enable": ["sudo", "dtparam", "i2c_vc=on"]},
-    "opi": {"id": 1, "user": 0, "enable": None},
+    "rpi": {"id": 0, "user": 1,
+            "enable": ["sudo", "dtparam", "i2c_vc=on"],
+            "enable_user": ["sudo", "dtparam", "i2c_arm=on"]},
+    "opi": {"id": 1, "user": 0, "enable": None, "enable_user": None},
 }
 
 
+def open_bus(bus, enable=None):
+    """Make /dev/i2c-<bus> readable, as (there now, brought up by this call).
+
+    The second half is what says to put it back: a bus the board was
+    already carrying is left alone, and only one this brought up is taken
+    down again."""
+    path = ROOT + "/dev/i2c-%d" % bus
+    if os.path.exists(path):
+        return True, False
+    if not enable:
+        return False, False
+    sh(enable)
+    return os.path.exists(path), os.path.exists(path)
+
+
 def id_bus_scan(bus, enable=None):
-    """HAT ID EEPROMs on `bus`, enabling it at runtime if `enable` says how
-    and it is not already there. Keyed by address, as the HAT spec allows
-    0x50 through 0x57. Only a blob carrying the R-Pi magic counts, so a bus
-    that answers at every address yields nothing rather than eight HATs."""
-    enabled_here = False
-    if not os.path.exists(ROOT + "/dev/i2c-%d" % bus):
-        if not enable:
-            return {}
-        sh(enable)
-        enabled_here = os.path.exists(ROOT + "/dev/i2c-%d" % bus)
-        if not enabled_here:
-            return {}
+    """HAT ID EEPROMs on `bus`, as (found, whether the bus could be read).
+
+    Keyed by address, as the HAT spec allows 0x50 through 0x57. Only a blob
+    carrying the R-Pi magic counts, so a bus that answers at every address
+    yields nothing rather than eight HATs -- and nothing found is reported
+    apart from no bus to look at, because only the first rules a HAT out."""
+    present, mine = open_bus(bus, enable)
+    if not present:
+        return {}, False
     found = {}
     for addr in range(0x50, 0x58):
         info = eeprom_decode(eeprom_read(bus, addr))
         if info:
             found["0x%02x" % addr] = info
-    if enabled_here:
+    if mine:
         sh(["sudo", "dtparam", "-r"])
-    return found
+    return found, True
+
+
+def user_bus_scan(bus, enable=None):
+    """What answers on the header's user bus, as (addresses, could be read).
+
+    The same distinction the ID bus makes: a HAT that carries devices
+    rather than an EEPROM is invisible on a bus that was never opened."""
+    present, mine = open_bus(bus, enable)
+    if not present:
+        return None, False
+    devices = i2c_scan(bus)
+    if mine:
+        sh(["sudo", "dtparam", "-r"])
+    return devices, True
 
 
 # Soldered-down wired ports: the Pi's own controllers (macb on a Pi 5,
@@ -529,13 +562,15 @@ def collect():
     # board that declares nothing is left alone rather than guessed at.
     header_buses = HEADER_BUSES.get(d["board"])
     if header_buses:
-        d["hat_eeproms"] = id_bus_scan(header_buses["id"], header_buses["enable"])
-        d["header_i2c"] = (i2c_scan(header_buses["user"])
-                           if os.path.exists(ROOT + "/dev/i2c-%d" % header_buses["user"])
-                           else None)
+        d["hat_eeproms"], id_read = id_bus_scan(header_buses["id"], header_buses["enable"])
+        d["header_i2c"], user_read = user_bus_scan(header_buses["user"],
+                                                   header_buses["enable_user"])
+        d["header_buses_read"] = {"id": id_read, "user": user_read}
     else:
-        d["hat_eeproms"] = {}
-        d["header_i2c"] = None
+        d["hat_eeproms"], d["header_i2c"] = {}, None
+        # A board that declares no header is not a board whose header went
+        # unread: there is nothing here to have missed.
+        d["header_buses_read"] = {}
     usb = {}
     for p in glob.glob(ROOT + "/sys/bus/usb/devices/*"):
         v, pr = read(p + "/idVendor"), read(p + "/idProduct")
@@ -650,6 +685,16 @@ def verdict(d):
         ev.append("power port: throttled=%s%s%s" % (
             d["throttled"], ", under-voltage NOW" if d["undervoltage_now"] else "",
             ", under-voltage since boot" if d["undervoltage_since_boot"] else ""))
+    # "Nothing on the header" and "the header could not be read" are
+    # different answers and only one of them rules a HAT out, so a bus that
+    # stayed shut is said out loud rather than passed off as an empty one.
+    buses = HEADER_BUSES.get(d.get("board", "rpi")) or {}
+    read_ok = d.get("header_buses_read") or {}
+    unread = [role for role in ("id", "user") if role in buses and not read_ok.get(role)]
+    if unread:
+        ev.append("header %s bus could not be read (i2c-%s): a HAT known only "
+                  "by what answers there cannot be ruled out" % (
+                      " and ".join(unread), ", i2c-".join(str(buses[r]) for r in unread)))
     if not power and is_pi:
         power = ("nothing on the Pi distinguishes it: a HAT with no ID EEPROM and no I2C devices "
                  "(Waveshare C, D, E) or an external splitter; use the switch's PD class or look")
@@ -657,7 +702,10 @@ def verdict(d):
         # A HAT found above still names the supply; this is only what is left
         # when it did not. An H3 has no PMIC and no firmware to ask.
         power = "no power sensing on this board: nothing on it reports its supply"
-    return {"header": header or ["nothing identifiable on the header"], "power": power,
+    if not header:
+        header = ["nothing identifiable on the header" if not unread else
+                  "nothing identifiable on the header, and it was not fully read"]
+    return {"header": header, "power": power,
             "evidence": ev, "summary": summary(d, header, power)}
 
 
