@@ -216,6 +216,24 @@ def test_all_labels_order_and_count(docs):
     assert only_opi == ["opi"]
 
 
+def test_order_puts_named_hosts_first_and_keeps_groups_whole(docs):
+    # A caller that knows which switch port each host is on can ask for that
+    # sequence; rpi-hwid has no idea what a switch is, so it only obeys.
+    wanted = ["rpiz-serial", "rpi5-netv2", "pi-sw2-p16"]
+    rows = [(h, k) for h, k, _t, _d, _r in
+            labels.all_labels(docs, labels.KINDS, order=wanted)]
+    hosts = [h for h, _k in rows]
+    assert hosts[:1] == ["rpiz-serial"]
+    assert hosts[1:4] == ["rpi5-netv2"] * 3       # its Pi, NeTV2 and dongle
+    assert hosts[4:6] == ["pi-sw2-p16"] * 2
+    # anything unnamed still follows in host-name order
+    rest = hosts[6:]
+    assert rest == sorted(rest)
+    # and the same labels come out, just rearranged
+    assert sorted(rows) == sorted(
+        (h, k) for h, k, _t, _d, _r in labels.all_labels(docs, labels.KINDS))
+
+
 def test_every_hosts_labels_are_contiguous(docs):
     # The point of the grouping: one machine's labels are never split by
     # another's, whatever the mix of kinds asked for.

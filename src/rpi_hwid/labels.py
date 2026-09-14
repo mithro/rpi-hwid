@@ -981,7 +981,7 @@ def usb_records(docs):
 KINDS = ("fpga", "tt", "rpi", "opi", "usb")
 
 
-def all_labels(docs, only, pinned_names=None):
+def all_labels(docs, only, pinned_names=None, order=None):
     """Every label as (host, kind, title, draw, record), host by host.
 
     A machine's labels come out together and in the order someone works
@@ -990,6 +990,11 @@ def all_labels(docs, only, pinned_names=None):
     the sheet side by side instead of from three different pages. Positions
     are still filled tightly, so a host whose group will not fit is split
     across the sheet break rather than wasting the stickers before it.
+
+    `order` names hosts in the sequence they should come out, for a caller
+    that knows something this package does not -- which switch port each is
+    plugged into, say, so a rack can be labelled by walking the ports in
+    turn. Hosts it does not name follow, by host name as before.
     """
     only = set(only)
     attached = {}
@@ -1006,7 +1011,8 @@ def all_labels(docs, only, pinned_names=None):
                 row = ("usb", f"{r.title} {r.mac}", draw_usb, r)
             attached.setdefault(r.host, []).append(row)
 
-    for host in sorted(docs):
+    rank = {host: i for i, host in enumerate(order or ())}
+    for host in sorted(sorted(docs), key=lambda h: rank.get(h, len(rank))):
         if only & {"rpi", "opi"}:
             # A board that cannot be named is one label lost, not the sheet:
             # every board is asked for at once, so an unreadable revision
@@ -1037,10 +1043,10 @@ def label_origin(index):
 
 
 def render(docs, out, only=KINDS, start=0, outline=False,
-           pinned_names=None):
+           pinned_names=None, order=None):
     """Write the PDF; returns (label count, sheet count)."""
     register_fonts()
-    labels = list(all_labels(docs, set(only), pinned_names))
+    labels = list(all_labels(docs, set(only), pinned_names, order))
     c = canvas.Canvas(str(out), pagesize=A4)
     c.setTitle("Hardware identity labels")
     c.setAuthor("rpi-hwid labels")
