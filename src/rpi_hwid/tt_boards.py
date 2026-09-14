@@ -73,7 +73,22 @@ def demoboard_revision(detected: str | None) -> str | None:
     return "v" + m.group(1).strip().lstrip("vV") if m else None
 
 
-def shuttle_boards(shuttle: str | None, demoboard: str | None = None) -> dict[str, Row | None]:
+@lru_cache(maxsize=1)
+def _fpga_carrier() -> Row | None:
+    """The sheet's row for the FPGA breakout that stands in for an ASIC.
+
+    An FPGA board has no shuttle to look up -- its ROM carries the literal
+    "FPGA", forced in config.ini -- so it is found by what it is instead:
+    the one row the sheet marks as an FPGA rather than a packaged die. If
+    the sheet ever carries two, that is ambiguous, and nothing is better
+    than a guess at which breakout is on the board."""
+    rows = [dict(row, id=name) for name, row in sorted(load().get("asics", {}).items())
+            if (row.get("ic_type") or "").strip().upper().startswith("FPGA")]
+    return rows[0] if len(rows) == 1 else None
+
+
+def shuttle_boards(shuttle: str | None, demoboard: str | None = None,
+                   chip: str | None = None) -> dict[str, Row | None]:
     """What the sheet knows about `shuttle`'s two boards, as
     ``{"chip": row or None, "demoboard": row or None}``. Both are None for a
     shuttle the sheet does not carry, so a caller can ask without a special
@@ -83,12 +98,18 @@ def shuttle_boards(shuttle: str | None, demoboard: str | None = None) -> dict[st
     board when the shuttle cannot: an FPGA breakout has no shuttle at all,
     and a shuttle the sheet has not listed under "Used by" yet (ttihp25a)
     still sits on a board the sheet does know. The board says which board it
-    is, so believe it."""
+    is, so believe it.
+
+    `chip` is "fpga" for a board whose chip is an FPGA standing in for an
+    ASIC, and finds the carrier the same way: not by a shuttle it does not
+    have, but by being the FPGA."""
     key = "".join((shuttle or "").split()).lower()
     found: dict[str, Row | None] = {
         "chip": load().get("asics", {}).get(key),
         "demoboard": _demoboard_by_shuttle().get(key),
     }
+    if not found["chip"] and chip == "fpga":
+        found["chip"] = _fpga_carrier()
     if not found["demoboard"]:
         revision = demoboard_revision(demoboard)
         if revision:
@@ -97,14 +118,16 @@ def shuttle_boards(shuttle: str | None, demoboard: str | None = None) -> dict[st
 
 
 def colours(shuttle: str | None, palette: dict[str, str],
-            demoboard: str | None = None) -> dict[str, str | None]:
+            demoboard: str | None = None,
+            chip: str | None = None) -> dict[str, str | None]:
     """The four colours a Tiny Tapeout label paints, as hex or None:
     ``chip``/``chip_silk`` for the carrier and ``demoboard``/
     ``demoboard_silk`` for the board under it, each with the sheet's name
     beside it. `palette` is the name -> hex fallback for a colour the sheet
     names but has no hex for. `demoboard` is the board read off the REPL, for
-    the boards whose shuttle does not find them."""
-    found = shuttle_boards(shuttle, demoboard)
+    the boards whose shuttle does not find them, and `chip` is "fpga" for a
+    breakout standing in for an ASIC."""
+    found = shuttle_boards(shuttle, demoboard, chip)
     out: dict[str, str | None] = {}
     for role, row in (("chip", found["chip"]), ("demoboard", found["demoboard"])):
         for key, suffix in (("colour", ""), ("silk", "_silk")):

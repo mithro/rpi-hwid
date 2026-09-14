@@ -92,13 +92,15 @@ def test_tinytapeout_records(docs):
     assert (ihp.demoboard_colour, ihp.demoboard_silk) == ("#c98599", "#bae7c6")
     assert (ihp.demoboard_colour_name, ihp.demoboard_silk_name) == ("purple", "teal")
 
-    # The FPGA breakout has no shuttle at all, so nothing about the chip is
-    # known -- but it is on that same DB ETR v3.2, and those colours are.
+    # The FPGA breakout has no shuttle at all, so neither of its boards can
+    # be found by one: the demo board is found by its revision, and the
+    # carrier by being the sheet's one FPGA rather than a packaged die.
     assert breakout.headline == "FPGA"
     assert breakout.subtitle == "FPGA breakout, no ASIC"
     assert breakout.demoboard_text == "TTDBv3  ·  Rev 3.2"
     assert breakout.usb_serial == "4df39a7a6856f86f"
-    assert breakout.chip_colour is None
+    assert (breakout.chip_colour, breakout.chip_silk) == ("#c36eb1", "#c7dbce")
+    assert (breakout.chip_colour_name, breakout.chip_silk_name) == ("purple", "light green")
     assert (breakout.demoboard_colour, breakout.demoboard_silk) == ("#c98599", "#bae7c6")
 
 

@@ -920,11 +920,11 @@ def tinytapeout_records(docs):
             # shuttles, FabricFox), and the real hex of each. That table
             # stays as the fallback, and its COLOURS as the palette for a
             # colour the sheet names but has no hex for.
-            # The demo board is named as well as the shuttle, because the
-            # shuttle does not always find it: an FPGA breakout has no
-            # shuttle at all, and ttihp25a sits on a board the sheet knows
-            # but has not listed it under.
-            sheet = tt_boards.colours(b.shuttle, tt_data.COLOURS, b.demoboard)
+            # The demo board and the chip are named as well as the shuttle,
+            # because the shuttle does not always find them: an FPGA
+            # breakout has no shuttle at all, and ttihp25a sits on a board
+            # the sheet knows but has not listed it under.
+            sheet = tt_boards.colours(b.shuttle, tt_data.COLOURS, b.demoboard, b.chip)
             if b.chip == "fpga":
                 headline, parts = "FPGA", ["FPGA breakout, no ASIC"]
             elif b.shuttle:
