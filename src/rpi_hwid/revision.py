@@ -35,8 +35,16 @@ and eth + 2 on others), so their radio MAC has to be read.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from rpi_hwid import probe
+
+# The probe is annotation-free (it has to run on a Pi's python 3.5), so its
+# derivation is bound to a typed name once here rather than called untyped.
+_probe_board_macs: Callable[[str], dict[str, str]] = probe.board_macs
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 PI_TYPE = {
     0x00: "Model A", 0x01: "Model B", 0x02: "Model A+", 0x03: "Model B+",
@@ -130,7 +138,7 @@ def broadcom_macs(serial: str) -> tuple[str, str]:
     answer in the order a label wants it, so the two sides of the wire
     cannot come to disagree about which MACs are the board's.
     """
-    by_kind = {kind: mac for mac, kind in probe.board_macs(serial).items()}
+    by_kind = {kind: mac for mac, kind in _probe_board_macs(serial).items()}
     if len(by_kind) != 2:
         raise ValueError(f"{serial!r} is not a serial a MAC pair follows from")
     return by_kind["eth"], by_kind["wlan"]
