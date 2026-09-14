@@ -139,7 +139,7 @@ yellow carrier lettered in black beside a black demo board lettered in white. A
 box whose colours are not recorded is left empty and struck through.
 
 The colours themselves are not readable from the board. They come from the
-published Tiny Tapeout board spreadsheet, pulled into
+[published Tiny Tapeout board spreadsheet](https://mith.ro/tt-boards/), pulled into
 `src/rpi_hwid/tt_boards.json` by `tools/fetch_tt_boards.py` and kept honest by
 a scheduled CI job that re-derives the file and fails when the sheet has moved.
 A swatch is the board's own hex out of that sheet rather than one generic hex

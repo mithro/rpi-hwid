@@ -52,7 +52,7 @@ under Settings → Social preview.
 ## The Tiny Tapeout board data
 
 The chip carrier and demo board colours come from the published board
-spreadsheet, not from the boards:
+spreadsheet — <https://mith.ro/tt-boards/> — not from the boards:
 
 ```sh
 uv run tools/fetch_tt_boards.py           # rewrite src/rpi_hwid/tt_boards.json

@@ -33,9 +33,16 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 OUT = HERE.parent / "src" / "rpi_hwid" / "tt_boards.json"
 
-# The "publish to the web" id of the spreadsheet, not the document id: only
-# the published form is readable without a Google login, and the published
-# CSV is per sheet, by gid.
+# The sheet itself, for a reader: https://mith.ro/tt-boards/
+#
+# That short link cannot be what is fetched, which is why the long form is
+# still here. GitHub Pages serves a redirect as a 200 with a meta refresh in
+# it rather than a 3xx, so urlopen would read the redirect page instead of
+# the CSV -- and the query string below would be dropped on the way through.
+#
+# This is the "publish to the web" id of the spreadsheet, not the document
+# id: only the published form is readable without a Google login, and the
+# published CSV is per sheet, by gid.
 PUB = ("https://docs.google.com/spreadsheets/d/e/2PACX-1vSagZmGllw_F_VfjfzbrYuBN-"
        "VWvQ4s5X1grDFA9CIVWBmuUc0ufpccazWXQlNNrLY4rWt6SXy-hN6L/pub")
 SHEETS = {
