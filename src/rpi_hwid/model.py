@@ -22,6 +22,7 @@ class Mac:
 
     kind: str
     mac: str
+    signal: str | None = None      # which evidence settled it; see probe
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class UsbNetAdapter:
     usb_serial: str | None = None
     bcd_usb: str | None = None     # "3.00"
     usb_speed: str | None = None   # "5000", as sysfs reports it
+    signal: str | None = None      # how firmly removable; see probe
 
     @property
     def title(self) -> str:

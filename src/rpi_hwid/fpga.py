@@ -24,7 +24,12 @@ From what the Pi can see without touching the FPGA:
 With --jtag, openFPGALoader reads the idcode and, on a 7-series, the Device
 DNA, over the Arty's own FT2232 when there is one and otherwise over the
 host's GPIO harness (libgpiod, pins 27:22:4:17); off by default because it
-drives pins. With --flash as well, an Arty's SPI flash is identified by its
+drives pins. Where openFPGALoader cannot be installed, openocd reads the same
+two values over either cable -- the GPIO harness or a Digilent FT2232 -- so
+neither a NeTV2 nor an Arty is left unread. That matters because Raspbian 9
+Stretch has no openFPGALoader package at all, and a NeTV2 on a Pi 3 has no
+other path whatsoever: nothing on PCIe, the board having no PCIe, and no FTDI
+of its own. With --flash as well, an Arty's SPI flash is identified by its
 JEDEC id, which loads openFPGALoader's spiOverJtag bridge into the FPGA and
 drops the running design until the next power cycle. Note the S25FL128S and
 S25FL127S both answer JEDEC 0x012018.
@@ -93,17 +98,164 @@ def ftdi_devices():
 
 
 
+# The GPIO harness, as openFPGALoader spells it on the command line and as
+# openocd wants it counted out. openFPGALoader documents --pins as
+# TDI:TDO:TCK:TMS; openocd's *_jtag_nums take tck tms tdi tdo.
+HARNESS_PINS = "27:22:4:17"
+HARNESS_TCK, HARNESS_TMS, HARNESS_TDI, HARNESS_TDO = 4, 17, 27, 22
+# openocd's bcm2835gpio driver refuses to start without a reset line even when
+# reset is never asserted ("Require at least one of trst or srst gpios to be
+# specified"). 24 is the spare Alphamax's own NeTV2-on-a-Pi interface config
+# nominates, and reset_config none keeps it from ever being driven.
+HARNESS_SRST = 24
+
+# bcm2835gpio mmaps the SoC register block, so it needs that block's address.
+# A Pi 5 drives its header from the RP1 instead and is not reachable this way
+# at all -- it needs linuxgpiod, which is why that is tried first.
+PERIPHERAL_BASE = (
+    ("Raspberry Pi 4", "0xFE000000"),
+    ("Raspberry Pi 3", "0x3F000000"),
+    ("Raspberry Pi 2", "0x3F000000"),
+    ("Raspberry Pi Zero 2", "0x3F000000"),
+)
+DEFAULT_PERIPHERAL_BASE = "0x20000000"        # BCM2835: Pi 1, Zero, CM1
+
+# Xilinx 7-series FUSE_DNA, from openFPGALoader's src/xilinx.cpp: shift it into
+# a 6-bit IR, shift 64 bits out of the DR, reverse them and keep 57. Verified
+# against openFPGALoader on a board it can reach, which reported the same DNA.
+FUSE_DNA = "0x32"
+DNA_BITS = 64
+DNA_MASK = 0x1ffffffffffffff
+
+
+def sh_all(args, timeout=15):
+    """As sh(), but stderr too: openocd says everything on stderr."""
+    try:
+        r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True, timeout=timeout)   # 3.5-safe
+        return r.stdout.strip()
+    except (subprocess.TimeoutExpired, OSError):
+        return ""
+
+
+def peripheral_base():
+    model = read(ROOT + "/proc/device-tree/model") or ""
+    for prefix, base in PERIPHERAL_BASE:
+        if model.startswith(prefix):
+            return base
+    return DEFAULT_PERIPHERAL_BASE
+
+
+def openocd_adapter(digilent_serial=None):
+    """The openocd commands that select and configure the cable, or None.
+
+    Commands that openocd renamed between releases are wrapped in catch{}, so
+    both spellings can be offered and whichever this build does not have is
+    swallowed rather than aborting the run. That is cheaper and far more
+    robust than ordering version strings like "0.10.0-00019-gfb5691f0-dirty".
+    """
+    if digilent_serial is not None:
+        # openocd's own Digilent config carries the FT2232H layout bits in the
+        # spelling this version understands, so source it rather than restate
+        # them -- but widen its product-name filter, which pins "Digilent
+        # Adept USB Device" while an Arty's on-board cable answers "Digilent
+        # USB Device". Pinning the serial keeps two cables apart.
+        return ["source [find interface/ftdi/digilent-hs1.cfg]",
+                "catch {adapter usb product_name \"Digilent USB Device\"}",
+                "catch {ftdi_device_desc \"Digilent USB Device\"}",
+                "catch {adapter serial %s}" % digilent_serial,
+                "catch {ftdi_serial %s}" % digilent_serial,
+                "catch {adapter speed 1000}", "catch {adapter_khz 1000}"]
+    # linuxgpiod is asked for by capability: it is the only driver that can
+    # reach a Pi 5's header, the RP1 being nothing bcm2835gpio can mmap.
+    if "invalid" not in sh_all(["openocd", "-c", "adapter driver linuxgpiod",
+                                "-c", "shutdown"]).lower():
+        return ["adapter driver linuxgpiod",
+                "adapter gpio tck %d" % HARNESS_TCK, "adapter gpio tms %d" % HARNESS_TMS,
+                "adapter gpio tdi %d" % HARNESS_TDI, "adapter gpio tdo %d" % HARNESS_TDO,
+                "adapter speed 1000"]
+    if (read(ROOT + "/proc/device-tree/model") or "").startswith("Raspberry Pi 5"):
+        return None           # RP1 header, and this openocd has no linuxgpiod
+    return ["interface bcm2835gpio",
+            "bcm2835gpio_peripheral_base %s" % peripheral_base(),
+            "bcm2835gpio_speed_coeffs 146203 36",
+            "bcm2835gpio_jtag_nums %d %d %d %d" % (
+                HARNESS_TCK, HARNESS_TMS, HARNESS_TDI, HARNESS_TDO),
+            "bcm2835gpio_srst_num %d" % HARNESS_SRST,
+            "adapter_khz 1000"]
+
+
+def openocd_probe(digilent_serial=None):
+    """idcode and Device DNA over openocd, on either cable.
+
+    The fallback for a host that cannot have openFPGALoader: Raspbian 9
+    Stretch has no package for it, so a NeTV2 there is invisible to every
+    other path (no PCIe on a Pi 3, no FTDI of its own). openocd is packaged
+    much more widely, drives the Digilent FT2232 as well as the GPIO harness,
+    and the chain is the same chain either way.
+    """
+    if not sh(["which", "openocd"]):
+        return None
+    adapter = openocd_adapter(digilent_serial)
+    if adapter is None:
+        return None
+    cmds = adapter + [
+        "transport select jtag", "reset_config none",
+        # No -expected-id: the point of the scan is to be told which part it
+        # is. -ignore-version keeps a silicon revision from being an error.
+        "jtag newtap fpga tap -irlen 6 -ignore-version -expected-id 0",
+        "init", "scan_chain",
+        # Test-Logic-Reset first, as openFPGALoader does before FUSE_DNA.
+        "jtag arp_init",
+        "irscan fpga.tap %s" % FUSE_DNA,
+        "set dna [drscan fpga.tap %d 0]" % DNA_BITS,
+        "echo \"RAWDNA=$dna\"",
+        "shutdown",
+    ]
+    argv = ["sudo", "openocd"]
+    for c in cmds:
+        argv += ["-c", c]
+    out = sh_all(argv, timeout=60)
+    m = re.search(r"tap/device found: (0x[0-9a-f]+)", out)
+    if not m:
+        return {"idcode": None, "tool": "openocd", "raw": out[-200:]}
+    # fpga_verdict reads `cable` to tell an Arty's own FT2232 from the GPIO
+    # harness that reaches a NeTV2, so it has to say which one this was.
+    res = {"idcode": m.group(1), "tool": "openocd", "dna": None,
+           "cable": "digilent" if digilent_serial else "gpio"}
+    m = re.search(r"RAWDNA=([0-9a-fA-F]+)", out)
+    if m:
+        raw = int(m.group(1), 16)
+        rev = int(format(raw, "0%db" % DNA_BITS)[::-1], 2) & DNA_MASK
+        # An all-zero or all-ones shift is an absent or unpowered chain, not a
+        # DNA; naming a board from one would mint a wrong name permanently.
+        if rev and rev != DNA_MASK:
+            res["dna"] = "0x%016x" % rev
+    return res
+
+
+def digilent_cables():
+    """The Digilent FT2232 cables on this host, an Arty's own JTAG."""
+    return [f for f in ftdi_devices()
+            if f["id"] == "0403:6010" and (f["manufacturer"] or "").startswith("Digilent")]
+
+
 def jtag_probe(want_flash=False):
-    """openFPGALoader over the host's GPIO harness. Returns None when the
-    tool is missing, the idcode line when a chain answers."""
+    """openFPGALoader over whichever cable this host has, else openocd.
+    Returns the idcode line when a chain answers."""
+    cables = digilent_cables()
     if not sh(["which", "openFPGALoader"]):
+        # openocd drives the Digilent FT2232 as well as the GPIO harness, so
+        # the fallback covers an Arty too, not just a NeTV2.
+        ocd = openocd_probe(cables[0]["serial"] if cables else None)
+        if ocd is not None:
+            return ocd
         return {"error": "openFPGALoader not installed"}
-    digilent = any(f["id"] == "0403:6010" and (f["manufacturer"] or "").startswith("Digilent")
-                   for f in ftdi_devices())
+    digilent = bool(cables)
     if digilent:
         harness = ["sudo", "openFPGALoader", "-c", "digilent"]
     else:
-        harness = ["sudo", "openFPGALoader", "-c", "libgpiod", "--pins=27:22:4:17"]
+        harness = ["sudo", "openFPGALoader", "-c", "libgpiod", "--pins=" + HARNESS_PINS]
     det = sh(harness + ["--detect"], timeout=60)
     m = re.search(r"idcode\s+(0x[0-9a-f]+)", det)
     if not m:

@@ -192,19 +192,75 @@ def test_usb_records(docs):
 
 
 def test_all_labels_order_and_count(docs):
-    kinds = [k for k, _t, _d, _r in labels.all_labels(docs, labels.KINDS)]
-    # FPGA boards first in sorted-host order, then Tiny Tapeout boards, then
-    # one board per document (the Orange Pi host sorts first), then adapters
-    # the Orange Pi's host, pi-sw2-p22, sorts among the pool rigs
-    assert kinds == ["arty", "acorn", "netv2", "tt", "tt", "tt",
-                     "rpi", "rpi", "opi", "rpi", "rpi", "rpi", "rpi", "rpi", "rpi", "rpi",
-                     "rpi", "rpi",
-                     "usb", "usb", "usb", "usb", "usb", "usb"]
-    titles = [t for k, t, _d, _r in labels.all_labels(docs, {"tt"})]
+    rows = [(h, k) for h, k, _t, _d, _r in labels.all_labels(docs, labels.KINDS)]
+    # Host by host in sorted order, and within a host the board first, then
+    # what is attached to it: FPGA, Tiny Tapeout, then the USB adapters.
+    assert rows == [
+        ("pi-sw1-p10", "rpi"),
+        ("pi-sw2-p16", "rpi"), ("pi-sw2-p16", "arty"),
+        ("pi-sw2-p22", "opi"),
+        ("pi-sw2-p33", "rpi"), ("pi-sw2-p33", "tt"),
+        ("pi-sw2-p37", "rpi"), ("pi-sw2-p37", "usb"),
+        ("pi-sw2-p47", "rpi"), ("pi-sw2-p47", "acorn"),
+        ("rpi4-tt", "rpi"), ("rpi4-tt", "tt"), ("rpi4-tt", "tt"),
+        ("rpi5-433mhz", "rpi"), ("rpi5-433mhz", "usb"),
+        ("rpi5-netv2", "rpi"), ("rpi5-netv2", "netv2"), ("rpi5-netv2", "usb"),
+        ("rpib-serial", "rpi"), ("rpib-serial", "usb"),
+        ("rpicm1-serial", "rpi"), ("rpicm1-serial", "usb"), ("rpicm1-serial", "usb"),
+        ("rpiz-serial", "rpi"),
+    ]
+    titles = [t for _h, _k, t, _d, _r in labels.all_labels(docs, {"tt"})]
     assert titles == ["FPGA 4df39a7a6856f86f", "TT06 E6614C311B7A7A37",
                       "TTGF0p2 E66360B8A3C1D5F2"]
-    only_opi = [k for k, _t, _d, _r in labels.all_labels(docs, {"opi"})]
+    only_opi = [k for _h, k, _t, _d, _r in labels.all_labels(docs, {"opi"})]
     assert only_opi == ["opi"]
+
+
+def test_order_puts_named_hosts_first_and_keeps_groups_whole(docs):
+    # A caller that knows which switch port each host is on can ask for that
+    # sequence; rpi-hwid has no idea what a switch is, so it only obeys.
+    wanted = ["rpiz-serial", "rpi5-netv2", "pi-sw2-p16"]
+    rows = [(h, k) for h, k, _t, _d, _r in
+            labels.all_labels(docs, labels.KINDS, order=wanted)]
+    hosts = [h for h, _k in rows]
+    assert hosts[:1] == ["rpiz-serial"]
+    assert hosts[1:4] == ["rpi5-netv2"] * 3       # its Pi, NeTV2 and dongle
+    assert hosts[4:6] == ["pi-sw2-p16"] * 2
+    # anything unnamed still follows in host-name order
+    rest = hosts[6:]
+    assert rest == sorted(rest)
+    # and the same labels come out, just rearranged
+    assert sorted(rows) == sorted(
+        (h, k) for h, k, _t, _d, _r in labels.all_labels(docs, labels.KINDS))
+
+
+def test_every_hosts_labels_are_contiguous(docs):
+    # The point of the grouping: one machine's labels are never split by
+    # another's, whatever the mix of kinds asked for.
+    for only in (labels.KINDS, {"rpi", "opi", "usb"}, {"rpi", "fpga"}, {"usb", "tt"}):
+        hosts = [h for h, _k, _t, _d, _r in labels.all_labels(docs, set(only))]
+        seen, runs = set(), []
+        for h in hosts:
+            if not runs or runs[-1] != h:
+                assert h not in seen, f"{h} appears in two runs with only={only}"
+                seen.add(h)
+                runs.append(h)
+        assert runs == sorted(runs)
+
+
+def test_an_unreadable_board_does_not_cost_its_dongles_their_labels(docs, capsys):
+    # The revision code names the Pi; it says nothing about what is plugged
+    # into it, so a board that cannot be named must not take the adapters
+    # sharing its host down with it.
+    from dataclasses import replace
+
+    doc = copy.deepcopy(docs["rpicm1-serial"])
+    doc.summary = replace(doc.summary, revision="000a")     # a code with no model listed
+    broken = dict(docs, **{"rpicm1-serial": doc})
+    rows = [(h, k) for h, k, _t, _d, _r in labels.all_labels(broken, labels.KINDS)]
+    assert ("rpicm1-serial", "rpi") not in rows
+    assert rows.count(("rpicm1-serial", "usb")) == 2
+    assert "rpicm1-serial: 000a: no model is listed" in capsys.readouterr().err
 
 
 def test_render_and_decode_every_qr(data_dir, tmp_path):
@@ -311,8 +367,8 @@ def test_a_board_with_no_label_design_is_skipped(docs, capsys):
     doc = copy.deepcopy(docs["pi-sw2-p22"])
     doc.summary = replace(doc.summary, model="MinnowBoard Turbot", compatible="")
     with_other = dict(docs, minnow=doc)
-    kinds = [k for k, _t, _d, _r in labels.all_labels(with_other, {"rpi", "opi"})]
-    assert kinds == [k for k, _t, _d, _r in labels.all_labels(docs, {"rpi", "opi"})]
+    kinds = [k for _h, k, _t, _d, _r in labels.all_labels(with_other, {"rpi", "opi"})]
+    assert kinds == [k for _h, k, _t, _d, _r in labels.all_labels(docs, {"rpi", "opi"})]
     assert "minnow: not a board this package labels" in capsys.readouterr().err
 
 
@@ -325,8 +381,8 @@ def test_a_board_whose_revision_cannot_be_read_costs_one_label_not_the_sheet(doc
     doc = copy.deepcopy(docs["rpib-serial"])
     doc.summary = replace(doc.summary, revision="000a")     # a code with no model listed
     with_bad = dict(docs, unreadable=doc)
-    kinds = [k for k, _t, _d, _r in labels.all_labels(with_bad, {"rpi", "opi"})]
-    assert kinds == [k for k, _t, _d, _r in labels.all_labels(docs, {"rpi", "opi"})]
+    kinds = [k for _h, k, _t, _d, _r in labels.all_labels(with_bad, {"rpi", "opi"})]
+    assert kinds == [k for _h, k, _t, _d, _r in labels.all_labels(docs, {"rpi", "opi"})]
     err = capsys.readouterr().err
     assert "unreadable: 000a: no model is listed" in err
     assert "skipped" in err

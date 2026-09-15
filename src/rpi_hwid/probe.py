@@ -472,7 +472,33 @@ def board_macs(serial):
 
 
 def net_interfaces(serial=None):
-    """Every non-loopback interface: name, MAC, driver, whether onboard."""
+    """Every non-loopback interface: name, MAC, driver, whether onboard.
+
+    Each one also carries `signal`: which piece of evidence settled
+    `onboard`, because the same boolean is not equally well established on
+    every board and a consumer asserting against it deserves to know which
+    it has got.
+
+    derived-mac      the MAC is one this board computes from its serial, so
+                     the port is provably the board's own, and provably the
+                     eth or wlan one whatever it ended up being called.
+    driver           the driver is one that only ever serves something
+                     soldered down. Weaker: it is a closed list, so a board
+                     with an unusual onboard part falls off the end of it.
+    unmatched-mac    the board's derivation rule is in evidence here -- some
+                     other interface wears a MAC it produces -- and this is
+                     not one of them, which positively establishes a
+                     removable adapter.
+    no-derived-macs  no interface wears a derived MAC, so the rule is not in
+                     evidence and "not onboard" rests on the driver list
+                     alone: an absence of evidence, not evidence of absence.
+
+    That last distinction needs the whole list before any one interface can
+    be judged, hence the second pass. board_macs() is speculative by design
+    -- it will derive a pair from a Pi 5's serial, which follows no such
+    rule -- so a miss only means anything once a hit has shown the rule
+    applies to this board at all.
+    """
     own = board_macs(serial)
     out = []
     for p in sorted(glob.glob(ROOT + "/sys/class/net/*")):
@@ -501,7 +527,15 @@ def net_interfaces(serial=None):
             onboard, kind = True, own[mac]
         out.append({"name": name, "mac": mac, "driver": drv,
                     "onboard": onboard, "kind": kind, "usb": usb_dev,
-                    "speed": read(p + "/speed")})
+                    "signal": None, "speed": read(p + "/speed")})
+    derived = any(i["mac"] in own for i in out)
+    for i in out:
+        if i["mac"] in own:
+            i["signal"] = "derived-mac"
+        elif i["onboard"]:
+            i["signal"] = "driver"
+        else:
+            i["signal"] = "unmatched-mac" if derived else "no-derived-macs"
     return out
 
 
@@ -518,6 +552,9 @@ def usb_net_adapters(ifaces):
             "manufacturer": read(p + "/manufacturer"), "product": read(p + "/product"),
             "usb_serial": read(p + "/serial"), "bcd_usb": read(p + "/version"),
             "usb_speed": read(p + "/speed"), "kind": "wifi" if i["kind"] == "wlan" else "ethernet",
+            # how firmly this was established as removable rather than the
+            # board's own; see net_interfaces
+            "signal": i["signal"],
         })
     return out
 
@@ -736,7 +773,8 @@ def summary(d, header, power):
         pclass = "ambiguous"
     else:
         pclass = "undetermined"
-    macs = [{"kind": i["kind"], "mac": i["mac"]} for i in d.get("interfaces", [])
+    macs = [{"kind": i["kind"], "mac": i["mac"], "signal": i.get("signal")}
+            for i in d.get("interfaces", [])
             if i["onboard"] and i["kind"] in ("eth", "wlan")]
     usb_net = list(d.get("usb_net", []))
     # Waveshare's PoE-ETH-USB-HUB-HAT gives a Zero its wired port: that
@@ -747,7 +785,10 @@ def summary(d, header, power):
     by_iface = {i["name"]: i for i in d.get("interfaces", [])}
     for u in list(usb_net):
         if by_iface.get(u["iface"], {}).get("usb") in bonnet_ports:
-            macs.insert(0, {"kind": "eth", "mac": u["mac"]})
+            # "bonnet-hub", not the interface's own signal: this part is the
+            # board's own port only because of where it sits in this HAT's
+            # hub, and the identical part anywhere else is a dongle.
+            macs.insert(0, {"kind": "eth", "mac": u["mac"], "signal": "bonnet-hub"})
             usb_net.remove(u)
     hat_uuid = None
     if d["hat_fw"] and d["hat_fw"].get("uuid"):
@@ -785,16 +826,20 @@ def main():
         return
     print(headline(d))
     for h in v["header"]:
-        print("  header : " + h)
+        print("  header  : " + h)
     for e in v["evidence"]:
-        print("  signal : " + e)
-    print("  power  : " + v["power"])
+        # labelled for its JSON key, so that "signal" is left to mean the
+        # one thing it means on an interface line below
+        print("  evidence: " + e)
+    print("  power   : " + v["power"])
     for i in d["interfaces"]:
         if i["onboard"]:
-            print("  onboard: %-6s %s  %s" % (i["kind"], i["mac"], i["driver"]))
+            print("  onboard : %-6s %s  %s (%s)" % (
+                i["kind"], i["mac"], i["driver"], i["signal"]))
     for u in d["usb_net"]:
-        print("  usb net: %s %s %s  %s  %s" % (u["vidpid"], u["manufacturer"] or "",
-                                              u["product"] or "", u["mac"], u["kind"]))
+        print("  usb net : %s %s %s  %s  %s (%s)" % (
+            u["vidpid"], u["manufacturer"] or "", u["product"] or "",
+            u["mac"], u["kind"], u["signal"]))
 
 
 if __name__ == "__main__" and not globals().get("RPI_HWID_EMBEDDED"):
