@@ -33,6 +33,19 @@ I2C devices on the header's user bus (pins 3/5)
     PCF8574 fan controller at 0x20. Nothing else in the line-up puts
     anything there. The pair is the HAT's own silicon, so it names the HAT
     on whatever board the HAT is fitted to.
+
+    Waveshare's 2-DOF Pan-Tilt HAT answers at 0x29, 0x40 and 0x70. Neither
+    of the first two identifies it: 0x40 is the PCA9685's default and the
+    INA219's, 0x29 the TSL2591's and the VL53L0X's. 0x70 is what settles
+    it, being the PCA9685's All Call address, which it answers as well as
+    its own -- so 0x40 and 0x70 are one chip, not two, and on rpi5-pantilt
+    both return the same MODE1 (0x21) while 0x29 returns 0x50 from the
+    TSL2591's ID register (2026-09-15).
+
+    Beware that an address in this list is not a device. The scan is a
+    zero-byte quick write, and rpi5-pantilt also acknowledges 0x28, where
+    every actual read fails EREMOTEIO: nothing is fitted there. Signatures
+    are written from registers read back, never from the scan alone.
 USB tree
     Waveshare's PoE-ETH-USB-HUB-HAT for a Pi Zero is a Terminus 1a40:0101
     hub on the root port with an RTL8152 (0bda:8152) on its port 4.
@@ -684,10 +697,26 @@ def verdict(d):
     # pair is the HAT's own silicon, so it identifies the HAT on any board
     # the HAT fits: a Waveshare PoE HAT (B) is one on an Orange Pi too.
     devices = d.get("header_i2c") or []
+    named = None
     if "3c" in devices and "20" in devices:
-        header.append("Waveshare PoE HAT (B) "
-                      "(SSD1306 at 0x3c + PCF8574 at 0x20 on the header's user bus)")
+        named = ("Waveshare PoE HAT (B) "
+                 "(SSD1306 at 0x3c + PCF8574 at 0x20 on the header's user bus)")
         power = "PoE HAT on the GPIO header: Waveshare PoE HAT (B)"
+    elif set(["29", "40", "70"]) <= set(devices):
+        # All three, not the obvious two: 0x40 is the PCA9685's default and
+        # also the INA219's, so it discriminates badly on its own, and 0x29
+        # is the TSL2591's and also the VL53L0X's. What settles it is 0x70,
+        # the PCA9685's All Call address, which it answers *in addition to*
+        # its own -- measured on rpi5-pantilt 2026-09-15, where 0x40 and
+        # 0x70 return the same MODE1 (0x21) because they are one chip, and
+        # 0x29 returns 0x50 from the TSL2591's ID register. A board that has
+        # All Call switched off falls through to the raw address list and
+        # goes unnamed, which is the right way to be wrong here: a HAT
+        # without a name is recoverable, a sticker with the wrong name is not.
+        named = ("Waveshare 2-DOF Pan-Tilt HAT "
+                 "(PCA9685 at 0x40 answering All Call 0x70, TSL2591 at 0x29)")
+    if named:
+        header.append(named)
     elif devices:
         ev.append("header user bus devices: " + " ".join(devices))
     usb = d["usb"]
@@ -746,6 +775,19 @@ def verdict(d):
             "evidence": ev, "summary": summary(d, header, power)}
 
 
+# HATs identified by what they carry rather than by an ID EEPROM. verdict()
+# writes a long line naming the evidence; the summary carries only the short
+# name, taken as the prefix of that line. A new signature MUST be added here
+# as well as to verdict(), or the HAT is named in the verdict and silently
+# absent from the summary, which is the half that labels and the ansible
+# assert actually read.
+HEADER_SHORT_NAMES = (
+    "Waveshare PoE-ETH-USB-HUB-HAT",
+    "Waveshare PoE HAT (B)",
+    "Waveshare 2-DOF Pan-Tilt HAT",
+)
+
+
 def summary(d, header, power):
     """The verdict in a fixed shape for the audit and the ansible assert:
     short names only, and None where the signal does not exist on this
@@ -756,11 +798,9 @@ def summary(d, header, power):
     if d["hat_fw"] and (d["hat_fw"]["product"] or "").strip() not in items:
         items.append("%s %s" % (d["hat_fw"]["vendor"], d["hat_fw"]["product"]))
     for h in header:
-        bonnet = "Waveshare PoE-ETH-USB-HUB-HAT"
-        if h.startswith(bonnet) and bonnet not in items:
-            items.append(bonnet)
-        if h.startswith("Waveshare PoE HAT (B)") and "Waveshare PoE HAT (B)" not in items:
-            items.append("Waveshare PoE HAT (B)")
+        for name in HEADER_SHORT_NAMES:
+            if h.startswith(name) and name not in items:
+                items.append(name)
     if power.startswith("PoE HAT on the GPIO header"):
         pclass = "gpio-poe-hat"
     elif power.startswith("PoE through the Waveshare PoE-ETH-USB-HUB-HAT"):

@@ -245,6 +245,33 @@ def test_verdict_poe_hat_b_by_i2c_devices():
     assert "Waveshare PoE HAT (B)" in v["summary"]["header"]
 
 
+def test_verdict_pan_tilt_hat_needs_the_all_call_address():
+    """0x29+0x40 is not enough, and deliberately so.
+
+    Both are contended -- 0x40 is the PCA9685's default and the INA219's,
+    0x29 the TSL2591's and the VL53L0X's -- so a robotics bonnet carrying
+    a current monitor and a rangefinder would wear this HAT's name. 0x70
+    is the PCA9685 answering All Call as well as its own address, which is
+    what makes the set a fingerprint rather than a coincidence.
+    """
+    # as measured on rpi5-pantilt: 0x28 answers the scan with nothing fitted
+    d = _evidence(model="Raspberry Pi 5 Model B Rev 1.1",
+                  header_i2c=["28", "29", "40", "70"])
+    v = probe.verdict(d)
+    # the summary is the half labels and the ansible assert read, so the
+    # short name has to reach it, not just the verbose verdict line
+    assert v["summary"]["header"] == ["Waveshare 2-DOF Pan-Tilt HAT"]
+    assert any("All Call 0x70" in h for h in v["header"])
+    # the phantom is not evidence and must not be named as a device
+    assert not any("0x28" in h for h in v["header"])
+
+    two = _evidence(model="Raspberry Pi 5 Model B Rev 1.1", header_i2c=["29", "40"])
+    v = probe.verdict(two)
+    assert not any("Pan-Tilt" in h for h in v["summary"]["header"])
+    # unnamed, but not unrecorded: the addresses still reach the evidence
+    assert any("29 40" in e for e in v["evidence"])
+
+
 def test_verdict_undetermined_on_a_bare_3bplus():
     d = _evidence(model="Raspberry Pi 3 Model B Plus Rev 1.3", pi5=False)
     v = probe.verdict(d)
