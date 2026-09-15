@@ -68,7 +68,7 @@ def test_fpga_records_named_and_typed(docs):
 
 
 def test_tinytapeout_records(docs):
-    breakout, tt06, ihp = labels.tinytapeout_records(docs)
+    breakout, tt06, gf = labels.tinytapeout_records(docs)
     assert tt06.headline == "TT06"
     assert tt06.subtitle == "ASIC  ·  sky130"
     assert tt06.url == "https://tinytapeout.com/chips/tt06/"
@@ -80,17 +80,17 @@ def test_tinytapeout_records(docs):
     # swatch is meant to be a sample of the board it names.
     assert (tt06.chip_colour, tt06.demoboard_colour) == ("#c98599", "#c98599")
     assert (tt06.chip_colour_name, tt06.demoboard_colour_name) == ("pink", "pink")
-    assert ihp.headline == "TTIHP25a"
-    assert ihp.subtitle == "ASIC  ·  ihp-sg13g2"
-    assert ihp.demoboard_text == "TTDBv3  ·  Rev 3.2"
-    assert ihp.mcu == "RP2350"
-    assert ihp.chip_colour is None, "the sheet has no carrier colours for this shuttle"
-    assert ihp.chip_colour_name is None
-    # The board it sits on is a DB ETR v3.2, which the sheet does have, even
-    # though its "Used by" does not list ttihp25a: the board names itself over
-    # the REPL, so the demo board's colours are found by revision.
-    assert (ihp.demoboard_colour, ihp.demoboard_silk) == ("#c98599", "#bae7c6")
-    assert (ihp.demoboard_colour_name, ihp.demoboard_silk_name) == ("purple", "teal")
+    assert gf.headline == "TTGF0p2"
+    assert gf.subtitle == "ASIC  ·  gf180mcu"
+    assert gf.demoboard_text == "TTDBv3  ·  Rev 3.2"
+    assert gf.mcu == "RP2350"
+    # Both of this one's boxes are filled: the shuttle is in the sheet with
+    # its own hex, and it is listed under the DB ETR v3.2's "Used by", so
+    # neither box needs the revision fallback to be found.
+    assert (gf.chip_colour, gf.chip_silk) == ("#c6cad1", "#24252a")
+    assert (gf.chip_colour_name, gf.chip_silk_name) == ("white", "black")
+    assert (gf.demoboard_colour, gf.demoboard_silk) == ("#c98599", "#bae7c6")
+    assert (gf.demoboard_colour_name, gf.demoboard_silk_name) == ("purple", "teal")
 
     # The FPGA breakout has no shuttle at all, so neither of its boards can
     # be found by one: the demo board is found by its revision, and the
@@ -202,7 +202,7 @@ def test_all_labels_order_and_count(docs):
                      "usb", "usb", "usb", "usb", "usb", "usb"]
     titles = [t for k, t, _d, _r in labels.all_labels(docs, {"tt"})]
     assert titles == ["FPGA 4df39a7a6856f86f", "TT06 E6614C311B7A7A37",
-                      "TTIHP25a E66360B8A3C1D5F2"]
+                      "TTGF0p2 E66360B8A3C1D5F2"]
     only_opi = [k for k, _t, _d, _r in labels.all_labels(docs, {"opi"})]
     assert only_opi == ["opi"]
 
@@ -242,7 +242,7 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "80:3f:5d:13:8e:67",                              # the Model B's radio
         "00:e0:4c:68:36:95", "6c:1f:f7:51:2d:d6",         # both of the CM1's
         "https://tinytapeout.com/chips/tt06/",            # the chip pages
-        "https://tinytapeout.com/chips/ttihp25a/",
+        "https://tinytapeout.com/chips/ttgf0p2/",
         "https://tinytapeout.com/chips/",                 # no chip: the index
         "E6614C311B7A7A37", "E66360B8A3C1D5F2",           # the demo boards' RP2 ids
         "4df39a7a6856f86f",

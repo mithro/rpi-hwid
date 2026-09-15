@@ -34,12 +34,27 @@ The serial REPL
     What makes it a Tiny Tapeout board is the SDK on it, reachable over
     the CDC ACM port (/dev/ttyACM*). The SDK's main.py builds a
     ``DemoBoard`` singleton ``tt`` at boot and prints it, which reads the
-    chip's ROM (project 0 on every chip since TT05: the text
-    "shuttle=tt06\\nrepo=...\\ncommit=..." at bytes 32-127, written by
-    tt-support-tools rom.py) into ``tt.shuttle._shuttle_props._contents``.
-    It says 'unknown' when no ROM answers (a TT04 chip, or nothing
-    mounted) and 'FPGA' on the FPGA breakout (v3 SDK,
-    src/ttboard/boot/rom.py). Reading the ROM resets and clocks the chip's
+    chip's ROM (project 0, ``tt_um_chip_rom``: the text
+    "shuttle=tt06\\nrepo=...\\ncommit=..." at bytes 32-127) into
+    ``tt.shuttle._shuttle_props._contents``. It says 'unknown' where that
+    read came to nothing and 'FPGA' on the FPGA breakout (v3 SDK,
+    src/ttboard/boot/rom.py).
+
+    'unknown' does not mean the chip has no ROM. A TT04 reads as unknown
+    and has one: TinyTapeout/tt-chip-rom is project 0 on tt04's shuttle
+    index as much as tt05's, and at tt04's pinned commit (a3b2f098) the
+    descriptor is already ASCII key=value at byte 32, the same place the
+    SDK looks. What the SDK will not do is trust it. Before reading a byte
+    of the descriptor it checks two magic values, and the second wants
+    address 129 to read 0x00 -- true of the 128-byte TT05+ layout, not of
+    TT04's. Its own log line for that branch is "Fake reporting at tt04
+    chip" (ttboard/boot/rom.py, v2.0.4 and still in v3). The newer clocked
+    path is no better here: it validates a CRC32 that tt-chip-rom only
+    grew in May 2024, long after tt04. So a TT04 needs force_shuttle in
+    the board's config.ini to name itself, and reports rom_forced when it
+    does. Only TT03p5 and earlier genuinely have no ROM project at all.
+
+    Reading the ROM resets and clocks the chip's
     project mux and drives its ui_in pins, so this probe only ever reports
     that cached copy: when the boot did not fill it (no ``tt``, a custom
     main.py, a ROM read that never happened) the ROM is reported as not
