@@ -233,7 +233,8 @@ def test_verdict_zero_bonnet_and_onboard_macs():
     v = probe.verdict(d)
     assert v["summary"]["power_class"] == "bonnet-poe"
     assert v["summary"]["header"] == ["Waveshare PoE-ETH-USB-HUB-HAT"]
-    assert v["summary"]["macs"] == [{"kind": "wlan", "mac": "b8:27:eb:02:a3:24"}]
+    assert v["summary"]["macs"] == [
+        {"kind": "wlan", "mac": "b8:27:eb:02:a3:24", "signal": None}]
     assert v["summary"]["rtc_battery"] is None
 
 

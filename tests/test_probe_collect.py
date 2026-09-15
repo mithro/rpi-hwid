@@ -28,6 +28,56 @@ def _w(root, rel, content):
     return path
 
 
+def _iface(root, name, mac, driver, bus="platform"):
+    """One interface in a fake sysfs, with `driver` bound to it."""
+    _w(root, f"/sys/class/net/{name}/address", mac + "\n")
+    dev = root / f"sys/devices/fake/{name}"
+    dev.mkdir(parents=True, exist_ok=True)
+    (root / f"sys/class/net/{name}/device").symlink_to(dev)
+    drv = root / f"sys/bus/{bus}/drivers/{driver}"
+    drv.mkdir(parents=True, exist_ok=True)
+    (dev / "driver").symlink_to(drv)
+
+
+def test_signal_says_which_evidence_settled_each_interface(tmp_path, monkeypatch):
+    """The same `onboard` boolean is not equally well established.
+
+    On a Broadcom-OUI board both verdicts are positive: the wired port's MAC
+    is one the board derives, and the dongle's provably is not. That is the
+    distinction a consumer asserting against `onboard` needs, and it is
+    invisible in the boolean.
+    """
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    serial = "000000004fe3e7e4"                    # pi-sw1-p10, a 3B+
+    own_eth = probe.board_macs(serial)
+    eth = next(m for m, k in own_eth.items() if k == "eth")
+    _iface(tmp_path, "eth0", eth, "lan78xx")
+    _iface(tmp_path, "eth1", "00:e0:4c:68:01:03", "r8152", bus="usb")
+
+    by_name = {i["name"]: i for i in probe.net_interfaces(serial)}
+    assert by_name["eth0"]["onboard"] is True
+    assert by_name["eth0"]["signal"] == "derived-mac"
+    assert by_name["eth1"]["onboard"] is False
+    assert by_name["eth1"]["signal"] == "unmatched-mac"
+
+
+def test_a_board_that_derives_no_macs_says_so_rather_than_implying_proof(
+        tmp_path, monkeypatch):
+    """A Pi 5's dongle is removable on the driver list's word alone.
+
+    Same boolean as the 3B+ case above, weaker grounds: nothing here
+    positively established anything, so the signal must not read the same.
+    """
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    _iface(tmp_path, "eth0", "98:fe:54:13:f5:75", "macb")
+    _iface(tmp_path, "eth1", "00:e0:4c:68:01:03", "r8152", bus="usb")
+
+    by_name = {i["name"]: i for i in probe.net_interfaces("d88100008543dc30")}
+    assert by_name["eth0"]["signal"] == "driver"      # onboard, but not proven
+    assert by_name["eth1"]["signal"] == "no-derived-macs"
+    assert by_name["eth1"]["onboard"] is False
+
+
 def _pi5_tree(root):
     _w(root, "/proc/device-tree/model", "Raspberry Pi 5 Model B Rev 1.1\0")
     _w(root, "/proc/device-tree/compatible", "raspberrypi,5-model-b\0brcm,bcm2712\0")
@@ -187,7 +237,9 @@ def test_collect_orange_pi_pc(opi_root):
     assert s["header"] == []
     assert s["hat_uuid"] is None
     assert s["power_class"] == "undetermined"
-    assert s["macs"] == [{"kind": "eth", "mac": "02:81:2e:b7:a3:4e"}]
+    # an Allwinner board derives none either: U-Boot's rule, not Broadcom's
+    assert s["macs"] == [
+        {"kind": "eth", "mac": "02:81:2e:b7:a3:4e", "signal": "driver"}]
     assert s["usb_net"] == []
     assert s["rtc_battery"] is None
     assert s["fan"] is None
@@ -276,7 +328,11 @@ def test_collect_walks_the_tree(fake_root):
     assert adapter["bcd_usb"] == "3.00"
     assert adapter["kind"] == "ethernet"
     v = probe.verdict(d)
-    assert v["summary"]["macs"] == [{"kind": "eth", "mac": "98:fe:54:13:f5:75"}]
+    # a Pi 5 derives no MACs, so the driver list is all that settled this
+    assert v["summary"]["macs"] == [
+        {"kind": "eth", "mac": "98:fe:54:13:f5:75", "signal": "driver"}]
+    assert ifaces["eth1"]["signal"] == "no-derived-macs"
+    assert adapter["signal"] == "no-derived-macs"
     assert v["summary"]["power_class"] == "ambiguous"
     assert v["summary"]["rtc_battery"] is True
     assert v["summary"]["compatible"] == "raspberrypi,5-model-b brcm,bcm2712"
@@ -448,8 +504,10 @@ def test_probe_main_prints_text_and_json(fake_root, capsys, monkeypatch):
     monkeypatch.setattr("sys.argv", ["probe.py"])
     probe.main()
     out = capsys.readouterr().out
-    assert "power  :" in out
-    assert "onboard: eth" in out
+    assert "power   :" in out
+    assert "onboard : eth" in out
+    # the line says not just what was decided but what decided it
+    assert "(no-derived-macs)" in out
     monkeypatch.setattr("sys.argv", ["probe.py", "--json"])
     probe.main()
     assert '"verdict"' in capsys.readouterr().out
