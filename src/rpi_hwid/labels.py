@@ -510,7 +510,10 @@ def draw_fpga(lab, board):
     else:
         lab.fit(x, y, board.model, SANS, 8, col_w)
         y += 3 * mm
-        lab.text(x, y, "die not read", SANS, CAPTION, color=GREY)
+        # what the board's own gateware said, where it said anything: a
+        # pcileech board has no JTAG to read a die from, and "die not read"
+        # would suggest a read that failed rather than one that cannot happen
+        lab.fit(x, y, board.gateware or "die not read", SANS, CAPTION, col_w, color=GREY)
     if board.kind == "arty":
         # the serial is a board-printed identifier: its own row, larger
         y += 3.8 * mm
@@ -839,9 +842,25 @@ def draw_tinytapeout(lab, tt):
 USB_SPEED = {"12": "FS 12 Mbit/s", "480": "HS 480 Mbit/s", "5000": "SS 5 Gbit/s",
              "10000": "SS+ 10 Gbit/s", "20000": "SS+ 20 Gbit/s"}
 BOARD_MODEL = {"netv2": ("Alphamax", "NeTV2"), "arty": ("Digilent", "Arty A7"),
-               "acorn": ("SQRL", "Acorn CLE-215+"), "jtag": ("", "FPGA")}
-IDCODE_PART = {"0x362d093": "XC7A35T", "0x3631093": "XC7A100T", "0x3636093": "XC7A200T",
-               "0x13631093": "XC7A100T", "0x03636093": "XC7A200T"}
+               "acorn": ("SQRL", "Acorn CLE-215+"), "jtag": ("", "FPGA"),
+               # no maker: the gateware is known, the board under it is not
+               "pcileech": ("", "PCILeech FPGA")}
+# Artix-7 dies by JTAG idcode, keyed on the number with its top four bits
+# masked off. Those bits are the silicon revision, not the part, and the two
+# tools spell the same number differently: openFPGALoader prints 0x362d093,
+# openocd pads it to 0x0362d093. Keyed on strings, as this table once was,
+# every board read by openocd was labelled "die not read" with its idcode in
+# hand, and each revision met in the wild needed its own entry added.
+IDCODE_REVISION_MASK = 0x0FFFFFFF
+IDCODE_PART = {0x362D093: "XC7A35T", 0x3631093: "XC7A100T", 0x3636093: "XC7A200T"}
+
+
+def idcode_part(idcode):
+    """The Artix-7 die an idcode names, whichever tool read it, or None."""
+    try:
+        return IDCODE_PART.get(int(idcode, 16) & IDCODE_REVISION_MASK)
+    except (TypeError, ValueError):
+        return None
 
 
 @dataclass(frozen=True)
@@ -881,6 +900,7 @@ class FpgaLabel:
     dna: str | None = None
     serial: str | None = None
     flash: str | None = None
+    gateware: str | None = None      # "gateware v4.14  ·  FPGA id 9" (pcileech)
 
 
 @dataclass(frozen=True)
@@ -963,7 +983,7 @@ def fpga_records(docs, pinned_names=None):
     out = []
     for host, b in boards:
         maker, model = BOARD_MODEL.get(b.kind, ("", b.kind))
-        part = IDCODE_PART.get(b.idcode or "")
+        part = idcode_part(b.idcode)
         name = None
         if b.kind == "netv2" and b.dna:
             name = naming.netv2_name(b.dna)
@@ -975,8 +995,13 @@ def fpga_records(docs, pinned_names=None):
         if b.flash_jedec:
             # S25FL128S and S25FL127S both answer 0x012018
             flash = "S25FL128S/127S" if b.flash_jedec == "0x012018" else b.flash_jedec
+        gateware = None
+        if b.gateware:
+            # the number, never a board name: a class is shared by boards
+            gateware = "gateware v%s  ·  FPGA id %s" % (b.gateware, b.gateware_id)
         out.append(FpgaLabel(kind=b.kind, maker=maker, model=model, host=host, part=part,
-                             name=name, dna=b.dna, serial=b.serial, flash=flash))
+                             name=name, dna=b.dna, serial=b.serial, flash=flash,
+                             gateware=gateware))
     return out
 
 
@@ -1085,7 +1110,11 @@ def all_labels(docs, only, pinned_names=None, order=None):
             ("usb", usb_records(docs) if "usb" in only else ())):
         for r in records:
             if record_kind == "fpga":
-                row = (r.kind, r.name or r.model, draw_fpga, r)
+                # the identifier the sticker is keyed on, as a Pi row carries
+                # its serial and a USB row its MAC
+                ident = r.dna or r.serial or (r.gateware or "").replace("  ·  ", ", ")
+                row = (r.kind, f"{r.name or r.model} {ident}".strip(),
+                       draw_fpga, r)
             elif record_kind == "tt":
                 row = ("tt", f"{r.headline} {r.usb_serial or ''}".strip(), draw_tinytapeout, r)
             else:

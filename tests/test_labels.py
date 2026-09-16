@@ -56,6 +56,59 @@ def test_board_record_orange_pi_pc(docs):
     assert p.hat_uuid == "363bffaa-8824-a94d-7242-3c0955f9126c"
 
 
+@pytest.mark.parametrize(("idcode", "part"), [
+    ("0x362d093", "XC7A35T"),      # openFPGALoader's spelling
+    ("0x0362d093", "XC7A35T"),     # openocd's: the same number, zero-padded
+    ("0x3631093", "XC7A100T"),
+    ("0x13631093", "XC7A100T"),    # the top nibble is the silicon revision
+    ("0x23631093", "XC7A100T"),    # ...so a revision nobody has met yet is fine too
+    ("0x03636093", "XC7A200T"),
+    ("0x0bad0093", None),          # not an Artix-7 this table knows
+    ("", None), (None, None), ("junk", None),
+])
+def test_the_die_is_found_whichever_tool_read_the_idcode(idcode, part):
+    """The five NeTV2s on gsm7252ps-s2 are read by openocd, which prints
+    0x0362d093. The table was keyed on openFPGALoader's 0x362d093 string, so
+    every one of them was labelled "die not read" with its idcode in hand."""
+    assert labels.idcode_part(idcode) == part
+
+
+def test_listing_titles_carry_the_identifier_on_the_label(docs):
+    """A Pi row shows its serial and a USB row its MAC, so an FPGA row shows
+    the DNA (or Digilent serial) the sticker is keyed on -- a listing of
+    names alone read as though the DNA had never been read."""
+    rows = {k: t for _h, k, t, _d, _r in labels.all_labels(docs, {"fpga"})}
+    assert rows["netv2"] == "netv2-grove 0x00742c4e63b9085c"
+    assert rows["arty"].startswith("arty-hawk ")
+    assert rows["acorn"] == "Acorn CLE-215+"          # nothing to identify it by
+
+
+def test_a_pcileech_board_gets_a_model_but_no_invented_maker_or_name():
+    doc = ProbeDocument.from_dict("pi-sw1-p38", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "e8387e35dbce7843",
+        "revision": "b04171", "power_class": "undetermined",
+        "fpga": [{"kind": "pcileech"}]}}})
+    (rec,) = labels.fpga_records({"pi-sw1-p38": doc})
+    assert rec.model == "PCILeech FPGA"
+    assert rec.maker == ""                  # the board under the gateware is unknown
+    assert rec.name is None
+    assert rec.dna is None
+    assert rec.gateware is None             # nothing was read from it
+
+
+def test_a_pcileech_board_shows_its_gateware_as_numbers_not_a_board_name(tmp_path):
+    doc = ProbeDocument.from_dict("pi-sw1-p38", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "e8387e35dbce7843",
+        "revision": "b04171", "power_class": "undetermined",
+        "fpga": [{"kind": "pcileech", "gateware": "4.14", "gateware_id": 9}]}}})
+    docs = {"pi-sw1-p38": doc}
+    (rec,) = labels.fpga_records(docs)
+    assert rec.gateware == "gateware v4.14  ·  FPGA id 9"
+    (row,) = [t for _h, k, t, _d, _r in labels.all_labels(docs, {"fpga"}) if k == "pcileech"]
+    assert row == "PCILeech FPGA gateware v4.14, FPGA id 9"
+    labels.render(docs, tmp_path / "pcileech.pdf", only={"fpga"})    # and it draws
+
+
 def test_fpga_records_named_and_typed(docs):
     recs = {r.kind: r for r in labels.fpga_records(docs)}
     assert recs["netv2"].name == "netv2-grove"

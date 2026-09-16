@@ -50,12 +50,14 @@ class UsbNetAdapter:
 class FpgaBoard:
     """An FPGA board the Pi hosts, by whatever identity was readable."""
 
-    kind: str                      # netv2 | arty | acorn | jtag | unknown-fpga
+    kind: str                      # netv2 | arty | acorn | pcileech | jtag | unknown-fpga
     serial: str | None = None      # Digilent FT2232 serial (Arty)
     dna: str | None = None         # Xilinx Device DNA, 0x-prefixed
     idcode: str | None = None
     flash: str | None = None
     flash_jedec: str | None = None
+    gateware: str | None = None    # pcileech-fpga gateware version, "4.14"
+    gateware_id: int | None = None  # its FPGA id: a profile class, not a board
 
     @property
     def identity(self) -> str | None:
