@@ -363,7 +363,10 @@ def jtag_probe(want_flash=False):
     res["cable"] = "digilent" if digilent else "gpio"
     if want_flash and digilent:
         # the board profile supplies the part; the bridge replaces the design
-        board = "arty_a7_100t" if res["idcode"] in ("0x3631093", "0x13631093") else "arty_a7_35t"
+        # by number with the revision nibble masked, as labels.idcode_part
+        # does: a string list only ever matched the revisions written into it
+        is_100t = (int(res["idcode"], 16) & 0x0FFFFFFF) == 0x3631093
+        board = "arty_a7_100t" if is_100t else "arty_a7_35t"
         fl = sh(["sudo", "openFPGALoader", "-b", board, "--detect", "-f"], timeout=120)
         m = re.search(r"JEDEC ID: (0x[0-9a-f]+)", fl)
         res["flash_jedec"] = m.group(1) if m else None

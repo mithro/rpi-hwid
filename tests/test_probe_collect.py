@@ -494,6 +494,35 @@ def test_openocd_reads_the_chain_when_openfpgaloader_is_installed_but_cannot(
     assert res["dna"] == "0x0038a44663258854"          # netv2-basil, pi-sw1-p10
 
 
+@pytest.mark.parametrize(("idcode", "profile"), [
+    ("0x362d093", "arty_a7_35t"),
+    ("0x3631093", "arty_a7_100t"),
+    ("0x13631093", "arty_a7_100t"),    # a later silicon revision of the 100T
+    ("0x23631093", "arty_a7_100t"),    # one no string list had written into it
+])
+def test_the_arty_flash_profile_follows_the_die_not_the_spelling(fake_root, monkeypatch,
+                                                                idcode, profile):
+    """The profile names the part the spiOverJtag bridge is built for; loading
+    the 35T bridge onto a 100T is how a flash read goes wrong. It used to match
+    a list of idcode strings, so a revision not written into the list got the
+    35T bridge."""
+    monkeypatch.setattr(fpga, "digilent_cables", lambda: [{"serial": "210319B301DE"}])
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15:
+                        f"idcode {idcode}\nfamily artix a7")
+    seen = []
+
+    def fake_sh(args, timeout=15):
+        seen.append(args)
+        if args[:1] == ["which"]:
+            return "/usr/bin/openFPGALoader"
+        return ""
+    monkeypatch.setattr(fpga, "sh", fake_sh)
+    fpga.jtag_probe(want_flash=True)
+    flash = [a for a in seen if "-f" in a]
+    assert flash
+    assert flash[0][flash[0].index("-b") + 1] == profile
+
+
 def test_a_chain_neither_tool_can_read_says_why_twice(fake_root, monkeypatch):
     monkeypatch.setattr(fpga, "digilent_cables", list)
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
