@@ -426,6 +426,87 @@ def test_openocd_drives_a_digilent_cable_when_openfpgaloader_is_absent(fake_root
     assert "210319B301DE" in joined
 
 
+# What GPIO_GET_CHIPINFO returned on the fleet, 2026-09-16.
+PI3_CHIPS = [(0, "pinctrl-bcm2835"), (1, "raspberrypi-exp-gpio")]
+PI4_CHIPS = [(0, "pinctrl-bcm2711"), (1, "raspberrypi-exp-gpio")]
+PI5_CHIPS = [(11, "gpio-brcmstb@107d517c00"), (12, "gpio-brcmstb@107d517c20"),
+             (13, "gpio-brcmstb@107d508500"), (14, "gpio-brcmstb@107d508520"),
+             (15, "pinctrl-rp1")]
+
+
+@pytest.mark.parametrize(("chips", "expected"), [
+    (PI3_CHIPS, 0), (PI4_CHIPS, 0), (PI5_CHIPS, 15), ([(3, "some-other-gpio")], None)])
+def test_the_header_chip_is_found_by_its_driver_label(chips, expected):
+    assert fpga.header_gpiochip(chips) == expected
+
+
+def _linuxgpiod_openocd(monkeypatch):
+    """An openocd that has the linuxgpiod driver."""
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "Info : Linux GPIOD")
+
+
+@pytest.mark.parametrize(("model", "chips", "chip"), [
+    ("Raspberry Pi 3 Model B Plus Rev 1.3", PI3_CHIPS, 0),
+    ("Raspberry Pi 5 Model B Rev 1.1", PI5_CHIPS, 15),
+])
+def test_every_harness_pin_names_its_chip(fake_root, monkeypatch, model, chips, chip):
+    """openocd 0.12 leaves a gpio given without -chip unassigned, and then
+    refuses to scan with "Require tck, tms, tdi and tdo gpios". That shipped
+    because every other openocd test mocks this function away whole; this one
+    reads the commands it actually emits."""
+    _w(fake_root, "/proc/device-tree/model", model + "\0")
+    _linuxgpiod_openocd(monkeypatch)
+    monkeypatch.setattr(fpga, "gpiochips", lambda: chips)
+    cmds = fpga.openocd_adapter()
+    for sig, pin in (("tck", 4), ("tms", 17), ("tdi", 27), ("tdo", 22)):
+        assert f"catch {{adapter gpio {sig} -chip {chip} {pin}}}" in cmds
+    # the explicit form comes after the deprecated one, so it is what sticks
+    last_legacy = max(i for i, c in enumerate(cmds) if "linuxgpiod_" in c)
+    first_modern = min(i for i, c in enumerate(cmds) if "adapter gpio" in c)
+    assert last_legacy < first_modern
+
+
+def test_a_pi5_whose_header_chip_cannot_be_found_is_not_guessed_at(fake_root, monkeypatch):
+    """Anywhere else chip 0 is the header; on a Pi 5 it is something else,
+    and driving the harness pins on the wrong controller is not a read."""
+    _w(fake_root, "/proc/device-tree/model", "Raspberry Pi 5 Model B Rev 1.1\0")
+    _linuxgpiod_openocd(monkeypatch)
+    monkeypatch.setattr(fpga, "gpiochips", list)
+    assert fpga.openocd_adapter() is None
+
+    _w(fake_root, "/proc/device-tree/model", "Raspberry Pi 3 Model B Plus Rev 1.3\0")
+    assert "catch {adapter gpio tck -chip 0 4}" in fpga.openocd_adapter()
+
+
+def test_openocd_reads_the_chain_when_openfpgaloader_is_installed_but_cannot(
+        fake_root, monkeypatch):
+    """The sw1 rigs' openFPGALoader was built without libgpiod. It is
+    installed, so the old fallback (only when absent) never fired, and it said
+    why on stderr, which was discarded -- five NeTV2s vanished as raw ""."""
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
+                        "/usr/bin/openFPGALoader" if args[:1] == ["which"] else "")
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "error : libgpiod not found")
+    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None: {
+        "idcode": "0x0362d093", "tool": "openocd", "dna": "0x0038a44663258854", "cable": "gpio"})
+    res = fpga.jtag_probe()
+    assert res["tool"] == "openocd"
+    assert res["dna"] == "0x0038a44663258854"          # netv2-basil, pi-sw1-p10
+
+
+def test_a_chain_neither_tool_can_read_says_why_twice(fake_root, monkeypatch):
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
+                        "/usr/bin/openFPGALoader" if args[:1] == ["which"] else "")
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "error : libgpiod not found")
+    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None: {
+        "idcode": None, "tool": "openocd", "raw": "scan chain interrogation failed: all zeroes"})
+    res = fpga.jtag_probe()
+    assert res["idcode"] is None
+    assert "libgpiod not found" in res["raw"]
+    assert "all zeroes" in res["openocd"]
+
+
 def test_peripheral_base_follows_the_board(fake_root, monkeypatch, tmp_path):
     for model, base in [("Raspberry Pi 4 Model B Rev 1.4", "0xFE000000"),
                         ("Raspberry Pi 3 Model B Plus Rev 1.3", "0x3F000000"),

@@ -24,20 +24,25 @@ From what the Pi can see without touching the FPGA:
 With --jtag, openFPGALoader reads the idcode and, on a 7-series, the Device
 DNA, over the Arty's own FT2232 when there is one and otherwise over the
 host's GPIO harness (libgpiod, pins 27:22:4:17); off by default because it
-drives pins. Where openFPGALoader cannot be installed, openocd reads the same
+drives pins. Where openFPGALoader cannot read the chain, openocd reads the same
 two values over either cable -- the GPIO harness or a Digilent FT2232 -- so
 neither a NeTV2 nor an Arty is left unread. That matters because Raspbian 9
 Stretch has no openFPGALoader package at all, and a NeTV2 on a Pi 3 has no
 other path whatsoever: nothing on PCIe, the board having no PCIe, and no FTDI
-of its own. With --flash as well, an Arty's SPI flash is identified by its
-JEDEC id, which loads openFPGALoader's spiOverJtag bridge into the FPGA and
-drops the running design until the next power cycle. Note the S25FL128S and
+of its own. "Cannot read" includes installed-but-unable: the openFPGALoader on
+the welland.fpgas.online sw1 rigs was built without its libgpiod backend and
+answers only "error : libgpiod not found", so five NeTV2s went unlabelled
+while openocd sat beside it (2026-09-16). With --flash as well, an Arty's SPI
+flash is identified by its JEDEC id, which loads openFPGALoader's spiOverJtag
+bridge into the FPGA and drops the running design until the next power cycle. Note the S25FL128S and
 S25FL127S both answer JEDEC 0x012018.
 """
+import fcntl
 import glob
 import json
 import os
 import re
+import struct
 import subprocess
 import sys
 
@@ -146,6 +151,57 @@ def peripheral_base():
     return DEFAULT_PERIPHERAL_BASE
 
 
+# <linux/gpio.h>: _IOR(0xB4, 0x01, struct gpiochip_info), whose 68 bytes are
+# name[32], label[32] and a __u32 line count. The same call gpiodetect makes.
+GPIO_GET_CHIPINFO_IOCTL = 0x8044B401
+
+# The driver label of the GPIO chip that owns the 40-pin header, measured on
+# the fleet 2026-09-16: a 3B+ registers pinctrl-bcm2835 and a Pi 4
+# pinctrl-bcm2711, both as gpiochip0; a Pi 5 registers pinctrl-rp1, and on
+# kernel 6.12 as gpiochip15.
+HEADER_GPIO_LABELS = ("pinctrl-rp1", "pinctrl-bcm2711", "pinctrl-bcm2835")
+
+
+def gpiochips():
+    """[(number, label)] for every GPIO chip, numbered as the kernel has them.
+
+    Asked of the kernel, not of the device tree, because on a Pi 5 the two
+    disagree: /proc/device-tree/aliases/gpiochip0 names the RP1, while the
+    kernel registered the RP1 as gpiochip15. openocd's own
+    raspberrypi5-gpiod.cfg goes by the alias and would open the wrong chip.
+
+    The number comes from the name the kernel reports, not the device file:
+    a 3B+ also has /dev/gpiochip4, a udev alias that answers as gpiochip0.
+    Needs read access to /dev/gpiochip*, which the gpio group gives.
+    """
+    out = set()
+    for dev in glob.glob(ROOT + "/dev/gpiochip*"):
+        try:
+            fd = os.open(dev, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            info = fcntl.ioctl(fd, GPIO_GET_CHIPINFO_IOCTL, b"\0" * 68)
+        except (OSError, IOError):
+            continue
+        finally:
+            os.close(fd)
+        name, label, _lines = struct.unpack("32s32sI", info)
+        m = re.match(r"gpiochip(\d+)$", name.rstrip(b"\0").decode("ascii", "replace"))
+        if m:
+            out.add((int(m.group(1)), label.rstrip(b"\0").decode("ascii", "replace")))
+    return sorted(out)
+
+
+def header_gpiochip(chips):
+    """The number of the chip that drives the 40-pin header, or None."""
+    for want in HEADER_GPIO_LABELS:
+        for number, label in chips:
+            if label == want:
+                return number
+    return None
+
+
 def openocd_adapter(digilent_serial=None):
     """The openocd commands that select and configure the cable, or None.
 
@@ -168,13 +224,33 @@ def openocd_adapter(digilent_serial=None):
                 "catch {adapter speed 1000}", "catch {adapter_khz 1000}"]
     # linuxgpiod is asked for by capability: it is the only driver that can
     # reach a Pi 5's header, the RP1 being nothing bcm2835gpio can mmap.
+    pi5 = (read(ROOT + "/proc/device-tree/model") or "").startswith("Raspberry Pi 5")
     if "invalid" not in sh_all(["openocd", "-c", "adapter driver linuxgpiod",
                                 "-c", "shutdown"]).lower():
-        return ["adapter driver linuxgpiod",
-                "adapter gpio tck %d" % HARNESS_TCK, "adapter gpio tms %d" % HARNESS_TMS,
-                "adapter gpio tdi %d" % HARNESS_TDI, "adapter gpio tdo %d" % HARNESS_TDO,
-                "adapter speed 1000"]
-    if (read(ROOT + "/proc/device-tree/model") or "").startswith("Raspberry Pi 5"):
+        # Every signal has to name its chip: a gpio given without -chip is
+        # left unassigned, and openocd then refuses with "Require tck, tms,
+        # tdi and tdo gpios for JTAG mode" having driven nothing. Which chip
+        # is found by label (header_gpiochip). A board that will not say is
+        # assumed to be chip 0 everywhere but a Pi 5, where guessing would
+        # mean toggling pins on some other controller, so it is skipped.
+        chip = header_gpiochip(gpiochips())
+        if chip is None:
+            if pi5:
+                return None
+            chip = 0
+        pins = (("tck", HARNESS_TCK), ("tms", HARNESS_TMS),
+                ("tdi", HARNESS_TDI), ("tdo", HARNESS_TDO))
+        # 0.11 spelled this as one chip for the adapter and four numbers.
+        # Offered first, so that on a later release the deprecated wrapper
+        # (if it still exists) is overridden by the explicit form after it.
+        # Unmeasured: no 0.11 build is in the fleet to try it on.
+        return (["adapter driver linuxgpiod",
+                 "catch {linuxgpiod_gpiochip %d}" % chip,
+                 "catch {linuxgpiod_jtag_nums %d %d %d %d}" % tuple(p for _s, p in pins)]
+                + ["catch {adapter gpio %s -chip %d %d}" % (sig, chip, pin)
+                   for sig, pin in pins]
+                + ["adapter speed 1000"])
+    if pi5:
         return None           # RP1 header, and this openocd has no linuxgpiod
     return ["interface bcm2835gpio",
             "bcm2835gpio_peripheral_base %s" % peripheral_base(),
@@ -256,10 +332,21 @@ def jtag_probe(want_flash=False):
         harness = ["sudo", "openFPGALoader", "-c", "digilent"]
     else:
         harness = ["sudo", "openFPGALoader", "-c", "libgpiod", "--pins=" + HARNESS_PINS]
-    det = sh(harness + ["--detect"], timeout=60)
+    # stderr as well: that is where openFPGALoader says why it failed, and
+    # without it a build missing its GPIO backend recorded raw "" and the
+    # board simply vanished from the verdict.
+    det = sh_all(harness + ["--detect"], timeout=60)
     m = re.search(r"idcode\s+(0x[0-9a-f]+)", det)
     if not m:
-        return {"idcode": None, "raw": det[-200:]}
+        # Installed is not the same as able. Try openocd before giving up, and
+        # keep both tools' last words, so a chain neither can read says why.
+        ocd = openocd_probe(cables[0]["serial"] if cables else None)
+        if ocd is not None and ocd.get("idcode"):
+            return ocd
+        res = {"idcode": None, "raw": det[-200:]}
+        if ocd is not None:
+            res["openocd"] = ocd.get("raw")
+        return res
     res = {"idcode": m.group(1)}
     fam = re.search(r"family\s+(.*?)\s*$", det, re.M)
     if fam:
