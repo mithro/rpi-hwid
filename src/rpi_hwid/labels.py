@@ -839,7 +839,9 @@ def draw_tinytapeout(lab, tt):
 USB_SPEED = {"12": "FS 12 Mbit/s", "480": "HS 480 Mbit/s", "5000": "SS 5 Gbit/s",
              "10000": "SS+ 10 Gbit/s", "20000": "SS+ 20 Gbit/s"}
 BOARD_MODEL = {"netv2": ("Alphamax", "NeTV2"), "arty": ("Digilent", "Arty A7"),
-               "acorn": ("SQRL", "Acorn CLE-215+"), "jtag": ("", "FPGA")}
+               "acorn": ("SQRL", "Acorn CLE-215+"), "jtag": ("", "FPGA"),
+               # no maker: the gateware is known, the board under it is not
+               "pcileech": ("", "PCILeech FPGA")}
 IDCODE_PART = {"0x362d093": "XC7A35T", "0x3631093": "XC7A100T", "0x3636093": "XC7A200T",
                "0x13631093": "XC7A100T", "0x03636093": "XC7A200T"}
 

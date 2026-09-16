@@ -15,9 +15,15 @@ or appended to the Pi probe by ``rpi-hwid probe --fpga`` and
 From what the Pi can see without touching the FPGA:
     PCIe: a NeTV2 running LitePCIe is 10ee:7024 with one 1 MiB BAR; an SQRL
     Acorn CLE-215+ is 1e24:021f (or 10ee:7011 under other gateware) with a
-    128 KiB plus 64 KiB BAR pair. Config space and BAR *sizes* are read from
-    sysfs, which the host bridge answers; a BAR is never mapped, because that
-    wedged a host.
+    128 KiB plus 64 KiB BAR pair. A board running Ulf Frisk's pcileech-fpga
+    gateware is 10ee:0666, class 0x020000, with one 4 KiB BAR; on
+    welland.fpgas.online's pi-sw1-p38 it sits beside the FTDI FT601 USB3
+    FIFO bridge (0403:601f) the gateware talks through (2026-09-16). The
+    gateware names itself, not the hardware under it -- ScreamerM2, Squirrel
+    and Enigma X1 all run it -- and the FT601 answers serial 000000000001,
+    the part's default, so nothing here identifies the unit. Config space
+    and BAR *sizes* are read from sysfs, which the host bridge answers; a
+    BAR is never mapped, because that wedged a host.
     USB: a Digilent Arty carries its own FT2232 (0403:6010, manufacturer
     "Digilent") whose serial (210319...) is the board's identity. A NeTV2 has
     no FTDI of its own; its JTAG is bit-banged from the host's GPIO.
@@ -378,6 +384,15 @@ def fpga_verdict(d):
             boards.append({"kind": "acorn", "slot": pc["slot"],
                            "how": "PCIe %s, 128 KiB + 64 KiB BARs (SQRL Acorn CLE-215+%s)" % (
                                pc["id"], "" if pc["id"] == "1e24:021f" else ", default Xilinx id")})
+        elif pc["id"] == "10ee:0666" and sizes == [4 << 10]:
+            # Checked before the Xilinx catch-all below, which is what named
+            # it "unknown-fpga". The FT601 is reported when present but not
+            # required: the PCIe id is the gateware's own, while an FT601 is
+            # on plenty of things that are not this.
+            ft601 = [f for f in d["ftdi"] if f["id"] == "0403:601f"]
+            boards.append({"kind": "pcileech", "slot": pc["slot"],
+                           "how": "PCIe 10ee:0666, one 4 KiB BAR (pcileech-fpga gateware)%s" % (
+                               "; FT601 USB3 bridge at %s" % ft601[0]["path"] if ft601 else "")})
         elif pc["id"].startswith("10ee:") or pc["id"].startswith("1e24:"):
             boards.append({"kind": "unknown-fpga", "how": "PCIe %s, BARs %s" % (pc["id"], sizes),
                            "slot": pc["slot"]})

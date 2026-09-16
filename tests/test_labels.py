@@ -56,6 +56,18 @@ def test_board_record_orange_pi_pc(docs):
     assert p.hat_uuid == "363bffaa-8824-a94d-7242-3c0955f9126c"
 
 
+def test_a_pcileech_board_gets_a_model_but_no_invented_maker_or_name():
+    doc = ProbeDocument.from_dict("pi-sw1-p38", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "e8387e35dbce7843",
+        "revision": "b04171", "power_class": "undetermined",
+        "fpga": [{"kind": "pcileech"}]}}})
+    (rec,) = labels.fpga_records({"pi-sw1-p38": doc})
+    assert rec.model == "PCILeech FPGA"
+    assert rec.maker == ""                  # the board under the gateware is unknown
+    assert rec.name is None
+    assert rec.dna is None
+
+
 def test_fpga_records_named_and_typed(docs):
     recs = {r.kind: r for r in labels.fpga_records(docs)}
     assert recs["netv2"].name == "netv2-grove"

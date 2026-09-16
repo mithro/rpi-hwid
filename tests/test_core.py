@@ -295,6 +295,40 @@ def test_hat_eeprom_decode():
 # --- fpga verdict -------------------------------------------------------------------
 
 
+# pi-sw1-p38 on welland.fpgas.online, a Pi 5 carrying a pcileech-fpga board,
+# exactly as the probe read it on 2026-09-16 (the second PCIe device is the
+# Pi 5's own RP1, which is always there).
+PCILEECH_HOST = {
+    "pcie": [{"slot": "0001:01:00.0", "id": "10ee:0666", "class": "0x020000",
+              "bars": [4096], "subsystem": "10ee:0007"},
+             {"slot": "0002:01:00.0", "id": "1de4:0001", "class": "0x020000",
+              "bars": [16384, 4194304, 65536], "subsystem": "0000:0000"}],
+    "ftdi": [{"path": "1-2", "id": "0403:601f", "manufacturer": "FTDI",
+              "product": "FTDI SuperSpeed-FIFO Bridge", "serial": "000000000001"}],
+    # the GPIO harness is not wired to it: openocd read an all-zero chain
+    "jtag": {"idcode": None, "raw": "error : libgpiod not found"},
+}
+
+
+def test_fpga_verdict_names_a_pcileech_board_rather_than_an_unknown_one():
+    (board,) = fpga.fpga_verdict(PCILEECH_HOST)
+    assert board["kind"] == "pcileech"
+    assert "FT601" in board["how"]
+    # the FT601's serial is the part's default, shared by every unit, so it
+    # must not become the board's identity the way a Digilent serial does
+    assert fpga.fpga_summary([board]) == [{"kind": "pcileech"}]
+
+
+def test_a_pcileech_board_does_not_need_its_usb_bridge_to_be_named():
+    host = dict(PCILEECH_HOST, ftdi=[])
+    (board,) = fpga.fpga_verdict(host)
+    assert board["kind"] == "pcileech"
+    assert "FT601" not in board["how"]
+    # but a Xilinx id with some other BAR layout is still not claimed
+    other = dict(host, pcie=[dict(PCILEECH_HOST["pcie"][0], bars=[1 << 20])])
+    assert fpga.fpga_verdict(other)[0]["kind"] == "unknown-fpga"
+
+
 def test_fpga_verdict_by_pcie_bars_and_ftdi():
     f = {"pcie": [{"slot": "0001:01:00.0", "id": "10ee:7024", "class": "0x058000",
                    "bars": [1 << 20], "subsystem": "10ee:0007"}],
