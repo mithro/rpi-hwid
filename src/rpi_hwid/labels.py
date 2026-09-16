@@ -510,7 +510,10 @@ def draw_fpga(lab, board):
     else:
         lab.fit(x, y, board.model, SANS, 8, col_w)
         y += 3 * mm
-        lab.text(x, y, "die not read", SANS, CAPTION, color=GREY)
+        # what the board's own gateware said, where it said anything: a
+        # pcileech board has no JTAG to read a die from, and "die not read"
+        # would suggest a read that failed rather than one that cannot happen
+        lab.fit(x, y, board.gateware or "die not read", SANS, CAPTION, col_w, color=GREY)
     if board.kind == "arty":
         # the serial is a board-printed identifier: its own row, larger
         y += 3.8 * mm
@@ -897,6 +900,7 @@ class FpgaLabel:
     dna: str | None = None
     serial: str | None = None
     flash: str | None = None
+    gateware: str | None = None      # "gateware v4.14  ·  FPGA id 9" (pcileech)
 
 
 @dataclass(frozen=True)
@@ -991,8 +995,13 @@ def fpga_records(docs, pinned_names=None):
         if b.flash_jedec:
             # S25FL128S and S25FL127S both answer 0x012018
             flash = "S25FL128S/127S" if b.flash_jedec == "0x012018" else b.flash_jedec
+        gateware = None
+        if b.gateware:
+            # the number, never a board name: a class is shared by boards
+            gateware = "gateware v%s  ·  FPGA id %s" % (b.gateware, b.gateware_id)
         out.append(FpgaLabel(kind=b.kind, maker=maker, model=model, host=host, part=part,
-                             name=name, dna=b.dna, serial=b.serial, flash=flash))
+                             name=name, dna=b.dna, serial=b.serial, flash=flash,
+                             gateware=gateware))
     return out
 
 
@@ -1103,7 +1112,8 @@ def all_labels(docs, only, pinned_names=None, order=None):
             if record_kind == "fpga":
                 # the identifier the sticker is keyed on, as a Pi row carries
                 # its serial and a USB row its MAC
-                row = (r.kind, f"{r.name or r.model} {r.dna or r.serial or ''}".strip(),
+                ident = r.dna or r.serial or (r.gateware or "").replace("  ·  ", ", ")
+                row = (r.kind, f"{r.name or r.model} {ident}".strip(),
                        draw_fpga, r)
             elif record_kind == "tt":
                 row = ("tt", f"{r.headline} {r.usb_serial or ''}".strip(), draw_tinytapeout, r)

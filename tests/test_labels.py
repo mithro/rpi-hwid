@@ -93,6 +93,20 @@ def test_a_pcileech_board_gets_a_model_but_no_invented_maker_or_name():
     assert rec.maker == ""                  # the board under the gateware is unknown
     assert rec.name is None
     assert rec.dna is None
+    assert rec.gateware is None             # nothing was read from it
+
+
+def test_a_pcileech_board_shows_its_gateware_as_numbers_not_a_board_name(tmp_path):
+    doc = ProbeDocument.from_dict("pi-sw1-p38", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "e8387e35dbce7843",
+        "revision": "b04171", "power_class": "undetermined",
+        "fpga": [{"kind": "pcileech", "gateware": "4.14", "gateware_id": 9}]}}})
+    docs = {"pi-sw1-p38": doc}
+    (rec,) = labels.fpga_records(docs)
+    assert rec.gateware == "gateware v4.14  ·  FPGA id 9"
+    (row,) = [t for _h, k, t, _d, _r in labels.all_labels(docs, {"fpga"}) if k == "pcileech"]
+    assert row == "PCILeech FPGA gateware v4.14, FPGA id 9"
+    labels.render(docs, tmp_path / "pcileech.pdf", only={"fpga"})    # and it draws
 
 
 def test_fpga_records_named_and_typed(docs):

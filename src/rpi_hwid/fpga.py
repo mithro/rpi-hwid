@@ -375,6 +375,202 @@ def jtag_probe(want_flash=False):
     return res
 
 
+# --- pcileech-fpga gateware, read over its FT601 --------------------------------
+#
+# The gateware keeps a read-only register block, readable through the FT601
+# it streams over (ufrisk/pcileech-fpga pcileech_fifo.sv, core ro space):
+#   +000 magic 0xab89   +008 version major   +009 minor   +00a FPGA id
+#   +010 uptime, 64-bit ticks at 100 MHz     +022 bit0 PCIe PRSNT#, bit1 PERST#
+# The "FPGA id" is a performance-profile class, not a board: upstream, class 9
+# is set by the Enigma X1 and two CaptainDMA boards alike. It is recorded as a
+# number and never turned into a board name. There is no Device DNA.
+#
+# Only reads. LeechCore's own open sequence is not side-effect free -- it can
+# reset the FPGA, hot-reset its PCIe link, write an inactivity timer, and
+# rewrite the FT601's configuration -- so none of it is copied: the requests
+# below are register reads and nothing else, and no vendor control transfer
+# (0xCF) is made at all. Protocol as LeechCore's device_fpga_session.c and
+# the libusb FT601 driver in LeechCore-plugins implement it, checked against
+# pi-sw1-p38 on welland.fpgas.online 2026-09-16.
+PCILEECH_MAGIC = 0xAB89
+PCILEECH_ADDRS = (0x0000, 0x0008, 0x000A, 0x0010, 0x0012, 0x0014, 0x0016, 0x0022)
+PCILEECH_FILLER = 0x55556666        # an idle FIFO word, read little-endian
+
+
+def is_pcileech_pcie(pc):
+    """PCIe 10ee:0666 with one 4 KiB BAR: the gateware's own default id."""
+    return pc["id"] == "10ee:0666" and sorted(pc["bars"], reverse=True) == [4 << 10]
+
+
+def pcileech_request(addrs=PCILEECH_ADDRS):
+    """The bytes that ask for each 16-bit register in `addrs`.
+
+    A resync filler first, then eight bytes per read: four zero, the address
+    big-endian, 0x13 (0x10 read | 0x03 core space; read-only space, so bit 15
+    of the address is clear), and the 0x77 command magic."""
+    out = bytearray(b"\x66\x66\x55\x55" * 4)
+    for a in addrs:
+        out += bytearray([0, 0, 0, 0, (a >> 8) & 0xFF, a & 0xFF, 0x13, 0x77])
+    return bytes(out)
+
+
+def pcileech_parse(reply):
+    """{address: byte} from the FIFO bytes, as DeviceFPGA_Session_ParseConfigReply.
+
+    32-byte records of little-endian words: a status word whose top nibble is
+    0xE and whose seven low nibbles each give the source of one following data
+    word (3 is the core register space). A core data word carries the address
+    byte-swapped in its low 16 bits and two register bytes above them. Filler
+    words between records are skipped; records from any other source (PCIe
+    data a session would have been reading) are ignored."""
+    staged = {}
+    i = 0
+    while i + 32 <= len(reply):
+        while i + 4 <= len(reply) and struct.unpack_from("<I", reply, i)[0] == PCILEECH_FILLER:
+            i += 4
+        if i + 32 > len(reply):
+            break
+        status = struct.unpack_from("<I", reply, i)[0]
+        if status & 0xF0000000 == 0xE0000000:
+            for j in range(7):
+                source = status & 0x0F
+                status >>= 4
+                if source != 3:
+                    continue
+                data = struct.unpack_from("<I", reply, i + 4 + 4 * j)[0]
+                addr = ((data & 0xFF) << 8) | ((data >> 8) & 0xFF)
+                staged[addr] = (data >> 16) & 0xFF
+                staged[addr + 1] = (data >> 24) & 0xFF
+        i += 32
+    return staged
+
+
+def pcileech_identity(staged):
+    """What the registers say, or None unless the magic proves it is the gateware."""
+    if staged.get(0) is None or (staged[0] | staged.get(1, 0) << 8) != PCILEECH_MAGIC:
+        return None
+    res = {"version": "%d.%d" % (staged.get(8, 0), staged.get(9, 0)),
+           "fpga_id": staged.get(0x0A)}
+    if all(a in staged for a in range(0x10, 0x18)):
+        ticks = sum(staged[0x10 + k] << (8 * k) for k in range(8))
+        res["uptime_s"] = ticks // 100000000
+    if 0x22 in staged:
+        res["pcie_present"] = bool(staged[0x22] & 1)
+    return res
+
+
+# Run as root (the FT601's usbfs node is root's) by the same python, and kept
+# to moving bytes: every decision about what they mean is made unprivileged,
+# above, where it can be tested. usbdevfs directly rather than libusb, which
+# a Pi does not have. USBDEVFS_BULK's number is derived from the struct's size
+# because it differs with the userland: pi-sw1-p38 runs a 32-bit userland on a
+# 64-bit kernel, where it is 0xC0105502, not the 0xC0185502 of a 64-bit one.
+PCILEECH_READER = r'''
+import ctypes, fcntl, glob, os, struct, sys, time
+class Bulk(ctypes.Structure):
+    _fields_ = [("ep", ctypes.c_uint), ("len", ctypes.c_uint),
+                ("timeout", ctypes.c_uint), ("data", ctypes.c_void_p)]
+USBDEVFS_BULK = 0xC0000000 | (ctypes.sizeof(Bulk) << 16) | (ord("U") << 8) | 2
+CLAIM, RELEASE = 0x8004550F, 0x80045510
+def bulk(fd, ep, payload=None, size=0, timeout=1000):
+    buf = ctypes.create_string_buffer(payload, len(payload)) if payload is not None \
+        else ctypes.create_string_buffer(size)
+    n = len(payload) if payload is not None else size
+    got = fcntl.ioctl(fd, USBDEVFS_BULK, Bulk(ep, n, timeout, ctypes.addressof(buf)))
+    return buf.raw[:got]
+def read_pipe(fd, size=0x10000, timeout=250):
+    # a session request on 0x01 precedes every bulk read of 0x82 (ftdi_SendCmdRead)
+    bulk(fd, 0x01, struct.pack("<IBBBBIII", 1, 0x82, 1, 0, 0, size, 0, 0))
+    try:
+        return bulk(fd, 0x82, size=size, timeout=timeout)
+    except OSError:
+        return b""
+def rd(d, name):
+    return open(d + "/" + name).read().strip()
+dev = None
+for d in glob.glob("/sys/bus/usb/devices/*"):
+    try:
+        if rd(d, "idVendor") == "0403" and rd(d, "idProduct") == "601f":
+            dev = "/dev/bus/usb/%03d/%03d" % (int(rd(d, "busnum")), int(rd(d, "devnum")))
+    except OSError:
+        pass
+if dev is None:
+    print("ERROR=no FT601 found"); sys.exit(0)
+fd = os.open(dev, os.O_RDWR)
+claimed = []
+try:
+    for i in (0, 1):
+        try:
+            fcntl.ioctl(fd, CLAIM, struct.pack("I", i))
+        except OSError as e:
+            print("ERROR=interface %d in use: %s" % (i, e)); sys.exit(0)
+        claimed.append(i)
+    sum(len(read_pipe(fd)) for _ in range(4))           # drain any stale reply
+    ADDRS = [0x0000, 0x0008, 0x000A, 0x0010, 0x0012, 0x0014, 0x0016, 0x0022]
+    cmd = bytes([0x66, 0x66, 0x55, 0x55]) * 4           # resync filler, then the reads
+    for a in ADDRS:      # core space (..03), read-only (no bit-15 address, no 0x8000)
+        cmd += bytes([0, 0, 0, 0, a >> 8, a & 0xFF, 0x13, 0x77])
+    bulk(fd, 0x02, cmd)
+    # Read, parse, and stop the instant every register is in hand. Each
+    # read_pipe sends a fresh session request; sending more of them than there
+    # are replies to collect desyncs the FT601 and it then answers config reads
+    # with zeroes. Waiting for all of ADDRS (not just the magic) is what makes
+    # the reply arrive whole -- an earlier break was the bug that made this
+    # return nothing.
+    staged, reply = {}, b""
+    for _ in range(10):
+        time.sleep(0.01)
+        reply += read_pipe(fd)
+        i = 0
+        while i + 32 <= len(reply):          # DeviceFPGA_Session_ParseConfigReply
+            while i + 4 <= len(reply) and struct.unpack_from("<I", reply, i)[0] == 0x55556666:
+                i += 4
+            if i + 32 > len(reply):
+                break
+            status = struct.unpack_from("<I", reply, i)[0]
+            if status & 0xF0000000 == 0xE0000000:
+                for j in range(7):
+                    src = status & 0x0F
+                    data = struct.unpack_from("<I", reply, i + 4 + 4 * j)[0]
+                    status >>= 4
+                    if src != 3:
+                        continue
+                    addr = ((data & 0xFF) << 8) | ((data >> 8) & 0xFF)
+                    staged[addr] = (data >> 16) & 0xFF
+                    staged[addr + 1] = (data >> 24) & 0xFF
+            i += 32
+        if all(a in staged for a in ADDRS):
+            break
+    print("STAGED=" + ",".join("%d:%d" % kv for kv in sorted(staged.items())))
+finally:
+    for i in claimed:
+        fcntl.ioctl(fd, RELEASE, struct.pack("I", i))
+    os.close(fd)
+'''
+
+
+def pcileech_probe():
+    """The gateware's identity over its FT601, or {"error": why}.
+
+    The reader parses the FT601 stream on the host (it must break out of the
+    read loop the instant the reply is in hand; see the comment there) and
+    hands back the staged register bytes as "STAGED=addr:val,...". The meaning
+    of those bytes is worked out here, where it can be tested.
+    """
+    out = sh_all(["sudo", sys.executable or "python3", "-c", PCILEECH_READER], timeout=30)
+    m = re.search(r"STAGED=([0-9:,]*)", out)
+    if not m:
+        err = re.search(r"ERROR=(.*)", out)
+        return {"error": err.group(1) if err else out[-200:]}
+    staged = {}
+    for pair in m.group(1).split(","):
+        if ":" in pair:
+            addr, val = pair.split(":")
+            staged[int(addr)] = int(val)
+    ident = pcileech_identity(staged)
+    return ident if ident else {"error": "no 0xab89 magic in the reply: not pcileech gateware"}
+
+
 def fpga_verdict(d):
     """Name the FPGA board(s) this Pi hosts, from PCIe, USB and JTAG."""
     boards = []
@@ -387,15 +583,21 @@ def fpga_verdict(d):
             boards.append({"kind": "acorn", "slot": pc["slot"],
                            "how": "PCIe %s, 128 KiB + 64 KiB BARs (SQRL Acorn CLE-215+%s)" % (
                                pc["id"], "" if pc["id"] == "1e24:021f" else ", default Xilinx id")})
-        elif pc["id"] == "10ee:0666" and sizes == [4 << 10]:
+        elif is_pcileech_pcie(pc):
             # Checked before the Xilinx catch-all below, which is what named
             # it "unknown-fpga". The FT601 is reported when present but not
             # required: the PCIe id is the gateware's own, while an FT601 is
             # on plenty of things that are not this.
             ft601 = [f for f in d["ftdi"] if f["id"] == "0403:601f"]
-            boards.append({"kind": "pcileech", "slot": pc["slot"],
-                           "how": "PCIe 10ee:0666, one 4 KiB BAR (pcileech-fpga gateware)%s" % (
-                               "; FT601 USB3 bridge at %s" % ft601[0]["path"] if ft601 else "")})
+            board = {"kind": "pcileech", "slot": pc["slot"],
+                     "how": "PCIe 10ee:0666, one 4 KiB BAR (pcileech-fpga gateware)%s" % (
+                         "; FT601 USB3 bridge at %s" % ft601[0]["path"] if ft601 else "")}
+            ident = d.get("pcileech") or {}
+            if ident.get("version"):
+                board.update(gateware=ident["version"], gateware_id=ident.get("fpga_id"))
+                board["how"] += "; gateware v%s, FPGA id %s" % (
+                    ident["version"], ident.get("fpga_id"))
+            boards.append(board)
         elif pc["id"].startswith("10ee:") or pc["id"].startswith("1e24:"):
             boards.append({"kind": "unknown-fpga", "how": "PCIe %s, BARs %s" % (pc["id"], sizes),
                            "slot": pc["slot"]})
@@ -438,8 +640,9 @@ def fpga_summary(boards):
     out = []
     for b in boards:
         entry = {"kind": b["kind"]}
-        for k in ("serial", "dna", "idcode", "flash", "flash_jedec"):
-            if b.get(k):
+        for k in ("serial", "dna", "idcode", "flash", "flash_jedec", "gateware", "gateware_id"):
+            # not plain truthiness: FPGA id 0 is a real class (SP605_FT601)
+            if b.get(k) is not None and b.get(k) != "":
                 entry[k] = b[k]
         out.append(entry)
     return out
@@ -448,6 +651,14 @@ def fpga_summary(boards):
 def collect_fpga(jtag=False, flash=False):
     f = {"pcie": pcie_devices(), "ftdi": ftdi_devices()}
     f["jtag"] = jtag_probe(flash) if jtag else None
+    # The gateware is asked only when the PCIe edge has already shown its
+    # signature and an FT601 is present: sending register reads into some
+    # other device's FT601 would be writing into whatever that device is.
+    # Opt-in with --jtag, which already means "talk to the FPGA".
+    f["pcileech"] = None
+    if jtag and any(is_pcileech_pcie(pc) for pc in f["pcie"]) \
+            and any(u["id"] == "0403:601f" for u in f["ftdi"]):
+        f["pcileech"] = pcileech_probe()
     f["boards"] = fpga_verdict(f)
     f["summary"] = fpga_summary(f["boards"])
     return f

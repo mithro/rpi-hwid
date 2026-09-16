@@ -319,6 +319,89 @@ def test_fpga_verdict_names_a_pcileech_board_rather_than_an_unknown_one():
     assert fpga.fpga_summary([board]) == [{"kind": "pcileech"}]
 
 
+# The FT601's reply to pcileech_request(), exactly as read from pi-sw1-p38 on
+# 2026-09-16: five filler words, then two records of core-register replies.
+PCILEECH_REPLY = bytes.fromhex(
+    "6666555566665555666655556666555566665555333333e3000089ab0008040e000a0900"
+    "0010087100129b450014030d00160000f3ffffef00220300ffffffffffffffffffffffff"
+    "ffffffffffffffffffffffff")
+
+
+def test_pcileech_request_is_reads_of_the_core_register_space_and_nothing_else():
+    req = fpga.pcileech_request([0x0008, 0x000A])
+    assert req[:16] == b"\x66\x66\x55\x55" * 4
+    assert req[16:] == bytes.fromhex("0000000000081377" "00000000000a1377")
+    # every command is a read (0x10) of core space (0x03); no write bit (0x20)
+    # and no read-write address (bit 15), so it cannot change the gateware
+    for i in range(16, len(fpga.pcileech_request()), 8):
+        cmd = fpga.pcileech_request()[i:i + 8]
+        assert cmd[6] == 0x13
+        assert cmd[7] == 0x77
+        assert cmd[4] & 0x80 == 0
+
+
+def test_pcileech_identity_from_the_bytes_a_real_board_sent():
+    ident = fpga.pcileech_identity(fpga.pcileech_parse(PCILEECH_REPLY))
+    assert ident == {"version": "4.14", "fpga_id": 9, "uptime_s": 143077, "pcie_present": True}
+
+
+def test_a_reply_without_the_magic_is_not_taken_for_pcileech():
+    # the same records with the magic's bytes changed: something else answered
+    assert fpga.pcileech_identity(fpga.pcileech_parse(PCILEECH_REPLY.replace(
+        bytes.fromhex("000089ab"), bytes.fromhex("00000000")))) is None
+    assert fpga.pcileech_identity(fpga.pcileech_parse(b"\x66\x66\x55\x55" * 8)) is None
+    assert fpga.pcileech_identity({}) is None
+
+
+def test_pcileech_probe_reports_why_it_read_nothing(monkeypatch):
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15:
+                        "ERROR=interface 1 in use: [Errno 16] Device or resource busy")
+    assert fpga.pcileech_probe() == {
+        "error": "interface 1 in use: [Errno 16] Device or resource busy"}
+    # the reader parses on the host and hands back staged register bytes; this
+    # is a STAGED line the FT601 on pi-sw1-p38 produced on 2026-09-16 (magic
+    # 0xAB89 at 0/1, version 4.14 at 8/9, FPGA id 9 at 10, PRSNT# at 34)
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15:
+                        "STAGED=0:137,1:171,8:4,9:14,10:9,34:3,35:0")
+    ident = fpga.pcileech_probe()
+    assert (ident["version"], ident["fpga_id"], ident["pcie_present"]) == ("4.14", 9, True)
+    # a reply the reader could not stage into anything is reported, not crashed on
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "STAGED=")
+    assert "not pcileech gateware" in fpga.pcileech_probe()["error"]
+
+
+def test_fpga_verdict_carries_the_gateware_it_read():
+    host = dict(PCILEECH_HOST, pcileech={"version": "4.14", "fpga_id": 9})
+    (board,) = fpga.fpga_verdict(host)
+    assert (board["gateware"], board["gateware_id"]) == ("4.14", 9)
+    assert fpga.fpga_summary([board]) == [{"kind": "pcileech", "gateware": "4.14",
+                                           "gateware_id": 9}]
+    # FPGA id 0 is a real class (SP605_FT601), not an absent one
+    zero = fpga.fpga_verdict(dict(PCILEECH_HOST, pcileech={"version": "4.9", "fpga_id": 0}))
+    assert fpga.fpga_summary(zero)[0]["gateware_id"] == 0
+
+
+@pytest.mark.parametrize(("pcie", "ftdi", "asked"), [
+    (PCILEECH_HOST["pcie"], PCILEECH_HOST["ftdi"], True),
+    (PCILEECH_HOST["pcie"], [], False),                   # no FT601 to ask
+    (PCILEECH_HOST["pcie"][1:], PCILEECH_HOST["ftdi"], False),  # an FT601, but not this board's
+])
+def test_the_gateware_is_only_asked_when_both_signatures_are_there(monkeypatch, pcie, ftdi, asked):
+    """Register reads sent into some other device's FT601 would be writes into
+    whatever that device is."""
+    calls = []
+    monkeypatch.setattr(fpga, "pcie_devices", lambda: pcie)
+    monkeypatch.setattr(fpga, "ftdi_devices", lambda: ftdi)
+    monkeypatch.setattr(fpga, "jtag_probe", lambda flash=False: None)
+    monkeypatch.setattr(fpga, "pcileech_probe", lambda: calls.append(1) or {"version": "4.14",
+                                                                             "fpga_id": 9})
+    fpga.collect_fpga(jtag=True)
+    assert bool(calls) is asked
+    calls.clear()
+    fpga.collect_fpga(jtag=False)
+    assert not calls, "and never without --jtag"
+
+
 def test_a_pcileech_board_does_not_need_its_usb_bridge_to_be_named():
     host = dict(PCILEECH_HOST, ftdi=[])
     (board,) = fpga.fpga_verdict(host)
@@ -533,7 +616,8 @@ def test_probe_document_from_json_skips_banner():
     assert doc.summary.tinytapeout == ()
     assert doc.summary.rtc_battery is None
     assert doc.summary.to_dict()["fpga"] == [{"kind": "acorn", "serial": None, "dna": None,
-                                              "idcode": None, "flash": None, "flash_jedec": None}]
+                                              "idcode": None, "flash": None, "flash_jedec": None,
+                                              "gateware": None, "gateware_id": None}]
     with pytest.raises(ValueError, match="no JSON"):
         ProbeDocument.from_json("h", "no json")
     with pytest.raises(ValueError, match=r"verdict\.summary"):

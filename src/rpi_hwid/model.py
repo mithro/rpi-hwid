@@ -56,6 +56,8 @@ class FpgaBoard:
     idcode: str | None = None
     flash: str | None = None
     flash_jedec: str | None = None
+    gateware: str | None = None    # pcileech-fpga gateware version, "4.14"
+    gateware_id: int | None = None  # its FPGA id: a profile class, not a board
 
     @property
     def identity(self) -> str | None:
