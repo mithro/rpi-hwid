@@ -248,6 +248,38 @@ def test_every_hosts_labels_are_contiguous(docs):
         assert runs == sorted(runs)
 
 
+def test_board_record_carries_the_pi5_extras(docs):
+    fitted = labels.board_record(docs["pi-sw2-p47"])
+    assert (fitted.fan, fitted.rtc_battery) == (True, True)
+    # a Pi 5 that answered "no" to both, which is not the same as not asking
+    bare = labels.board_record(docs["rpi5-netv2"])
+    assert (bare.fan, bare.rtc_battery) == (False, False)
+    # a 3B+ has neither signal to give, so neither is False
+    older = labels.board_record(docs["pi-sw1-p10"])
+    assert (older.fan, older.rtc_battery) == (None, None)
+
+
+@pytest.mark.parametrize(("host", "expected"), [
+    ("pi-sw2-p47", ["fan", "clock"]),   # both fitted
+    ("rpi5-433mhz", ["fan"]),           # a fan, no backup cell
+    ("rpi5-netv2", []),                 # a Pi 5 that answered no to both
+    ("pi-sw1-p10", []),                 # not a Pi 5: neither signal exists
+])
+def test_pi5_icons_are_drawn_only_for_what_was_found(docs, tmp_path, monkeypatch,
+                                                     host, expected):
+    """False and None both draw nothing, and must.
+
+    A fan glyph on a board that has no fan header would be a claim about
+    hardware invented from a missing field, which is the one thing a label
+    must never do.
+    """
+    drawn = []
+    monkeypatch.setattr(labels, "mark_fan", lambda *a: drawn.append("fan"))
+    monkeypatch.setattr(labels, "mark_clock", lambda *a: drawn.append("clock"))
+    labels.render({host: docs[host]}, tmp_path / "icons.pdf", only={"rpi"})
+    assert drawn == expected
+
+
 def test_an_unreadable_board_does_not_cost_its_dongles_their_labels(docs, capsys):
     # The revision code names the Pi; it says nothing about what is plugged
     # into it, so a board that cannot be named must not take the adapters

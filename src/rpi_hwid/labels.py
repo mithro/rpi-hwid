@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import sys
@@ -386,6 +387,61 @@ def mark_wifi(lab, x, y, height):
     return height
 
 
+def mark_fan(lab, x, y, size):
+    """Three swept blades in a ring: a fan on the Pi 5's header.
+
+    Drawn in grey at a couple of millimetres, so it reads as a mark in the
+    corner rather than competing with the MACs, which are what the label is
+    for. Blades are beziers from the hub rather than arcs: at this size an
+    arc of uniform width reads as a spiral, and the taper is what makes the
+    shape a fan.
+    """
+    c = lab.c
+    cx, cy = lab.pt(x + size / 2, y + size / 2)
+    r = size / 2
+
+    def at(radius, degrees):
+        a = math.radians(degrees)
+        return cx + radius * math.cos(a), cy + radius * math.sin(a)
+
+    c.setFillColor(GREY)
+    c.setStrokeColor(GREY)
+    c.setLineWidth(size * 0.06)
+    c.circle(cx, cy, r, stroke=1, fill=0)
+    for base in (90, 210, 330):
+        p = c.beginPath()
+        p.moveTo(cx, cy)
+        p.curveTo(*at(r * 0.50, base + 30), *at(r * 0.80, base + 22), *at(r * 0.78, base))
+        p.curveTo(*at(r * 0.76, base - 20), *at(r * 0.40, base - 26), cx, cy)
+        c.drawPath(p, stroke=0, fill=1)
+    c.setFillColor(black)
+    c.setLineWidth(1)
+
+
+def mark_clock(lab, x, y, size):
+    """A dial with two hands: the RTC's backup cell is fitted.
+
+    A clock rather than a battery outline: what the cell buys is the time
+    surviving a power cut, and a battery glyph on a board label would read
+    as a claim about how the board is powered.
+    """
+    c = lab.c
+    cx, cy = lab.pt(x + size / 2, y + size / 2)
+    r = size / 2
+    c.setStrokeColor(GREY)
+    c.setFillColor(GREY)
+    c.setLineWidth(size * 0.08)
+    c.circle(cx, cy, r * 0.92, stroke=1, fill=0)
+    c.setLineCap(1)
+    c.setLineWidth(size * 0.07)
+    c.line(cx, cy, cx, cy + r * 0.52)                  # minute hand, to twelve
+    c.line(cx, cy, cx + r * 0.40, cy + r * 0.12)       # hour hand, to two
+    c.circle(cx, cy, size * 0.05, stroke=0, fill=1)
+    c.setLineCap(0)
+    c.setFillColor(black)
+    c.setLineWidth(1)
+
+
 def mark_rj45(lab, x, y, height):
     """An 8P8C jack outline: the body, the latch tab, eight contacts."""
     c = lab.c
@@ -532,7 +588,26 @@ def draw_board(lab, b):
     col_w = LABEL_W - PAD - tx
     mark_fitted(lab, b.mark, x, PAD, qr, logo_h)
     y = PAD + max(0, (logo_h - title_h) / 2)
-    lab.fit(tx, y, b.title, SANS_BOLD, 11, col_w)
+
+    # What the board is wearing that is not a HAT and has no MAC: a fan on
+    # the header, a cell behind the RTC. Both are Pi 5 signals and both are
+    # None on every other model, so nothing is drawn where nothing could
+    # have been read. Up in the corner beside the title, small and grey:
+    # worth knowing when the board is in your hand, never worth crowding
+    # out an identifier.
+    icons = [m for m, on in ((mark_fan, b.fan), (mark_clock, b.rtc_battery)) if on]
+    icon, icon_gap = 2.6 * mm, 1.1 * mm
+    icons_w = len(icons) * icon + max(0, len(icons) - 1) * icon_gap
+    ix = LABEL_W - PAD - icons_w
+    for draw in icons:
+        draw(lab, ix, y + 0.2 * mm, icon)
+        ix += icon + icon_gap
+
+    # the title gives up the room the icons take, rather than running under
+    # them: lab.fit shrinks and then ellipsises, so a long name degrades
+    # gracefully instead of colliding.
+    title_w = col_w - (icons_w + 1.5 * mm if icons else 0)
+    lab.fit(tx, y, b.title, SANS_BOLD, 11, title_w)
     lab.fit(tx, y + 4.6 * mm, b.subtitle, SANS, 6.5, col_w)
 
     # HAT band: the HAT line, then the uuid line centred in the rest of the
@@ -786,6 +861,11 @@ class BoardLabel:
     hat_uuid: str | None = None
     eth_note: str | None = None      # why there is no eth MAC
     wlan_note: str | None = None     # why there is no wlan MAC
+    # Pi 5 only, and None on every other model: the probe reports these as
+    # None where the signal does not exist rather than as False, so a board
+    # that cannot answer is never drawn as one that answered "no".
+    fan: bool | None = None
+    rtc_battery: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -871,6 +951,7 @@ def board_record(doc):
         header=tuple(s.header), hat_uuid=s.hat_uuid,
         eth_note="no wired port" if ident.wired is False else None,
         wlan_note=wlan_note,
+        fan=s.fan, rtc_battery=s.rtc_battery,
     )
 
 
