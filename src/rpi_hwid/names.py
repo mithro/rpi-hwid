@@ -32,6 +32,19 @@ NETV2_WORDS = [
     "yarrow", "zinc", "anvil", "bronze", "coral", "dune", "elm", "fern",
 ]
 
+# A Cynthion's identifier is its ECP5 configuration flash's unique id, which
+# has the same problem as the others and worse: flashes come off a reel, so
+# boards built together carry near-consecutive uids. Instruments, to keep the
+# three lists apart at a glance as much as to keep the boards apart.
+CYNTHION_WORDS = [
+    "sextant", "caliper", "gnomon", "astrolabe", "vernier", "theodolite",
+    "plumb", "alidade", "lodestone", "quadrant", "compass", "dial",
+    "sundial", "chronometer", "sounder", "logline", "armilla", "orrery",
+    "octant", "transit", "level", "pendulum", "barograph", "aneroid",
+    "hygrometer", "manometer", "galvanometer", "bolometer", "etalon",
+    "prism", "reticle", "micrometer",
+]
+
 ARTY_WORDS = [
     "otter", "heron", "finch", "raven", "wren", "stork", "swift", "kite",
     "robin", "egret", "crane", "gull", "lark", "owl", "hawk", "dove",
@@ -59,6 +72,18 @@ def netv2_name(dna: str) -> str:
     """The name for a NeTV2's Device DNA. Pure: same DNA, same name, forever."""
     digest = hashlib.sha256(normalise_dna(dna).encode()).hexdigest()
     return "netv2-" + NETV2_WORDS[int(digest, 16) % len(NETV2_WORDS)]
+
+
+def cynthion_name(flash_uid: str) -> str:
+    """The name for a Cynthion's configuration flash uid. Pure, like a NeTV2's.
+
+    No registry: the Arty's hash chain exists only because Digilent serials
+    collide, and flash uids are 64 bits of vendor-assigned identifier.
+    ``normalise_dna`` is reused because the shape is the same -- 16 hex
+    digits, however they are spelled.
+    """
+    digest = hashlib.sha256(normalise_dna(flash_uid).encode()).hexdigest()
+    return "cynthion-" + CYNTHION_WORDS[int(digest, 16) % len(CYNTHION_WORDS)]
 
 
 def arty_candidates(serial: str) -> Iterator[str]:

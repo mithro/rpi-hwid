@@ -58,10 +58,21 @@ class FpgaBoard:
     flash_jedec: str | None = None
     gateware: str | None = None    # pcileech-fpga gateware version, "4.14"
     gateware_id: int | None = None  # its FPGA id: a profile class, not a board
+    hw_rev: str | None = None      # Cynthion board revision from bcdDevice, "1.4"
+    mode: str | None = None        # analyzer | moondancer | apollo (Cynthion)
+    # The ECP5's own die identifier, read with UIDCODE_PUB over JTAG and kept
+    # masked to its factory 56 bits. Displayed, never keyed on: reaching it
+    # costs the board's capture, so a name derived from it could not be
+    # recovered without taking the board offline again.
+    trace_id: str | None = None
 
     @property
     def identity(self) -> str | None:
-        """The immutable identifier: the DNA when read, else the serial."""
+        """The immutable identifier: the DNA when read, else the serial.
+
+        An ECP5 board has no Xilinx Device DNA, so a Cynthion falls through to
+        its serial, which is its configuration flash's unique id.
+        """
         return self.dna or self.serial
 
 

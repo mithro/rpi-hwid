@@ -38,6 +38,30 @@ def test_netv2_name_rejects_junk():
         names.netv2_name("not-hex")
 
 
+def test_cynthion_names_are_pure_and_decorrelated():
+    # The production board on rpi5-netv2. Pinned, because the whole promise is
+    # that a uid names the same board forever: changing the word list or the
+    # hash would rename a board that is already wearing a printed sticker.
+    uid = "267125df30c460de"
+    assert names.cynthion_name(uid) == "cynthion-alidade"
+    # however it is spelled
+    assert names.cynthion_name("0x" + uid) == "cynthion-alidade"
+    assert names.cynthion_name(uid.upper()) == "cynthion-alidade"
+    # Configuration flashes come off a reel, so boards built together carry
+    # near-consecutive uids. What the hash buys is that those land all over
+    # the word list instead of clustering, so no one misreads two boards as
+    # the same. It does not buy uniqueness -- like a NeTV2's name it is a
+    # pure function into 32 words, so two boards can collide, and it is the
+    # uid under the name that is the identifier.
+    cluster = {names.cynthion_name(uid[:-1] + c) for c in "0123456789abcdef"}
+    assert len(cluster) >= 10
+
+
+def test_cynthion_name_rejects_junk():
+    with pytest.raises(ValueError, match="not a hex"):
+        names.cynthion_name("not-hex")
+
+
 def test_arty_names_follow_the_chain_and_honour_the_registry():
     serials = ["210319B301DE", "210319B0C238", "210319B301E1", "210319A764F5"]
     got = names.arty_names(serials)
@@ -671,11 +695,26 @@ def test_probe_document_from_json_skips_banner():
     assert doc.summary.rtc_battery is None
     assert doc.summary.to_dict()["fpga"] == [{"kind": "acorn", "serial": None, "dna": None,
                                               "idcode": None, "flash": None, "flash_jedec": None,
-                                              "gateware": None, "gateware_id": None}]
+                                              "gateware": None, "gateware_id": None,
+                                              "hw_rev": None, "mode": None, "trace_id": None}]
     with pytest.raises(ValueError, match="no JSON"):
         ProbeDocument.from_json("h", "no json")
     with pytest.raises(ValueError, match=r"verdict\.summary"):
         ProbeDocument.from_json("h", json.dumps({"x": 1}))
+
+
+def test_a_cynthion_keeps_its_revision_mode_and_flash_uid_through_the_model():
+    raw = {"verdict": {"summary": {"model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "s",
+                                   "revision": "a04171", "power_class": "gpio-poe-hat",
+                                   "fpga": [{"kind": "cynthion",
+                                             "serial": "267125df30c460de",
+                                             "hw_rev": "1.4", "mode": "analyzer"}]}}}
+    (board,) = ProbeDocument.from_json("h", json.dumps(raw)).summary.fpga
+    assert (board.hw_rev, board.mode) == ("1.4", "analyzer")
+    assert board.trace_id is None
+    # identity is `dna or serial`, so an ECP5 board with no Device DNA is
+    # keyed on its configuration flash uid without the property changing
+    assert board.identity == "267125df30c460de"
     with pytest.raises(ValueError, match="does not know"):
         Summary.from_dict({"model": "m", "serial": "s", "revision": "r",
                            "power_class": "p", "surprise": 1})

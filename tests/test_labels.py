@@ -410,10 +410,12 @@ def test_list_and_names_cli(data_dir, capsys):
     assert "tt     TT06 E6614C311B7A7A37" in out
     assert cli_main(["labels", "--data", str(data_dir), "--list", "--only", "tt"]) == 0
     assert capsys.readouterr().out.count("\n") == 3
-    assert cli_main(["name", "--netv2", "0x00742c4e63b9085c", "--arty", "210319B301DE"]) == 0
+    assert cli_main(["name", "--netv2", "0x00742c4e63b9085c", "--arty", "210319B301DE",
+                     "--cynthion", "267125df30c460de"]) == 0
     out = capsys.readouterr().out
     assert "netv2-grove" in out
     assert "arty-hawk" in out
+    assert "cynthion-alidade  267125df30c460de" in out
     assert cli_main(["revision", "c04170"]) == 0
     assert "Raspberry Pi 5, 4 GB, Rev 1.0" in capsys.readouterr().out
 

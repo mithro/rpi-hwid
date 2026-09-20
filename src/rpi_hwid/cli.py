@@ -8,7 +8,8 @@
     rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--no-stop-service] HOST…
                                                           over ssh: one JSON per host
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
-    rpi-hwid name --netv2 DNA… | --arty SERIAL…           the derived board names
+    rpi-hwid name --netv2 DNA… | --arty SERIAL… | --cynthion UID…
+                                                          the derived board names
     rpi-hwid revision CODE…                               decode Pi revision codes
 """
 
@@ -123,6 +124,9 @@ def cmd_name(args: argparse.Namespace) -> int:
     if args.netv2:
         for dna in args.netv2:
             print(f"{names.netv2_name(dna)}  {names.normalise_dna(dna)}")
+    if args.cynthion:
+        for uid in args.cynthion:
+            print(f"{names.cynthion_name(uid)}  {names.normalise_dna(uid)}")
     if args.arty:
         pinned = json.loads(Path(args.names).read_text()) if args.names else None
         for serial, name in names.arty_names(args.arty, pinned).items():
@@ -192,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("name", help="derived board names")
     p.add_argument("--netv2", nargs="*", metavar="DNA")
+    p.add_argument("--cynthion", nargs="*", metavar="FLASH_UID")
     p.add_argument("--arty", nargs="*", metavar="SERIAL")
     p.add_argument("--names", help="JSON registry of Arty serial -> name to honour")
     p.set_defaults(func=cmd_name)
