@@ -492,7 +492,7 @@ def draw_fpga(lab, board):
     dna_h = 6 * mm
     qr_size = 20 * mm
     qr_inset = 3.5 * mm            # four modules of a 25-module code at 20 mm
-    ident_str = board.dna or board.serial
+    ident_str = board.ident or board.serial
     if ident_str:
         lab.qr(qr_inset, qr_inset, qr_size, ident_str)
 
@@ -524,15 +524,24 @@ def draw_fpga(lab, board):
         lab.captioned(x, x + 6 * mm, y, "flash", board.flash or "not read", SANS, 7.5,
                       col_w - 6 * mm)
 
+    if board.kind == "cynthion":
+        # which gateware answered, in the row an Arty uses for its serial: it
+        # is what the board is doing, and it is how the flash uid came to be
+        # readable at all
+        y += 3.8 * mm
+        lab.captioned(x, x + 9 * mm, y, "gateware", board.mode or "not read",
+                      SANS, 7.5, col_w - 9 * mm)
+
     y = LABEL_H - PAD - dna_h
-    cap_y = y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm    # the caption sits over the DNA
-    if board.dna:
-        lab.text(PAD, cap_y, "Device DNA", SANS, CAPTION, color=GREY)
-        lab.fit(PAD, y + 0.5 * mm, board.dna, MONO, dna_size, LABEL_W - 2 * PAD)
+    cap_y = y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm    # the caption sits over the value
+    if board.ident:
+        lab.text(PAD, cap_y, board.ident_caption, SANS, CAPTION, color=GREY)
+        lab.fit(PAD, y + 0.5 * mm, board.ident, MONO, dna_size, LABEL_W - 2 * PAD)
     else:
         # the "0x" sits on the rule at the foot; the space above the rule,
         # to the right of the QR column, is where the digits get written
-        lab.fit(PAD, cap_y, "Device DNA, write it in", SANS, CAPTION, qr_size, color=GREY)
+        lab.fit(PAD, cap_y, board.ident_caption + ", write it in", SANS, CAPTION,
+                qr_size, color=GREY)
         lab.text(PAD, y + 0.5 * mm, "0x", MONO, dna_size)
         lab.rule(PAD + 6 * mm, y + 0.5 * mm + dna_size * 0.72 + 0.3 * mm,
                  LABEL_W - 2 * PAD - 6 * mm)
@@ -844,7 +853,31 @@ USB_SPEED = {"12": "FS 12 Mbit/s", "480": "HS 480 Mbit/s", "5000": "SS 5 Gbit/s"
 BOARD_MODEL = {"netv2": ("Alphamax", "NeTV2"), "arty": ("Digilent", "Arty A7"),
                "acorn": ("SQRL", "Acorn CLE-215+"), "jtag": ("", "FPGA"),
                # no maker: the gateware is known, the board under it is not
-               "pcileech": ("", "PCILeech FPGA")}
+               "pcileech": ("", "PCILeech FPGA"),
+               "cynthion": ("Great Scott Gadgets", "Cynthion")}
+
+# The ECP5 each Cynthion revision carries, from that revision's platform file
+# in the cynthion package (`device` in cynthion/gateware/platform/*.py). Every
+# board is an LFE5U-12F but r0.7, and listing them rather than defaulting means
+# an unrecognised revision prints no part instead of a plausible wrong one --
+# the same rule idcode_part follows.
+CYNTHION_PART = {
+    "0.1": "LFE5U-12F", "0.2": "LFE5U-12F", "0.3": "LFE5U-12F", "0.4": "LFE5U-12F",
+    "0.5": "LFE5U-12F", "0.6": "LFE5U-12F", "0.7": "LFE5U-25F", "1.0": "LFE5U-12F",
+    "1.1": "LFE5U-12F", "1.2": "LFE5U-12F", "1.3": "LFE5U-12F", "1.4": "LFE5U-12F",
+}
+
+# What each gateware calls itself, as cynthion/shared/usb.toml spells it in
+# bProductString -- the name on the label is the name the board answers with.
+CYNTHION_MODE = {"analyzer": "USB Analyzer", "moondancer": "Facedancer",
+                 "apollo": "Apollo debugger"}
+
+# The foot of an FPGA label prints the identifier the sticker is keyed on. For
+# the Xilinx boards that is the Device DNA; an ECP5 has no such thing, and
+# printing "Device DNA" over a configuration flash's id would be a plain lie
+# about which chip was read.
+DNA_CAPTION = "Device DNA"
+CYNTHION_IDENT_CAPTION = "ECP5 config flash UID"
 # Artix-7 dies by JTAG idcode, keyed on the number with its top four bits
 # masked off. Those bits are the silicon revision, not the part, and the two
 # tools spell the same number differently: openFPGALoader prints 0x362d093,
@@ -901,6 +934,12 @@ class FpgaLabel:
     serial: str | None = None
     flash: str | None = None
     gateware: str | None = None      # "gateware v4.14  ·  FPGA id 9" (pcileech)
+    mode: str | None = None          # the gateware a Cynthion is running
+    # The identifier the sticker is keyed on and what to call it. Every Xilinx
+    # board keys on its Device DNA; a Cynthion keys on its configuration
+    # flash's uid, so the caption travels with the value.
+    ident: str | None = None
+    ident_caption: str = DNA_CAPTION
 
 
 @dataclass(frozen=True)
@@ -985,10 +1024,22 @@ def fpga_records(docs, pinned_names=None):
         maker, model = BOARD_MODEL.get(b.kind, ("", b.kind))
         part = idcode_part(b.idcode)
         name = None
+        ident, ident_caption, mode = b.dna, DNA_CAPTION, None
         if b.kind == "netv2" and b.dna:
             name = naming.netv2_name(b.dna)
         elif b.kind == "arty" and b.serial:
             name = arty_names[b.serial]
+        elif b.kind == "cynthion":
+            # The revision names both the model and the die; the probe records
+            # a flash uid only where the gateware published one, so a board
+            # read in Apollo mode arrives here unkeyed and stays unnamed
+            # rather than being named from the debug controller's serial.
+            model = "Cynthion r%s" % b.hw_rev if b.hw_rev else "Cynthion"
+            part = CYNTHION_PART.get(b.hw_rev or "")
+            mode = CYNTHION_MODE.get(b.mode or "", b.mode)
+            ident, ident_caption = b.serial, CYNTHION_IDENT_CAPTION
+            if b.serial:
+                name = naming.cynthion_name(b.serial)
         if b.kind == "arty" and part:
             model = "Arty A7-" + part[len("XC7A"):]
         flash = None
@@ -1001,7 +1052,8 @@ def fpga_records(docs, pinned_names=None):
             gateware = "gateware v%s  ·  FPGA id %s" % (b.gateware, b.gateware_id)
         out.append(FpgaLabel(kind=b.kind, maker=maker, model=model, host=host, part=part,
                              name=name, dna=b.dna, serial=b.serial, flash=flash,
-                             gateware=gateware))
+                             gateware=gateware, mode=mode, ident=ident,
+                             ident_caption=ident_caption))
     return out
 
 
@@ -1085,6 +1137,11 @@ def usb_records(docs):
 # --- assembly -----------------------------------------------------------------
 
 KINDS = ("fpga", "tt", "rpi", "opi", "usb")
+# A host can carry more than one FPGA board -- rpi5-netv2 has a NeTV2 and a
+# Cynthion -- so "fpga" is not fine enough to print one sticker. Naming a kind
+# selects that board alone; "fpga" still means all of them.
+FPGA_KINDS = ("netv2", "arty", "acorn", "pcileech", "cynthion", "jtag", "unknown-fpga")
+ONLY_CHOICES = KINDS + FPGA_KINDS
 
 
 def all_labels(docs, only, pinned_names=None, order=None):
@@ -1103,16 +1160,23 @@ def all_labels(docs, only, pinned_names=None, order=None):
     turn. Hosts it does not name follow, by host name as before.
     """
     only = set(only)
+    # "fpga" gathers every board; a bare kind gathers them all too and then
+    # drops the ones not asked for, because a record does not know its kind
+    # until it has been built.
+    wanted_fpga = only & set(FPGA_KINDS)
+    any_fpga = "fpga" in only or bool(wanted_fpga)
     attached = {}
     for record_kind, records in (
-            ("fpga", fpga_records(docs, pinned_names) if "fpga" in only else ()),
+            ("fpga", fpga_records(docs, pinned_names) if any_fpga else ()),
             ("tt", tinytapeout_records(docs) if "tt" in only else ()),
             ("usb", usb_records(docs) if "usb" in only else ())):
         for r in records:
             if record_kind == "fpga":
+                if wanted_fpga and r.kind not in wanted_fpga:
+                    continue
                 # the identifier the sticker is keyed on, as a Pi row carries
                 # its serial and a USB row its MAC
-                ident = r.dna or r.serial or (r.gateware or "").replace("  ·  ", ", ")
+                ident = r.ident or r.serial or (r.gateware or "").replace("  ·  ", ", ")
                 row = (r.kind, f"{r.name or r.model} {ident}".strip(),
                        draw_fpga, r)
             elif record_kind == "tt":
@@ -1180,7 +1244,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="rpi-hwid labels", description=__doc__.split("\n")[0])
     ap.add_argument("--data", required=True, type=Path, help="directory of probe JSON documents")
     ap.add_argument("--out", default="hardware-labels.pdf", type=Path)
-    ap.add_argument("--only", action="append", choices=list(KINDS))
+    ap.add_argument("--only", action="append", choices=list(ONLY_CHOICES),
+                    metavar="KIND", help="rpi|opi|fpga|tt|usb, or one FPGA board kind "
+                                         "(%s)" % "|".join(FPGA_KINDS))
     ap.add_argument("--start", type=int, default=0,
                     help="leave the first N positions of the first sheet blank")
     ap.add_argument("--outline", action="store_true", help="draw each label's edge")

@@ -109,6 +109,53 @@ def test_a_pcileech_board_shows_its_gateware_as_numbers_not_a_board_name(tmp_pat
     labels.render(docs, tmp_path / "pcileech.pdf", only={"fpga"})    # and it draws
 
 
+def test_a_cynthion_is_keyed_on_its_flash_uid_and_says_so(docs, tmp_path):
+    """An ECP5 board has no Xilinx Device DNA, so the foot of its label must
+    name what it is actually printing rather than inherit "Device DNA"."""
+    rec = {r.kind: r for r in labels.fpga_records(docs)}["cynthion"]
+    assert rec.name == "cynthion-alidade"
+    assert rec.maker == "Great Scott Gadgets"
+    assert rec.model == "Cynthion r1.4"
+    assert rec.part == "LFE5U-12F"          # from the revision, not from JTAG
+    assert rec.ident == "267125df30c460de"
+    assert rec.ident_caption == "ECP5 config flash UID"
+    assert rec.mode == "USB Analyzer"
+    labels.render(docs, tmp_path / "cynthion.pdf", only={"fpga"})    # and it draws
+
+
+def test_the_other_boards_still_say_device_dna(docs):
+    """The four existing kinds must be untouched: same foot, same caption."""
+    recs = {r.kind: r for r in labels.fpga_records(docs)}
+    assert recs["netv2"].ident == "0x00742c4e63b9085c"
+    assert recs["netv2"].ident_caption == "Device DNA"
+    assert recs["acorn"].ident is None       # nothing read it; the rule is drawn
+    assert recs["acorn"].ident_caption == "Device DNA"
+
+
+def test_a_cynthion_in_apollo_mode_is_not_keyed_on_the_wrong_chip(docs):
+    """In Apollo mode the serial belongs to the debug controller. A label
+    keyed on it would name one board two different things."""
+    doc = ProbeDocument.from_dict("h", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
+        "power_class": "usbc-supply",
+        "fpga": [{"kind": "cynthion", "hw_rev": "1.4", "mode": "apollo"}]}}})
+    (rec,) = labels.fpga_records({"h": doc})
+    assert rec.ident is None
+    assert rec.name is None                  # unnameable until its uid is read
+    assert rec.model == "Cynthion r1.4"
+    assert rec.mode == "Apollo debugger"
+
+
+def test_only_can_name_a_single_fpga_kind(docs):
+    """--only fpga on the rig yields both its boards; one sticker at a time
+    needs the kind itself."""
+    both = [k for _h, k, _t, _d, _r in labels.all_labels(docs, {"fpga"})
+            if k in ("netv2", "cynthion")]
+    assert sorted(both) == ["cynthion", "netv2"]
+    rows = list(labels.all_labels(docs, {"cynthion"}))
+    assert [k for _h, k, _t, _d, _r in rows] == ["cynthion"]
+
+
 def test_fpga_records_named_and_typed(docs):
     recs = {r.kind: r for r in labels.fpga_records(docs)}
     assert recs["netv2"].name == "netv2-grove"
@@ -257,7 +304,9 @@ def test_all_labels_order_and_count(docs):
         ("pi-sw2-p47", "rpi"), ("pi-sw2-p47", "acorn"),
         ("rpi4-tt", "rpi"), ("rpi4-tt", "tt"), ("rpi4-tt", "tt"),
         ("rpi5-433mhz", "rpi"), ("rpi5-433mhz", "usb"),
-        ("rpi5-netv2", "rpi"), ("rpi5-netv2", "netv2"), ("rpi5-netv2", "usb"),
+        # this rig carries two FPGA boards, and both come out with it
+        ("rpi5-netv2", "rpi"), ("rpi5-netv2", "netv2"), ("rpi5-netv2", "cynthion"),
+        ("rpi5-netv2", "usb"),
         ("rpib-serial", "rpi"), ("rpib-serial", "usb"),
         ("rpicm1-serial", "rpi"), ("rpicm1-serial", "usb"), ("rpicm1-serial", "usb"),
         ("rpiz-serial", "rpi"),
@@ -277,10 +326,11 @@ def test_order_puts_named_hosts_first_and_keeps_groups_whole(docs):
             labels.all_labels(docs, labels.KINDS, order=wanted)]
     hosts = [h for h, _k in rows]
     assert hosts[:1] == ["rpiz-serial"]
-    assert hosts[1:4] == ["rpi5-netv2"] * 3       # its Pi, NeTV2 and dongle
-    assert hosts[4:6] == ["pi-sw2-p16"] * 2
+    # its Pi, NeTV2, Cynthion and dongle
+    assert hosts[1:5] == ["rpi5-netv2"] * 4
+    assert hosts[5:7] == ["pi-sw2-p16"] * 2
     # anything unnamed still follows in host-name order
-    rest = hosts[6:]
+    rest = hosts[7:]
     assert rest == sorted(rest)
     # and the same labels come out, just rearranged
     assert sorted(rows) == sorted(
@@ -367,6 +417,10 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         got |= {b.text for b in zxingcpp.read_barcodes(Image.open(png))}
     want = {
         "0x00742c4e63b9085c", "0x00628502251ea85c",       # netv2 DNA, arty DNA
+        # the Cynthion keys on its ECP5 configuration flash's uid: an ECP5 has
+        # no Device DNA, and this is the one identifier readable without
+        # taking the board's capture offline
+        "267125df30c460de",
         "2c:cf:67:16:bd:98", "2c:cf:67:16:bd:99",         # rpi5-netv2
         "b8:27:eb:e3:e7:e4", "b8:27:eb:b6:b2:b1",         # 3B+, radio derived
         "e4:5f:01:96:f8:a5", "e4:5f:01:96:f8:a7",         # arty host

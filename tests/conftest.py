@@ -89,7 +89,11 @@ def _doc(model, serial, revision, header, power_class, fpga, macs, usb_net, rtc,
 
 PI5_NETV2 = _doc(
     "Raspberry Pi 5 Model B Rev 1.0", "d88100008543dc30", "c04170", [], "usbc-supply",
-    [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "idcode": "0x3631093"}],
+    # The rig carries two FPGA boards: the NeTV2 on the GPIO harness, and the
+    # Cynthion wired in line on its USB, read from sysfs alone 2026-09-21.
+    [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "idcode": "0x3631093"},
+     {"kind": "cynthion", "serial": "267125df30c460de", "hw_rev": "1.4",
+      "mode": "analyzer"}],
     [{"kind": "eth", "mac": "2c:cf:67:16:bd:98"}, {"kind": "wlan", "mac": "2c:cf:67:16:bd:99"}],
     [{"iface": "eth-netv2", "mac": "00:0e:c6:82:b5:e1", "driver": "ax88179_178a",
       "vidpid": "0b95:1790", "manufacturer": "ASIX Elec. Corp.", "product": "AX88179",
