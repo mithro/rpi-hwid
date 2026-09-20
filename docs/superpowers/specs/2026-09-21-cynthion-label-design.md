@@ -216,5 +216,46 @@ start the root reader on the machine running them.
   a factory-programmed 128-bit ESN in the low 16 bytes of OTP region 0.
   openFPGALoader defines the opcode as `FLASH_ROTP` and never calls it. The
   right primitive is a JEDEC-manufacturer-keyed table of (opcode, address or
-  dummy bytes, length), built on the `0x9F` id `--flash` already reads. That
-  work also needs a host: the Acorn was not found on `ps1.fpgas.online`.
+  dummy bytes, length), built on the `0x9F` id `--flash` already reads.
+
+### What that separate change will have to account for
+
+Measured on the fleet 2026-09-20 and reported by the session doing the Acorn
+deployment; recorded here so it is not rediscovered the hard way.
+
+- **`--flash`'s route does not exist on an Acorn.** The fleet's own docs record
+  `openFPGALoader --write-flash` / spiOverJtag over the GPIO harness as not
+  working — the bridge never toggles CCLK after configuration. spiOverJtag is
+  how this package reads the Arty's flash today, and the Arty has a Digilent
+  FT2232; no Acorn host at either site has an FTDI cable at all.
+- **Reconfiguring over JTAG while the PCIe endpoint is enumerated is a surprise
+  removal, and it crashed `pi-sw2-p47` outright on 2026-08-31.** Any such path
+  must `echo 1 > /sys/bus/pci/devices/<bdf>/remove` first. This is the concrete
+  form of the risk flagged when the change was scoped.
+- **A route that drops nothing exists.** The LiteX SoC being deployed to these
+  cards carries an `S7SPIFlash` bit-bang core, so a JEDEC `0x9F` read is an
+  ordinary read-only SPI transaction over the UART bridge or BAR0 — no
+  reconfiguration, no spiOverJtag, no power cycle. The part is documented as a
+  Spansion S25FL256S but has never been confirmed by a JEDEC read.
+
+Three things this package already gets wrong about Acorns, which that change
+should fix rather than inherit:
+
+- `HARNESS_PINS = "27:22:4:17"` is the NeTV2 harness and is hardcoded. An
+  Acorn's JTAG comes off the card's P1 Pico-EZmate on different pins entirely:
+  `2:3:4:14` on a Compute Blade, `10:9:11:8` on a Pi 5. The pins must become a
+  property of the board or the host, not a constant.
+- `10ee:7011` is described in `fpga.py` as the Acorn under a "default Xilinx
+  id". It is not: it is RHS Research's XDMA sample image. A LiteX x1 design on
+  the same card enumerates as `10ee:7021`. The two PCIe signatures identify
+  *which gateware is loaded*, not which board it is loaded on.
+- Only `1e24:021f` (CLE-215+) is known. The CLE-101 / LiteFury answers
+  `1e24:0101` and is currently unlabelled.
+
+And an Acorn's Device DNA *is* readable, contrary to the assumption that no
+JTAG path to one exists: `pi20` reads `0x0028e5c45e304854` with
+`openFPGALoader --cable libgpiod --pins 2:3:4:14 --read-dna`, which is
+read-only and safe on a live endpoint. An Acorn label could therefore be keyed
+on its DNA like a NeTV2's, which is the stated plan of record for tying a card
+to its label. Note that openFPGALoader 0.10.0, which some hosts carry, has no
+`--read-dna` at all and opens `/dev/gpiochip0` when the header is `gpiochip15`.
