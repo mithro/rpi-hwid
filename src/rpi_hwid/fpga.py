@@ -107,6 +107,98 @@ def ftdi_devices():
     return out
 
 
+# --- Cynthion, from its descriptors alone ---------------------------------------
+#
+# A Great Scott Gadgets Cynthion answers 1d50:615b whatever gateware is loaded
+# and 1d50:615c when its Apollo debug controller holds the shared port. The
+# interface subclass is what tells the gateware apart, which is the reason
+# cynthion/shared/usb.toml exists at all: "Cynthion reports the same idVendor
+# and idProduct values in the USB device descriptor irrespective of the
+# gateware running on the device."
+#
+# Nothing here is sent to the board -- it is all sysfs -- so no flag guards it,
+# unlike every other FPGA this file identifies. Two identifiers fall out for
+# free. The analyzer gateware publishes the ECP5 configuration flash's 64-bit
+# unique id as the USB serial number (cynthion/gateware/analyzer/top.py:232,
+# `iSerialNumber = ECP5FlashUIDStringDescriptor`), and bcdDevice is the board
+# revision rather than any gateware version (apollo_fpga/__init__.py:260
+# reads it as major = bcdDevice >> 8, minor = bcdDevice & 0xFF).
+#
+# The ECP5's own die-level identifier, its 64-bit TraceID, is not here: it is
+# read with UIDCODE_PUB (0x19) over JTAG, and a Cynthion's TAP hangs off the
+# Apollo controller, which only reaches the port by asking the gateware to
+# stand down -- ending the capture. That read lives behind its own flag.
+CYNTHION_VID = "1d50"
+CYNTHION_GATEWARE_PID, CYNTHION_APOLLO_PID = "615b", "615c"
+# bInterfaceSubClass, from cynthion/shared/usb.toml. 0x00 is the Apollo stub
+# that shares the port and says nothing about which gateware is loaded.
+CYNTHION_SUBCLASS = {"10": "analyzer", "20": "moondancer"}
+# Only the analyzer gateware is *known* to publish the flash uid as its serial.
+# Moondancer's descriptors come from firmware this has not read, so its serial
+# is left unclaimed rather than guessed at.
+CYNTHION_FLASH_UID_MODES = ("analyzer",)
+# An Apollo major of 0xFF is an external board (a Daisho, a Pergola) and 0xFE a
+# Cynthion subdevice; neither is a Cynthion revision, and "r255.1" on a label
+# would be a confident lie.
+CYNTHION_NOT_A_REVISION = (0xFE, 0xFF)
+
+
+def cynthion_devices():
+    """Every Cynthion on this host's USB, with the descriptors a label needs."""
+    out = []
+    for p in sorted(glob.glob(ROOT + "/sys/bus/usb/devices/*")):
+        pid = read(p + "/idProduct")
+        if read(p + "/idVendor") != CYNTHION_VID or pid not in (
+                CYNTHION_GATEWARE_PID, CYNTHION_APOLLO_PID):
+            continue
+        subclasses = []
+        for i in sorted(glob.glob(p + "/*:*")):
+            sub = read(i + "/bInterfaceSubClass")
+            if sub is not None:
+                subclasses.append(sub)
+        out.append({"path": os.path.basename(p), "id": CYNTHION_VID + ":" + pid,
+                    "manufacturer": read(p + "/manufacturer"),
+                    "product": read(p + "/product"), "serial": read(p + "/serial"),
+                    "bcd_device": read(p + "/bcdDevice"), "subclasses": subclasses})
+    return out
+
+
+def cynthion_mode(dev):
+    """Which gateware is loaded, by interface subclass, or None if nothing says."""
+    if dev["id"].endswith(CYNTHION_APOLLO_PID):
+        return "apollo"
+    for sub in dev.get("subclasses") or ():
+        if sub in CYNTHION_SUBCLASS:
+            return CYNTHION_SUBCLASS[sub]
+    return None
+
+
+def cynthion_flash_uid(dev):
+    """The ECP5 configuration flash's unique id, where the gateware published
+    it as the USB serial.
+
+    In Apollo mode the serial is the debug controller's own, so a board found
+    that way is left unkeyed rather than named from the wrong chip -- the same
+    board would otherwise get two permanent names depending on what it
+    happened to be running when the probe ran.
+    """
+    if cynthion_mode(dev) in CYNTHION_FLASH_UID_MODES:
+        return dev.get("serial")
+    return None
+
+
+def cynthion_revision(bcd):
+    """The board revision bcdDevice carries: '0104' -> '1.4'."""
+    try:
+        value = int(bcd, 16)
+    except (TypeError, ValueError):
+        return None
+    major, minor = value >> 8, value & 0xFF
+    if major in CYNTHION_NOT_A_REVISION:
+        return None
+    return "%d.%d" % (major, minor)
+
+
 
 
 # The GPIO harness, as openFPGALoader spells it on the command line and as
@@ -601,6 +693,20 @@ def fpga_verdict(d):
         elif pc["id"].startswith("10ee:") or pc["id"].startswith("1e24:"):
             boards.append({"kind": "unknown-fpga", "how": "PCIe %s, BARs %s" % (pc["id"], sizes),
                            "slot": pc["slot"]})
+    for c in d.get("cynthion") or ():
+        mode = cynthion_mode(c)
+        uid = cynthion_flash_uid(c)
+        rev = cynthion_revision(c.get("bcd_device"))
+        boards.append({
+            "kind": "cynthion", "path": c["path"], "serial": uid,
+            "hw_rev": rev, "mode": mode,
+            "how": "USB %s%s%s%s" % (
+                c["id"],
+                (", Cynthion r%s" % rev) if rev else "",
+                (", %s gateware" % mode) if mode else "",
+                # said plainly: an Apollo-mode board has a serial, it is just
+                # not the flash's, and the label must not imply otherwise
+                "" if uid else "; no flash uid published in this mode")})
     for f in d["ftdi"]:
         if f["id"] == "0403:6010" and (f["manufacturer"] or "").startswith("Digilent"):
             boards.append({"kind": "arty", "how": "Digilent FT2232 %s" % f["serial"],
@@ -640,7 +746,8 @@ def fpga_summary(boards):
     out = []
     for b in boards:
         entry = {"kind": b["kind"]}
-        for k in ("serial", "dna", "idcode", "flash", "flash_jedec", "gateware", "gateware_id"):
+        for k in ("serial", "dna", "idcode", "flash", "flash_jedec", "gateware",
+                  "gateware_id", "hw_rev", "mode"):
             # not plain truthiness: FPGA id 0 is a real class (SP605_FT601)
             if b.get(k) is not None and b.get(k) != "":
                 entry[k] = b[k]
@@ -649,7 +756,9 @@ def fpga_summary(boards):
 
 
 def collect_fpga(jtag=False, flash=False):
-    f = {"pcie": pcie_devices(), "ftdi": ftdi_devices()}
+    # A Cynthion is read from its descriptors alone, so it is collected
+    # unconditionally: unlike every other board here, nothing is sent to it.
+    f = {"pcie": pcie_devices(), "ftdi": ftdi_devices(), "cynthion": cynthion_devices()}
     f["jtag"] = jtag_probe(flash) if jtag else None
     # The gateware is asked only when the PCIe edge has already shown its
     # signature and an FT601 is present: sending register reads into some
@@ -666,7 +775,7 @@ def collect_fpga(jtag=False, flash=False):
 
 def merge_fpga(doc, f):
     """Fold an fpga document into a Pi probe document (in place)."""
-    doc["fpga"] = {k: f[k] for k in ("pcie", "ftdi", "jtag")}
+    doc["fpga"] = {k: f[k] for k in ("pcie", "ftdi", "jtag", "cynthion")}
     doc["verdict"]["fpga"] = f["boards"]
     doc["verdict"]["summary"]["fpga"] = f["summary"]
     return doc

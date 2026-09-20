@@ -452,6 +452,60 @@ def test_fpga_gpio_chain_without_pcie_board_is_a_netv2():
     assert [b["kind"] for b in boards] == ["netv2"]
 
 
+# --- cynthion -------------------------------------------------------------------------
+
+# The production Cynthion on rpi5-netv2.iot.welland.mithis.com, exactly as
+# sysfs reported it on 2026-09-21: analyzer gateware sharing its USB port with
+# the Apollo stub, so subclass 0x10 and subclass 0x00 side by side.
+CYNTHION_ANALYZER = {
+    "path": "1-1.4", "id": "1d50:615b", "manufacturer": "Cynthion Project",
+    "product": "USB Analyzer", "serial": "267125df30c460de",
+    "bcd_device": "0104", "subclasses": ["10", "00"],
+}
+
+
+def test_cynthion_mode_comes_from_the_interface_subclass():
+    # cynthion/shared/usb.toml: the vid:pid is the same whatever is loaded,
+    # which is exactly why the subclass exists
+    assert fpga.cynthion_mode(CYNTHION_ANALYZER) == "analyzer"
+    assert fpga.cynthion_mode(dict(CYNTHION_ANALYZER, subclasses=["20"])) == "moondancer"
+    assert fpga.cynthion_mode(dict(CYNTHION_ANALYZER, id="1d50:615c",
+                                   subclasses=[])) == "apollo"
+    assert fpga.cynthion_mode(dict(CYNTHION_ANALYZER, subclasses=[])) is None
+
+
+def test_the_usb_serial_is_the_flash_uid_only_when_gateware_published_it():
+    # In Apollo mode the serial belongs to the debug controller, not to the
+    # ECP5's configuration flash; recording it as a flash UID would key a
+    # board's permanent name on the wrong chip.
+    assert fpga.cynthion_flash_uid(CYNTHION_ANALYZER) == "267125df30c460de"
+    apollo = dict(CYNTHION_ANALYZER, id="1d50:615c", subclasses=[], serial="deadbeef")
+    assert fpga.cynthion_flash_uid(apollo) is None
+
+
+def test_cynthion_revision_decodes_bcddevice_not_a_gateware_version():
+    # apollo_fpga/__init__.py:260 -- major is the high byte, minor the low
+    assert fpga.cynthion_revision("0104") == "1.4"
+    assert fpga.cynthion_revision("0007") == "0.7"
+    assert fpga.cynthion_revision(None) is None
+    # 0xFF is an external Apollo board (Daisho, Pergola) and 0xFE a subdevice;
+    # neither is a Cynthion revision, and "r255.1" would be a lie on a label
+    assert fpga.cynthion_revision("ff01") is None
+    assert fpga.cynthion_revision("fe00") is None
+
+
+def test_fpga_verdict_names_a_cynthion_from_usb_alone():
+    f = {"pcie": [], "ftdi": [], "jtag": None, "cynthion": [CYNTHION_ANALYZER]}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["kind"] == "cynthion"
+    assert board["serial"] == "267125df30c460de"
+    assert board["hw_rev"] == "1.4"
+    assert board["mode"] == "analyzer"
+    assert fpga.fpga_summary([board]) == [{
+        "kind": "cynthion", "serial": "267125df30c460de",
+        "hw_rev": "1.4", "mode": "analyzer"}]
+
+
 # --- tinytapeout verdict -------------------------------------------------------------
 
 TT_USB = {"path": "1-1.2", "id": "2e8a:0005", "manufacturer": "MicroPython",

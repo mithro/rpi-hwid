@@ -545,6 +545,42 @@ def test_peripheral_base_follows_the_board(fake_root, monkeypatch, tmp_path):
         assert fpga.peripheral_base() == base
 
 
+def _cynthion(root, path="1-1.4", pid="615b", serial="267125df30c460de",
+              bcd="0104", product="USB Analyzer", subclasses=("10", "00")):
+    """A Cynthion in a fake sysfs, as rpi5-netv2's reads on 2026-09-21."""
+    dev = f"/sys/bus/usb/devices/{path}"
+    for name, value in (("idVendor", "1d50"), ("idProduct", pid),
+                        ("manufacturer", "Cynthion Project"), ("product", product),
+                        ("serial", serial), ("bcdDevice", bcd), ("speed", "480")):
+        _w(root, f"{dev}/{name}", value + "\n")
+    for number, subclass in enumerate(subclasses):
+        iface = f"{dev}/{path}:1.{number}"
+        _w(root, f"{iface}/bInterfaceNumber", f"{number:02d}\n")
+        _w(root, f"{iface}/bInterfaceClass", "ff\n")
+        _w(root, f"{iface}/bInterfaceSubClass", subclass + "\n")
+    return root
+
+
+def test_cynthion_devices_reads_the_descriptors_a_label_needs(fake_root):
+    _cynthion(fake_root)
+    (dev,) = fpga.cynthion_devices()
+    assert dev["path"] == "1-1.4"
+    assert dev["id"] == "1d50:615b"
+    assert dev["serial"] == "267125df30c460de"
+    assert dev["bcd_device"] == "0104"
+    assert dev["product"] == "USB Analyzer"
+    # the subclasses are what tell the gateware apart, so they must survive
+    assert dev["subclasses"] == ["10", "00"]
+
+
+def test_cynthion_devices_ignores_other_usb_devices(fake_root):
+    # the Genesys hub the real board sits behind, and the ASIX dongle
+    for path, vid, pid in (("1-1", "05e3", "0610"), ("2-1.2", "0b95", "1790")):
+        for name, value in (("idVendor", vid), ("idProduct", pid)):
+            _w(fake_root, f"/sys/bus/usb/devices/{path}/{name}", value + "\n")
+    assert fpga.cynthion_devices() == []
+
+
 def test_merge_fpga_into_probe_document(fake_root):
     d = probe.collect()
     d["verdict"] = probe.verdict(d)
