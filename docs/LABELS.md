@@ -232,8 +232,8 @@ place of the RJ45, so the two kinds are told apart across the room as well.
 ## Artwork
 
 The package ships the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax,
-Digilent, Great Scott Gadgets and Tiny Tapeout marks (each its owner's trademark, drawn only on that
+Digilent, SQRL, Great Scott Gadgets and Tiny Tapeout marks (each its owner's trademark, drawn only on that
 maker's own hardware to identify it) and the public-domain USB trident; see
 [`src/rpi_hwid/artwork/README.md`](../src/rpi_hwid/artwork/README.md) for the
 sources. A `--artwork DIR` overrides any of them and may add a `netv2.svg`. A
-board whose maker has no mark (SQRL) gets the name in type.
+board whose maker has no mark gets the name in type.

@@ -115,16 +115,19 @@ def test_a_pcileech_board_shows_its_gateware_as_numbers_not_a_board_name(tmp_pat
         list(labels.all_labels(docs, {"fpga"}))
 
 
-def test_a_cynthion_is_keyed_on_its_flash_uid_and_says_so(docs, tmp_path):
-    """An ECP5 board has no Xilinx Device DNA, so the foot of its label must
-    name what it is actually printing rather than inherit "Device DNA"."""
+def test_a_cynthion_is_keyed_on_the_die_not_the_flash_chip(docs, tmp_path):
+    """An ECP5's TraceID is the number burned into the die, which is what a
+    Xilinx Device DNA is, so it belongs in the same place and carries the
+    same QR. The configuration flash's uid identifies a chip that could be
+    unsoldered and replaced, so it sits with the other flash facts."""
     rec = {r.kind: r for r in labels.fpga_records(docs)}["cynthion"]
-    assert rec.name == "cynthion-alidade"
+    assert rec.ident == "0x1b808604604e0e"
+    assert rec.ident_caption == "ECP5 TraceID"
+    assert rec.flash_uid == "267125df30c460de"
+    assert rec.name == labels.naming.cynthion_name("0x1b808604604e0e")
     assert rec.maker == "Great Scott Gadgets"
     assert rec.model == "Cynthion r1.4"
     assert rec.part == "LFE5U-12F"          # from the revision, not from JTAG
-    assert rec.ident == "267125df30c460de"
-    assert rec.ident_caption == "ECP5 config flash UID"
     labels.render(docs, tmp_path / "cynthion.pdf", only={"fpga"})    # and it draws
 
 
@@ -140,12 +143,10 @@ def test_a_trace_id_is_printed_when_it_has_been_read(tmp_path, monkeypatch):
     docs = {"h": doc}
     (rec,) = labels.fpga_records(docs)
     assert rec.trace_id == "0x1b808604604e0e"
-    # still keyed on the uid, which is readable without disturbing anything
-    assert rec.ident == "267125df30c460de"
-    assert rec.name == "cynthion-alidade"
+    assert rec.ident == "0x1b808604604e0e"      # the die's own number is the key
     seen = _drawn_strings(monkeypatch, docs, {"cynthion"}, tmp_path)
     assert "0x1b808604604e0e" in seen
-    assert "TraceID" in seen
+    assert "ECP5 TraceID" in seen
     assert not [s for s in seen if s.endswith("…")]
 
 
@@ -177,6 +178,40 @@ def test_the_smaller_acorn_is_the_cle_101(docs):
     (rec,) = labels.fpga_records({"pi20": doc})
     assert rec.model == "Acorn CLE-101"
     assert rec.part == "XC7A100T"
+
+
+@pytest.mark.parametrize(("jedec", "vendor", "part", "size"), [
+    # the Arty's, measured; one JEDEC id, two parts with the same density
+    ("0x012018", "Spansion", "S25FL128S/127S", "16 MiB"),
+    # pi-sw2-p48's Acorn, RDID 01 02 19 read by the Acorn deployment
+    ("0x010219", "Spansion", "S25FL256S", "32 MiB"),
+    ("0xef4018", "Winbond", "W25Q128", "16 MiB"),
+    ("0xc22019", "Macronix", None, "32 MiB"),     # vendor and density, no part
+    ("0x000000", None, None, None),
+    (None, None, None, None), ("junk", None, None, None),
+])
+def test_a_jedec_id_gives_the_vendor_the_part_and_the_density(jedec, vendor, part, size):
+    """The third byte is a power of two, so the density falls out of any
+    id; the vendor is the first byte; only the part needs a table."""
+    got = labels.flash_from_jedec(jedec)
+    assert (got["vendor"], got["part"], got["size"]) == (vendor, part, size)
+
+
+def test_every_fpga_label_renders_its_flash_the_same_way(docs, tmp_path, monkeypatch):
+    """One flash block, in one place, on every FPGA label that has flash
+    facts -- and absent, not placeholdered, on the ones that do not."""
+    seen = _drawn_strings(monkeypatch, docs, {"arty"}, tmp_path)
+    assert "Spansion S25FL128S/127S  ·  16 MiB" in seen
+    assert "flash" in seen
+    # a Cynthion's configuration flash: its uid is free over USB, its JEDEC
+    # id is not read at all, so the block carries the row it has and no other
+    cyn = _drawn_strings(monkeypatch, docs, {"cynthion"}, tmp_path)
+    assert "267125df30c460de" in cyn
+    assert "uid" in cyn
+    # nothing read, nothing claimed
+    netv2 = _drawn_strings(monkeypatch, docs, {"netv2"}, tmp_path)
+    assert not [s for s in netv2 if "flash" in s.lower()]
+    assert not [s for s in netv2 + cyn + seen if "not read" in s]
 
 
 def test_the_other_boards_still_say_device_dna(docs):
@@ -314,7 +349,7 @@ def test_nothing_on_a_cynthion_label_is_elided(docs, tmp_path, monkeypatch):
     is right for a board name and wrong for a caption: "ECP5 config flash
     UI…" reads as a typo, and the instruction to write the uid in is gone."""
     seen = _drawn_strings(monkeypatch, docs, {"cynthion"}, tmp_path)
-    assert "ECP5 config flash UID" in seen
+    assert "ECP5 TraceID" in seen
     assert not [s for s in seen if s.endswith("…")]
 
 
@@ -327,7 +362,7 @@ def test_fpga_records_named_and_typed(docs):
     assert recs["netv2"].part == "XC7A100T"
     assert recs["arty"].name == "arty-hawk"
     assert recs["arty"].model == "Arty A7-35T"
-    assert recs["arty"].flash == "S25FL128S/127S"
+    assert recs["arty"].flash == "Spansion S25FL128S/127S  ·  16 MiB"
     assert recs["acorn"].maker == "SQRL"
 
 
@@ -582,10 +617,11 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         got |= {b.text for b in zxingcpp.read_barcodes(Image.open(png))}
     want = {
         "0x00742c4e63b9085c", "0x00628502251ea85c",       # netv2 DNA, arty DNA
-        # the Cynthion keys on its ECP5 configuration flash's uid: an ECP5 has
-        # no Device DNA, and this is the one identifier readable without
-        # taking the board's capture offline
-        "267125df30c460de",
+        "0x012018",                                      # the arty's flash, small QR
+        # The Cynthion keys on its ECP5 TraceID, the number in the die, which
+        # is where a Xilinx part carries its Device DNA. Its configuration
+        # flash's uid is the flash chip's own id and gets the small flash QR.
+        "0x1b808604604e0e", "267125df30c460de",
         "2c:cf:67:16:bd:98", "2c:cf:67:16:bd:99",         # rpi5-netv2
         "b8:27:eb:e3:e7:e4", "b8:27:eb:b6:b2:b1",         # 3B+, radio derived
         "e4:5f:01:96:f8:a5", "e4:5f:01:96:f8:a7",         # arty host
