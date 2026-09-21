@@ -510,27 +510,38 @@ def draw_fpga(lab, board):
     mark_h = 6 * mm if board.kind in ("arty", "cynthion") else 5 * mm
     mark_maker(lab, board, x, y, mark_h)
     y += mark_h + 0.5 * mm
-    word = board.name.split("-", 1)[1] if board.name else board.model.split()[0]
+    # The headline is the derived name where there is one. Without a name it
+    # falls back to the model, and for a board known only by its chain that
+    # model is "FPGA" -- which printed FPGA twice, once as the headline and
+    # again in the row below. The die is the more useful of the two, so it
+    # takes the headline and the row stops repeating it.
+    if board.name:
+        word = board.name.split("-", 1)[1]
+    else:
+        word = board.part or board.model.split()[0]
     lab.fit(x, y, word, SANS_BOLD, 24, col_w)
     y += 8.3 * mm
-    if board.part:
+    if board.part and board.part != word:
         lab.fit(x, y, "{}  ·  {}".format(board.model, board.part), SANS, 8, col_w)
     else:
         lab.fit(x, y, board.model, SANS, 8, col_w)
-        y += 3 * mm
-        # what the board's own gateware said, where it said anything: a
-        # pcileech board has no JTAG to read a die from, and "die not read"
-        # would suggest a read that failed rather than one that cannot happen
-        lab.fit(x, y, board.gateware or "die not read", SANS, CAPTION, col_w, color=GREY)
+        if board.gateware:
+            # what the board's own gateware said, where it said anything. A
+            # die that was not read is simply left off: "die not read" is the
+            # placeholder this package exists to make unnecessary, and a label
+            # announcing what it does not know is worse than one that is quiet.
+            y += 3 * mm
+            lab.fit(x, y, board.gateware, SANS, CAPTION, col_w, color=GREY)
     if board.kind == "arty":
         # the serial is a board-printed identifier: its own row, larger
         y += 3.8 * mm
         lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 10, col_w - 6 * mm)
-        y += 4 * mm
-        # the part name alone tells the two flash fits apart; the density
-        # is the same on both (S25FL128S/127S: one JEDEC id, two parts)
-        lab.captioned(x, x + 6 * mm, y, "flash", board.flash or "not read", SANS, 7.5,
-                      col_w - 6 * mm)
+        if board.flash:
+            y += 4 * mm
+            # the part name alone tells the two flash fits apart; the density
+            # is the same on both (S25FL128S/127S: one JEDEC id, two parts)
+            lab.captioned(x, x + 6 * mm, y, "flash", board.flash, SANS, 7.5,
+                          col_w - 6 * mm)
 
     if board.trace_id:
         # The die's own identifier, in the row an Arty uses for its serial.
@@ -541,23 +552,15 @@ def draw_fpga(lab, board):
         lab.captioned(x, x + 9 * mm, y, "TraceID", board.trace_id, MONO, 7.5,
                       col_w - 9 * mm)
 
+    # The foot always carries a value: a board with none never reaches here,
+    # because all_labels refuses it. There used to be a rule to write the
+    # digits on by hand, which defeated the point of the package -- a
+    # hand-copied Device DNA is exactly the error-prone step it exists to
+    # remove, and a sticker with a blank on it still gets stuck to a board.
     y = LABEL_H - PAD - dna_h
     cap_y = y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm    # the caption sits over the value
-    if board.ident:
-        lab.text(PAD, cap_y, board.ident_caption, SANS, CAPTION, color=GREY)
-        lab.fit(PAD, y + 0.5 * mm, board.ident, MONO, dna_size, LABEL_W - 2 * PAD)
-    else:
-        # the "0x" sits on the rule at the foot; the space above the rule,
-        # to the right of the QR column, is where the digits get written.
-        # The caption is a band of its own above that row, so it may have the
-        # whole inked width: held to the QR's width instead, a caption longer
-        # than "Device DNA" is elided mid-word ("ECP5 config flash UI…"),
-        # which reads as a typo and loses the instruction with it.
-        lab.fit(PAD, cap_y, board.ident_caption + ", write it in", SANS, CAPTION,
-                LABEL_W - 2 * PAD, color=GREY)
-        lab.text(PAD, y + 0.5 * mm, "0x", MONO, dna_size)
-        lab.rule(PAD + 6 * mm, y + 0.5 * mm + dna_size * 0.72 + 0.3 * mm,
-                 LABEL_W - 2 * PAD - 6 * mm)
+    lab.text(PAD, cap_y, board.ident_caption, SANS, CAPTION, color=GREY)
+    lab.fit(PAD, y + 0.5 * mm, board.ident, MONO, dna_size, LABEL_W - 2 * PAD)
 
 
 # The header band is the raspberry's height at the QR width that the rest
@@ -867,6 +870,8 @@ BOARD_MODEL = {"netv2": ("Alphamax", "NeTV2"), "arty": ("Digilent", "Arty A7"),
                "acorn": ("SQRL", "Acorn CLE-215+"), "jtag": ("", "FPGA"),
                # no maker: the gateware is known, the board under it is not
                "pcileech": ("", "PCILeech FPGA"),
+               # named by its chain alone: the die is printed beside it
+               "unknown-fpga": ("", "FPGA"),
                "cynthion": ("Great Scott Gadgets", "Cynthion")}
 
 # The ECP5 each Cynthion revision carries, from that revision's platform file
@@ -886,6 +891,30 @@ CYNTHION_PART = {
 # about which chip was read.
 DNA_CAPTION = "Device DNA"
 CYNTHION_IDENT_CAPTION = "ECP5 config flash UID"
+
+# What reads each board's identifier, so a board that arrives without one can
+# be told where to go and what to run rather than merely refused.
+IDENT_READ_WITH = {
+    "netv2": "rpi-hwid fpga --jtag",
+    "arty": "rpi-hwid fpga --jtag",
+    "acorn": "rpi-hwid fpga --jtag",
+    "jtag": "rpi-hwid fpga --jtag",
+    "unknown-fpga": "rpi-hwid fpga --jtag",
+    "cynthion": "rpi-hwid fpga --force-offline",
+}
+
+
+class IdentifierNotReadError(Exception):
+    """A board reached the label generator without the identifier its sticker
+    exists to carry.
+
+    Fatal, and deliberately so. This package exists precisely so that nobody
+    transcribes a Device DNA or a flash uid by hand, so a label rendered with
+    the value missing -- or worse, with a rule to write it on -- is a sticker
+    that gets printed, peeled and stuck to real hardware still missing the one
+    thing it was for. Generation time is the last moment the missing read is
+    still cheap.
+    """
 # Artix-7 dies by JTAG idcode, keyed on the number with its top four bits
 # masked off. Those bits are the silicon revision, not the part, and the two
 # tools spell the same number differently: openFPGALoader prints 0x362d093,
@@ -1184,6 +1213,13 @@ def all_labels(docs, only, pinned_names=None, order=None):
             if record_kind == "fpga":
                 if wanted_fpga and r.kind not in wanted_fpga:
                     continue
+                if not r.ident:
+                    raise IdentifierNotReadError(
+                        "%s: the %s board has no %s, so its label would carry "
+                        "nothing that identifies it. Read it with `%s` on that "
+                        "host and collect again." % (
+                            r.host, r.kind, r.ident_caption,
+                            IDENT_READ_WITH.get(r.kind, "rpi-hwid fpga --jtag")))
                 # the identifier the sticker is keyed on, as a Pi row carries
                 # its serial and a USB row its MAC
                 ident = r.ident or r.serial or (r.gateware or "").replace("  ·  ", ", ")

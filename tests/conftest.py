@@ -125,11 +125,29 @@ ZERO_BONNET = _doc(
     [], None, None, None,
 )
 
-ACORN_HOST = _doc(
+# pi-sw2-p47. Its Acorn is out of the slot at the moment, so the document
+# carries none: a board whose identifier was never read may not be labelled,
+# and inventing one for a card that is not even plugged in would be worse.
+PI5_POE_HAT = _doc(
     "Raspberry Pi 5 Model B Rev 1.1", "c36b093f773d46b8", "a04171",
-    ["Waveshare PoE M.2 HAT+ (B)"], "gpio-poe-hat", [{"kind": "acorn"}],
+    ["Waveshare PoE M.2 HAT+ (B)"], "gpio-poe-hat", [],
     [{"kind": "eth", "mac": "98:fe:54:13:f5:75"}], [], True, True, 3000,
 )
+
+# pi-sw2-p48, read 2026-09-21. Its Acorn CLE-215+ is running a LiteX SoC in
+# SRAM rather than its factory image, so the PCIe id is 10ee:7021 -- which
+# says what is loaded, not what it is loaded on -- and the card is identified
+# by its chain instead: XC7A200T, DNA 0x0054b48664b04854 over the Pi 5
+# harness (pins 10:9:11:8). Read here with openocd's FUSE_DNA, and identical
+# digit for digit to what the Acorn deployment read independently from the
+# DNA_PORT primitive over UART and over PCIe BAR0.
+ACORN_HOST = _doc(
+    "Raspberry Pi 5 Model B Rev 1.1", "0cd35697db04a4ab", "b04171",
+    ["Waveshare PoE M.2 HAT+ (B)"], "gpio-poe-hat",
+    [{"kind": "unknown-fpga", "dna": "0x0054b48664b04854", "idcode": "0x13636093"}],
+    [{"kind": "eth", "mac": "88:a2:9e:45:85:77"}], [], False, True, 3000,
+)
+ACORN_HOST["verdict"]["summary"]["hat_uuid"] = "9729525c-eeee-98e9-f348-a0720f4c16eb"
 
 # The pool's Orange Pi PC, probed on pi-sw2-p22: no revision code, no power
 # sensing, a SoC serial from U-Boot and the eth0 MAC U-Boot derives from it.
@@ -326,7 +344,8 @@ RAW = {
     "pi-sw1-p10": POOL_3BPLUS,
     "pi-sw2-p16": ARTY_HOST,
     "rpiz-serial": ZERO_BONNET,
-    "pi-sw2-p47": ACORN_HOST,
+    "pi-sw2-p47": PI5_POE_HAT,
+    "pi-sw2-p48": ACORN_HOST,
     "pi-sw2-p22": OPI_PC,
     "rpi4-tt": TT_HOST,
     "pi-sw2-p33": TT_FPGA_HOST,

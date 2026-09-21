@@ -416,7 +416,7 @@ def test_the_gateware_is_only_asked_when_both_signatures_are_there(monkeypatch, 
     calls = []
     monkeypatch.setattr(fpga, "pcie_devices", lambda: pcie)
     monkeypatch.setattr(fpga, "ftdi_devices", lambda: ftdi)
-    monkeypatch.setattr(fpga, "jtag_probe", lambda flash=False: None)
+    monkeypatch.setattr(fpga, "jtag_probe", lambda flash=False, pins=None: None)
     monkeypatch.setattr(fpga, "pcileech_probe", lambda: calls.append(1) or {"version": "4.14",
                                                                              "fpga_id": 9})
     fpga.collect_fpga(jtag=True)
@@ -465,6 +465,47 @@ def test_fpga_verdict_by_pcie_bars_and_ftdi():
     assert fpga.fpga_summary(boards) == [{
         "kind": "arty", "serial": "210319B301DE", "dna": "0x00628502251ea85c",
         "idcode": "0x362d093", "flash": "spansion S25FL128S", "flash_jedec": "0x012018"}]
+
+
+def test_a_chain_on_a_foreign_harness_is_not_called_a_netv2():
+    """"The only board on the GPIO harness in this fleet is a NeTV2" stopped
+    being true when Acorns went onto harnesses of their own. Measured on
+    pi-sw2-p48 (2026-09-21): an Acorn CLE-215+ read over pins 10:9:11:8 was
+    labelled netv2, which would have minted a netv2-<word> name and printed
+    it on a sticker for a board that is not a NeTV2."""
+    f = {"pcie": [], "ftdi": [],
+         "jtag": {"idcode": "0x13636093", "dna": "0x0054b48664b04854",
+                  "cable": "gpio", "pins": "10:9:11:8"}}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["kind"] != "netv2"
+    assert board["dna"] == "0x0054b48664b04854"
+    # the default harness still means what it always did
+    netv2 = dict(f["jtag"], pins=fpga.HARNESS_PINS)
+    assert fpga.fpga_verdict(dict(f, jtag=netv2))[0]["kind"] == "netv2"
+
+
+def test_a_chain_joins_the_pcie_board_it_belongs_to():
+    """pi-sw2-p48 carries one Acorn, and it came out as two boards: an
+    unknown-fpga from PCIe and a "netv2" from the chain. One card, one label."""
+    f = {"pcie": [{"slot": "0001:01:00.0", "id": "10ee:7021", "class": "0x058000",
+                   "bars": [1 << 20], "subsystem": "10ee:0007"}],
+         "ftdi": [],
+         "jtag": {"idcode": "0x13636093", "dna": "0x0054b48664b04854",
+                  "cable": "gpio", "pins": "10:9:11:8"}}
+    boards = fpga.fpga_verdict(f)
+    assert len(boards) == 1
+    assert boards[0]["dna"] == "0x0054b48664b04854"
+    assert boards[0]["idcode"] == "0x13636093"
+
+
+def test_the_acorn_cle_101_is_known_too():
+    """1e24 is SQRL's vendor id; 0101 is the CLE-101 / LiteFury, which pi14
+    and pi16 answer with and which used to come out as unknown-fpga."""
+    f = {"pcie": [{"slot": "0001:01:00.0", "id": "1e24:0101", "class": "0x058000",
+                   "bars": [1 << 20], "subsystem": "1e24:0101"}],
+         "ftdi": [], "jtag": None}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["kind"] == "acorn"
 
 
 def test_fpga_gpio_chain_without_pcie_board_is_a_netv2():
@@ -516,6 +557,36 @@ def test_cynthion_revision_decodes_bcddevice_not_a_gateware_version():
     # neither is a Cynthion revision, and "r255.1" would be a lie on a label
     assert fpga.cynthion_revision("ff01") is None
     assert fpga.cynthion_revision("fe00") is None
+
+
+def test_the_harness_pins_are_not_the_netv2s_everywhere(monkeypatch):
+    """27:22:4:17 is the NeTV2 harness. An Acorn's JTAG comes off the card's
+    P1 Pico-EZmate on different pins entirely -- 2:3:4:14 on a Compute Blade,
+    10:9:11:8 on a Pi 5 -- so a hardcoded constant cannot read one at all,
+    and an unread DNA is now fatal rather than a line to write on."""
+    seen = []
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/openFPGALoader")
+    monkeypatch.setattr(fpga, "sh_all",
+                        lambda args, timeout=15: seen.append(args) or "")
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "openocd_probe",
+                        lambda serial=None, pins=None: None)
+
+    fpga.jtag_probe(pins="2:3:4:14")
+    assert "--pins=2:3:4:14" in seen[0]
+
+    seen.clear()
+    fpga.jtag_probe()
+    assert "--pins=" + fpga.HARNESS_PINS in seen[0]
+
+
+def test_harness_pins_parse_into_the_order_openocd_counts_them(monkeypatch):
+    """openFPGALoader spells --pins TDI:TDO:TCK:TMS; openocd's *_jtag_nums
+    take tck tms tdi tdo. Handing one tool the other's order silently drives
+    the wrong lines."""
+    assert fpga.harness_nums("27:22:4:17") == (4, 17, 27, 22)
+    assert fpga.harness_nums("2:3:4:14") == (4, 14, 2, 3)
+    assert fpga.harness_nums("nonsense") is None
 
 
 def test_a_trace_id_keeps_only_the_factory_bits():
@@ -829,7 +900,8 @@ def test_summary_round_trips_tinytapeout_boards():
 
 def test_load_collected(data_dir):
     docs = load_collected(data_dir)
-    assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi-sw2-p16", "rpiz-serial", "pi-sw2-p47",
+    assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi-sw2-p16", "rpiz-serial",
+                         "pi-sw2-p47", "pi-sw2-p48",
                          "pi-sw2-p22", "rpi4-tt", "pi-sw2-p33", "pi-sw2-p37", "rpi5-433mhz",
                          "rpib-serial", "rpicm1-serial"}
     assert docs["pi-sw2-p22"].summary.compatible == "xunlong,orangepi-pc allwinner,sun8i-h3"

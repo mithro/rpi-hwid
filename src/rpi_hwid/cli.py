@@ -24,6 +24,13 @@ from pathlib import Path
 from rpi_hwid import names, revision
 from rpi_hwid.collect import DEFAULT_USERS
 
+
+def fpga_module_pins() -> str:
+    """The default JTAG harness, imported late: fpga is a standalone probe."""
+    from rpi_hwid import fpga
+
+    return fpga.HARNESS_PINS
+
 # The Tiny Tapeout module stops the service holding a demo board's port for
 # the length of its read, and starts it again after -- only fpgas-tt.service
 # and only on a Raspberry Pi. This flag is the way to have it leave that alone.
@@ -76,7 +83,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def cmd_fpga(args: argparse.Namespace) -> int:
     from rpi_hwid import fpga
 
-    f = fpga.collect_fpga(args.jtag, args.flash, args.force_offline)
+    f = fpga.collect_fpga(args.jtag, args.flash, args.force_offline, args.pins)
     if args.json:
         print(json.dumps(f, indent=1))
     else:
@@ -166,6 +173,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force-offline", action="store_true",
                    help="read a Cynthion's ECP5 TraceID, which ends its capture "
                         "and may drop power to its TARGET port")
+    p.add_argument("--pins", metavar="TDI:TDO:TCK:TMS",
+                   help="the GPIO JTAG harness, when it is not the NeTV2's "
+                        f"{fpga_module_pins()} (an Acorn is 2:3:4:14 on a "
+                        "Compute Blade, 10:9:11:8 on a Pi 5)")
     p.set_defaults(func=cmd_fpga)
 
     p = sub.add_parser("tinytapeout",

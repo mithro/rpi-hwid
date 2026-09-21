@@ -33,7 +33,7 @@ PX = DPI / 72.0
 EXAMPLES = [
     ("netv2", "netv2-grove", "netv2"),
     ("arty", "arty-hawk", "arty"),
-    ("acorn", "Acorn", "acorn"),
+    ("unknown-fpga", "0x0054b48664b04854", "acorn"),
     ("cynthion", "cynthion-alidade", "cynthion"),
     ("tt", "TT06", "tinytapeout"),
     ("tt", "TTGF0p2", "tinytapeout-gf"),

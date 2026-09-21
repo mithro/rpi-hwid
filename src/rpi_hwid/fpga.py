@@ -6,7 +6,7 @@ A separate, dependency-free file like rpi_hwid.probe, for the same reason
 from it because few people have an FPGA on their Pi. Standalone:
 
     ssh pi@host 'python3 -' --json --jtag < src/rpi_hwid/fpga.py
-    rpi-hwid fpga --json [--jtag] [--flash]
+    rpi-hwid fpga --json [--jtag] [--flash] [--pins=TDI:TDO:TCK:TMS]
 
 or appended to the Pi probe by ``rpi-hwid probe --fpga`` and
 ``rpi-hwid collect --fpga``, which merge its findings into that document's
@@ -309,6 +309,25 @@ def cynthion_revision(bcd):
 # TDI:TDO:TCK:TMS; openocd's *_jtag_nums take tck tms tdi tdo.
 HARNESS_PINS = "27:22:4:17"
 HARNESS_TCK, HARNESS_TMS, HARNESS_TDI, HARNESS_TDO = 4, 17, 27, 22
+# ...and it is only the NeTV2's. An Acorn's JTAG comes off the card's own P1
+# Pico-EZmate header on different pins entirely: 2:3:4:14 on the ps1 Compute
+# Blades, 10:9:11:8 on the Welland Pi 5s (measured by the Acorn deployment,
+# 2026-09-20). Hardcoding one harness means the other's boards cannot be read
+# at all, which since an unread identifier became fatal is the difference
+# between a label and no label. --pins overrides it.
+
+
+def harness_nums(pins):
+    """openFPGALoader's TDI:TDO:TCK:TMS as openocd's (tck, tms, tdi, tdo).
+
+    The two tools take the same four wires in different orders, and handing
+    one the other's order drives the wrong lines without saying so.
+    """
+    try:
+        tdi, tdo, tck, tms = (int(p) for p in str(pins).split(":"))
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return tck, tms, tdi, tdo
 # openocd's bcm2835gpio driver refuses to start without a reset line even when
 # reset is never asserted ("Require at least one of trst or srst gpios to be
 # specified"). 24 is the spare Alphamax's own NeTV2-on-a-Pi interface config
@@ -403,7 +422,7 @@ def header_gpiochip(chips):
     return None
 
 
-def openocd_adapter(digilent_serial=None):
+def openocd_adapter(digilent_serial=None, pins=None):
     """The openocd commands that select and configure the cable, or None.
 
     Commands that openocd renamed between releases are wrapped in catch{}, so
@@ -439,30 +458,33 @@ def openocd_adapter(digilent_serial=None):
             if pi5:
                 return None
             chip = 0
-        pins = (("tck", HARNESS_TCK), ("tms", HARNESS_TMS),
-                ("tdi", HARNESS_TDI), ("tdo", HARNESS_TDO))
+        nums = harness_nums(pins) if pins else None
+        tck, tms, tdi, tdo = nums or (HARNESS_TCK, HARNESS_TMS, HARNESS_TDI, HARNESS_TDO)
+        pin_pairs = (("tck", tck), ("tms", tms), ("tdi", tdi), ("tdo", tdo))
         # 0.11 spelled this as one chip for the adapter and four numbers.
         # Offered first, so that on a later release the deprecated wrapper
         # (if it still exists) is overridden by the explicit form after it.
         # Unmeasured: no 0.11 build is in the fleet to try it on.
         return (["adapter driver linuxgpiod",
                  "catch {linuxgpiod_gpiochip %d}" % chip,
-                 "catch {linuxgpiod_jtag_nums %d %d %d %d}" % tuple(p for _s, p in pins)]
+                 "catch {linuxgpiod_jtag_nums %d %d %d %d}" % tuple(
+                     p for _s, p in pin_pairs)]
                 + ["catch {adapter gpio %s -chip %d %d}" % (sig, chip, pin)
-                   for sig, pin in pins]
+                   for sig, pin in pin_pairs]
                 + ["adapter speed 1000"])
     if pi5:
         return None           # RP1 header, and this openocd has no linuxgpiod
+    nums = harness_nums(pins) if pins else None
     return ["interface bcm2835gpio",
             "bcm2835gpio_peripheral_base %s" % peripheral_base(),
             "bcm2835gpio_speed_coeffs 146203 36",
             "bcm2835gpio_jtag_nums %d %d %d %d" % (
-                HARNESS_TCK, HARNESS_TMS, HARNESS_TDI, HARNESS_TDO),
+                nums or (HARNESS_TCK, HARNESS_TMS, HARNESS_TDI, HARNESS_TDO)),
             "bcm2835gpio_srst_num %d" % HARNESS_SRST,
             "adapter_khz 1000"]
 
 
-def openocd_probe(digilent_serial=None):
+def openocd_probe(digilent_serial=None, pins=None):
     """idcode and Device DNA over openocd, on either cable.
 
     The fallback for a host that cannot have openFPGALoader: Raspbian 9
@@ -473,7 +495,7 @@ def openocd_probe(digilent_serial=None):
     """
     if not sh(["which", "openocd"]):
         return None
-    adapter = openocd_adapter(digilent_serial)
+    adapter = openocd_adapter(digilent_serial, pins)
     if adapter is None:
         return None
     cmds = adapter + [
@@ -500,6 +522,8 @@ def openocd_probe(digilent_serial=None):
     # harness that reaches a NeTV2, so it has to say which one this was.
     res = {"idcode": m.group(1), "tool": "openocd", "dna": None,
            "cable": "digilent" if digilent_serial else "gpio"}
+    if not digilent_serial:
+        res["pins"] = pins or HARNESS_PINS
     m = re.search(r"RAWDNA=([0-9a-fA-F]+)", out)
     if m:
         raw = int(m.group(1), 16)
@@ -517,14 +541,14 @@ def digilent_cables():
             if f["id"] == "0403:6010" and (f["manufacturer"] or "").startswith("Digilent")]
 
 
-def jtag_probe(want_flash=False):
+def jtag_probe(want_flash=False, pins=None):
     """openFPGALoader over whichever cable this host has, else openocd.
     Returns the idcode line when a chain answers."""
     cables = digilent_cables()
     if not sh(["which", "openFPGALoader"]):
         # openocd drives the Digilent FT2232 as well as the GPIO harness, so
         # the fallback covers an Arty too, not just a NeTV2.
-        ocd = openocd_probe(cables[0]["serial"] if cables else None)
+        ocd = openocd_probe(cables[0]["serial"] if cables else None, pins)
         if ocd is not None:
             return ocd
         return {"error": "openFPGALoader not installed"}
@@ -532,7 +556,8 @@ def jtag_probe(want_flash=False):
     if digilent:
         harness = ["sudo", "openFPGALoader", "-c", "digilent"]
     else:
-        harness = ["sudo", "openFPGALoader", "-c", "libgpiod", "--pins=" + HARNESS_PINS]
+        harness = ["sudo", "openFPGALoader", "-c", "libgpiod",
+                   "--pins=" + (pins or HARNESS_PINS)]
     # stderr as well: that is where openFPGALoader says why it failed, and
     # without it a build missing its GPIO backend recorded raw "" and the
     # board simply vanished from the verdict.
@@ -541,7 +566,7 @@ def jtag_probe(want_flash=False):
     if not m:
         # Installed is not the same as able. Try openocd before giving up, and
         # keep both tools' last words, so a chain neither can read says why.
-        ocd = openocd_probe(cables[0]["serial"] if cables else None)
+        ocd = openocd_probe(cables[0]["serial"] if cables else None, pins)
         if ocd is not None and ocd.get("idcode"):
             return ocd
         res = {"idcode": None, "raw": det[-200:]}
@@ -556,6 +581,8 @@ def jtag_probe(want_flash=False):
     m = re.search(r'"dna":\s*"(0x[0-9a-f]+)"', dna)
     res["dna"] = m.group(1) if m else None
     res["cable"] = "digilent" if digilent else "gpio"
+    if not digilent:
+        res["pins"] = pins or HARNESS_PINS
     if want_flash and digilent:
         # the board profile supplies the part; the bridge replaces the design
         # by number with the revision nibble masked, as labels.idcode_part
@@ -996,9 +1023,20 @@ def fpga_verdict(d):
             boards.append({"kind": "netv2", "slot": pc["slot"],
                            "how": "PCIe 10ee:7024, one 1 MiB BAR (LitePCIe NeTV2 gateware)"})
         elif pc["id"] in ("1e24:021f", "10ee:7011") and sizes == [128 << 10, 64 << 10]:
+            # 10ee:7011 is not "the Acorn with a default Xilinx id": it is RHS
+            # Research's XDMA sample image, which says what is loaded and not
+            # what it is loaded on (measured by the Acorn deployment, ps1
+            # 2026-09-20). Kept because on this fleet it has only ever been
+            # seen on an Acorn, but named for what it is.
             boards.append({"kind": "acorn", "slot": pc["slot"],
-                           "how": "PCIe %s, 128 KiB + 64 KiB BARs (SQRL Acorn CLE-215+%s)" % (
-                               pc["id"], "" if pc["id"] == "1e24:021f" else ", default Xilinx id")})
+                           "how": "PCIe %s, 128 KiB + 64 KiB BARs (%s)" % (
+                               pc["id"], "SQRL Acorn CLE-215+" if pc["id"] == "1e24:021f"
+                               else "RHS Research XDMA sample image")})
+        elif pc["id"] == "1e24:0101":
+            # SQRL's own vendor id, so this one does identify the card: the
+            # CLE-101, sold as the LiteFury. pi14 and pi16 answer with it.
+            boards.append({"kind": "acorn", "slot": pc["slot"],
+                           "how": "PCIe 1e24:0101 (SQRL Acorn CLE-101 / LiteFury)"})
         elif is_pcileech_pcie(pc):
             # Checked before the Xilinx catch-all below, which is what named
             # it "unknown-fpga". The FT601 is reported when present but not
@@ -1054,6 +1092,17 @@ def fpga_verdict(d):
         # the harness, so a chain beside an Arty stays "jtag".
         netv2 = [b for b in boards if b["kind"] == "netv2"]
         arty = [b for b in boards if b["kind"] == "arty"]
+        # A chain read over a harness that is not the NeTV2's cannot be a
+        # NeTV2: Acorns are on harnesses of their own (10:9:11:8 on a Pi 5,
+        # 2:3:4:14 on a Compute Blade), and assuming otherwise put a
+        # netv2-<word> name on an Acorn CLE-215+ on pi-sw2-p48 (2026-09-21).
+        own_harness = j.get("cable") != "digilent" and j.get("pins") not in (
+            None, HARNESS_PINS)
+        # One card, one label: a chain read beside a PCIe endpoint that has no
+        # idcode yet is that endpoint's, not a second board.
+        unclaimed = [b for b in boards
+                     if b["kind"] in ("unknown-fpga", "acorn", "pcileech")
+                     and not b.get("idcode")]
         if netv2:
             netv2[0].update(idcode=j["idcode"], dna=j.get("dna"),
                             how=netv2[0]["how"] + "; " + entry["how"])
@@ -1062,8 +1111,11 @@ def fpga_verdict(d):
                            how=arty[0]["how"] + "; " + entry["how"])
             if j.get("flash_jedec"):
                 arty[0].update(flash_jedec=j["flash_jedec"], flash=j.get("flash"))
+        elif own_harness and unclaimed:
+            unclaimed[0].update(idcode=j["idcode"], dna=j.get("dna"),
+                                how=unclaimed[0]["how"] + "; " + entry["how"])
         else:
-            if not arty:
+            if not arty and not own_harness:
                 entry["kind"] = "netv2"
             boards.append(entry)
     return boards
@@ -1083,11 +1135,11 @@ def fpga_summary(boards):
     return out
 
 
-def collect_fpga(jtag=False, flash=False, force_offline=False):
+def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None):
     # A Cynthion is read from its descriptors alone, so it is collected
     # unconditionally: unlike every other board here, nothing is sent to it.
     f = {"pcie": pcie_devices(), "ftdi": ftdi_devices(), "cynthion": cynthion_devices()}
-    f["jtag"] = jtag_probe(flash) if jtag else None
+    f["jtag"] = jtag_probe(flash, pins) if jtag else None
     # The gateware is asked only when the PCIe edge has already shown its
     # signature and an FT601 is present: sending register reads into some
     # other device's FT601 would be writing into whatever that device is.
@@ -1131,8 +1183,12 @@ def main():
         print("cynthion: %s" % ("back in gateware mode" if res.get("restored")
                                 else res.get("error") or "did not come back"))
         return
+    pins = None
+    for arg in sys.argv[1:]:
+        if arg.startswith("--pins="):
+            pins = arg.split("=", 1)[1]
     f = collect_fpga("--jtag" in sys.argv, "--flash" in sys.argv,
-                     "--force-offline" in sys.argv)
+                     "--force-offline" in sys.argv, pins)
     if "--json" in sys.argv:
         print(json.dumps(f, indent=1))
         return

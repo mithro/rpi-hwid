@@ -487,7 +487,7 @@ def test_openocd_reads_the_chain_when_openfpgaloader_is_installed_but_cannot(
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
                         "/usr/bin/openFPGALoader" if args[:1] == ["which"] else "")
     monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "error : libgpiod not found")
-    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None: {
+    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None, pins=None: {
         "idcode": "0x0362d093", "tool": "openocd", "dna": "0x0038a44663258854", "cable": "gpio"})
     res = fpga.jtag_probe()
     assert res["tool"] == "openocd"
@@ -528,7 +528,7 @@ def test_a_chain_neither_tool_can_read_says_why_twice(fake_root, monkeypatch):
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
                         "/usr/bin/openFPGALoader" if args[:1] == ["which"] else "")
     monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "error : libgpiod not found")
-    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None: {
+    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None, pins=None: {
         "idcode": None, "tool": "openocd", "raw": "scan chain interrogation failed: all zeroes"})
     res = fpga.jtag_probe()
     assert res["idcode"] is None

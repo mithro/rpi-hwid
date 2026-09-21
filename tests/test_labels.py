@@ -80,7 +80,9 @@ def test_listing_titles_carry_the_identifier_on_the_label(docs):
     rows = {k: t for _h, k, t, _d, _r in labels.all_labels(docs, {"fpga"})}
     assert rows["netv2"] == "netv2-grove 0x00742c4e63b9085c"
     assert rows["arty"].startswith("arty-hawk ")
-    assert rows["acorn"] == "Acorn CLE-215+"          # nothing to identify it by
+    # pi-sw2-p48's Acorn, keyed on the DNA its chain gave up. Its PCIe id is
+    # its gateware's, so the model comes out "FPGA" and the die names the part.
+    assert rows["unknown-fpga"] == "FPGA 0x0054b48664b04854"
 
 
 def test_a_pcileech_board_gets_a_model_but_no_invented_maker_or_name():
@@ -104,9 +106,12 @@ def test_a_pcileech_board_shows_its_gateware_as_numbers_not_a_board_name(tmp_pat
     docs = {"pi-sw1-p38": doc}
     (rec,) = labels.fpga_records(docs)
     assert rec.gateware == "gateware v4.14  ·  FPGA id 9"
-    (row,) = [t for _h, k, t, _d, _r in labels.all_labels(docs, {"fpga"}) if k == "pcileech"]
-    assert row == "PCILeech FPGA gateware v4.14, FPGA id 9"
-    labels.render(docs, tmp_path / "pcileech.pdf", only={"fpga"})    # and it draws
+    # ...but a board with no identifier still may not be labelled. pcileech
+    # gateware carries none -- its FT601 answers the part's default serial,
+    # shared by every unit -- so the sticker would say nothing about which
+    # board it is stuck to.
+    with pytest.raises(labels.IdentifierNotReadError, match="--jtag"):
+        list(labels.all_labels(docs, {"fpga"}))
 
 
 def test_a_cynthion_is_keyed_on_its_flash_uid_and_says_so(docs, tmp_path):
@@ -148,8 +153,67 @@ def test_the_other_boards_still_say_device_dna(docs):
     recs = {r.kind: r for r in labels.fpga_records(docs)}
     assert recs["netv2"].ident == "0x00742c4e63b9085c"
     assert recs["netv2"].ident_caption == "Device DNA"
-    assert recs["acorn"].ident is None       # nothing read it; the rule is drawn
-    assert recs["acorn"].ident_caption == "Device DNA"
+    assert recs["unknown-fpga"].ident == "0x0054b48664b04854"
+    assert recs["unknown-fpga"].ident_caption == "Device DNA"
+    assert recs["unknown-fpga"].part == "XC7A200T"
+
+
+def test_nothing_on_any_fpga_label_says_it_was_not_read(docs, tmp_path, monkeypatch):
+    """A row that says "not read" is the placeholder this package exists to
+    avoid. A fact that was not read is left off the label rather than
+    announced on it -- the Arty's flash row said "flash not read" on a board
+    whose flash simply had not been asked for."""
+    # pi3 on ps1, read 2026-09-21 with --jtag and not --flash, so its flash
+    # part is simply not among the things that were read.
+    bare_arty = ProbeDocument.from_dict("pi3", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
+        "power_class": "usbc-supply",
+        "fpga": [{"kind": "arty", "serial": "210319A43AD3",
+                  "dna": "0x0064f5483229085c", "idcode": "0x362d093"}]}}})
+    for kind, where in (("cynthion", docs), ("netv2", docs), ("unknown-fpga", docs),
+                        ("arty", docs), ("arty", {"pi3": bare_arty})):
+        seen = _drawn_strings(monkeypatch, where, {kind}, tmp_path)
+        assert not [s for s in seen if "not read" in s], kind
+        assert not [s for s in seen if s.endswith("…")], kind
+
+
+def test_a_board_named_only_by_its_die_does_not_say_it_twice(docs, tmp_path,
+                                                             monkeypatch):
+    """With no derived name the headline falls back to the model, and for a
+    board known only by its chain that model is "FPGA" -- which printed
+    "FPGA" as the headline and "FPGA · XC7A200T" under it."""
+    seen = _drawn_strings(monkeypatch, docs, {"unknown-fpga"}, tmp_path)
+    assert "XC7A200T" in seen            # the die is the headline
+    assert "FPGA  ·  XC7A200T" not in seen
+    assert seen.count("FPGA") <= 1
+
+
+def test_a_board_whose_identifier_was_not_read_is_fatal(tmp_path):
+    """The whole point of the tool is that nobody transcribes hex by hand, so
+    a label with the identifier missing must never be generated. It fails
+    loudly at generation time, which is the last moment the missing read is
+    still cheap to do."""
+    doc = ProbeDocument.from_dict("pi-sw2-p47", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
+        "power_class": "usbc-supply", "fpga": [{"kind": "acorn"}]}}})
+    with pytest.raises(labels.IdentifierNotReadError) as excinfo:
+        list(labels.all_labels({"pi-sw2-p47": doc}, {"fpga"}))
+    message = str(excinfo.value)
+    assert "pi-sw2-p47" in message          # which machine to go to
+    assert "acorn" in message               # which board on it
+    assert "Device DNA" in message          # which identifier is missing
+    assert "--jtag" in message              # and how to read it
+
+
+def test_the_error_names_the_flag_that_reads_each_identifier(tmp_path):
+    """A Cynthion's uid and its TraceID are read by different commands, so
+    being told the wrong one wastes a trip to the rack."""
+    doc = ProbeDocument.from_dict("rpi5-netv2", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
+        "power_class": "usbc-supply",
+        "fpga": [{"kind": "cynthion", "hw_rev": "1.4", "mode": "apollo"}]}}})
+    with pytest.raises(labels.IdentifierNotReadError, match="--force-offline"):
+        list(labels.all_labels({"rpi5-netv2": doc}, {"fpga"}))
 
 
 def test_a_cynthion_in_apollo_mode_is_not_keyed_on_the_wrong_chip(docs):
@@ -219,14 +283,7 @@ def test_nothing_on_a_cynthion_label_is_elided(docs, tmp_path, monkeypatch):
     assert not [s for s in seen if s.endswith("…")]
 
 
-def test_an_unread_cynthion_still_says_what_to_write_in(tmp_path, monkeypatch):
-    doc = ProbeDocument.from_dict("h", {"verdict": {"summary": {
-        "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
-        "power_class": "usbc-supply",
-        "fpga": [{"kind": "cynthion", "hw_rev": "1.4", "mode": "apollo"}]}}})
-    seen = _drawn_strings(monkeypatch, {"h": doc}, {"cynthion"}, tmp_path)
-    assert "ECP5 config flash UID, write it in" in seen
-    assert not [s for s in seen if s.endswith("…")]
+
 
 
 def test_fpga_records_named_and_typed(docs):
@@ -236,8 +293,10 @@ def test_fpga_records_named_and_typed(docs):
     assert recs["arty"].name == "arty-hawk"
     assert recs["arty"].model == "Arty A7-35T"
     assert recs["arty"].flash == "S25FL128S/127S"
-    assert recs["acorn"].name is None
-    assert recs["acorn"].maker == "SQRL"
+    # identified by its chain, not its gateware's PCIe id: no maker can be
+    # claimed from a DNA, and no name is derived from one either
+    assert recs["unknown-fpga"].name is None
+    assert recs["unknown-fpga"].maker == ""
 
 
 def test_tinytapeout_records(docs):
@@ -374,7 +433,8 @@ def test_all_labels_order_and_count(docs):
         ("pi-sw2-p22", "opi"),
         ("pi-sw2-p33", "rpi"), ("pi-sw2-p33", "tt"),
         ("pi-sw2-p37", "rpi"), ("pi-sw2-p37", "usb"),
-        ("pi-sw2-p47", "rpi"), ("pi-sw2-p47", "acorn"),
+        ("pi-sw2-p47", "rpi"),
+        ("pi-sw2-p48", "rpi"), ("pi-sw2-p48", "unknown-fpga"),
         ("rpi4-tt", "rpi"), ("rpi4-tt", "tt"), ("rpi4-tt", "tt"),
         ("rpi5-433mhz", "rpi"), ("rpi5-433mhz", "usb"),
         # this rig carries two FPGA boards, and both come out with it
@@ -519,6 +579,8 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "000000005157f671", "c36b093f773d46b8", "100000003a7e1c9b",
         "02c000812eb7a34e", "1000000085948b10", "10000000613a4524",
         "7070c78090a6d6d8", "00000000110aeed6", "0000000067bdbf54",
+        # pi-sw2-p48, the live Acorn CLE-215+ read 2026-09-21
+        "0cd35697db04a4ab", "88:a2:9e:45:85:77", "0x0054b48664b04854",
     }
     # b8:27:eb:5f:bb:83 is deliberately absent: it is what the Broadcom rule
     # derives from the Model B's serial, and that board has no radio to
