@@ -502,6 +502,78 @@ Done
 """
 
 
+# The literal document openFPGALoader --flash-info-json writes, from pi3's
+# Arty (branch flash-info @3ff3075), with the sfdp detail abbreviated: none
+# of it identifies the part, and the schema promises to bump `version` if a
+# field's meaning changes.
+FLASH_INFO_JSON = {
+    "format": "openFPGALoader-flash-info", "version": 1,
+    "flashes": [{
+        "jedec_id": "0x20ba18", "manufacturer_id": "0x20", "memory_type": "0xba",
+        "capacity": "0x18", "manufacturer": "micron",
+        "manufacturer_jep106": "Micron (ST / Numonyx) or XMC", "part": "N25Q128_3V",
+        "size_bytes": 16777216, "size_source": "database",
+        "unique_id": {"state": "read", "value": "235351451900080037091015126b",
+                      "bits": 112, "opcode": "0x9f"},
+        "sfdp": {"revision": "1.5", "bfpt": {"page_size": 256}},
+    }],
+}
+
+
+def test_the_flash_document_is_preferred_to_the_printed_report():
+    """A file written only on success beats scraping human-oriented text:
+    there is no progress-bar noise in it, and it promises to bump `version`
+    when a field's meaning changes rather than quietly reword a line."""
+    got = fpga.flash_info_from_json(FLASH_INFO_JSON)
+    assert got["jedec"] == "0x20ba18"
+    assert got["manufacturer"] == "micron"
+    assert got["part"] == "N25Q128_3V"
+    assert got["size_bytes"] == 16777216
+    assert got["uid"] == "235351451900080037091015126b"
+    assert got["uid_bits"] == 112
+    assert got["uid_opcode"] == "0x9f"
+    assert got["uid_state"] == "read"
+
+
+@pytest.mark.parametrize("doc", [
+    {},                                                    # no document at all
+    {"format": "something-else", "version": 1, "flashes": [{}]},
+    # a version this code has not been taught: the schema says a bump means a
+    # field changed meaning, so guessing at it is worse than reading nothing
+    {"format": "openFPGALoader-flash-info", "version": 2, "flashes": [{}]},
+    {"format": "openFPGALoader-flash-info", "version": 1, "flashes": []},
+])
+def test_a_flash_document_this_code_does_not_understand_is_not_guessed_at(doc):
+    assert fpga.flash_info_from_json(doc) == {}
+
+
+def test_the_three_unique_id_states_in_the_document():
+    """`none` means the part has no known UID command, and only that: since
+    openFPGALoader 9754753 a transfer that actually failed exits non-zero and
+    writes no file, where it used to be reported as "not available" -- which
+    this treats as a closed question and would have stopped anyone looking
+    for a number that was really there."""
+    def state(uid):
+        doc = json.loads(json.dumps(FLASH_INFO_JSON))
+        doc["flashes"][0]["unique_id"] = uid
+        return fpga.flash_info_from_json(doc)
+
+    blank = state({"state": "blank", "value": None, "bits": 128, "opcode": "0x4b"})
+    assert (blank["uid_state"], blank["uid"], blank["uid_bits"]) == ("blank", None, 128)
+    none = state({"state": "none", "value": None, "bits": None, "opcode": None})
+    assert (none["uid_state"], none["uid"]) == ("none", None)
+
+
+def test_a_part_absent_from_the_database_is_null_not_a_word():
+    doc = json.loads(json.dumps(FLASH_INFO_JSON))
+    doc["flashes"][0].update(manufacturer=None, part=None, size_bytes=None,
+                             size_source="jedec_capacity")
+    got = fpga.flash_info_from_json(doc)
+    assert got["manufacturer"] is None
+    assert got["part"] is None
+    assert got["jedec"] == "0x20ba18"      # the id is still the id
+
+
 def test_flash_info_is_read_from_the_report_and_not_the_older_lines():
     got = fpga.flash_info_parse(0, FLASH_INFO)
     assert got["jedec"] == "0x20ba18"

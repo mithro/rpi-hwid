@@ -73,6 +73,7 @@ import re
 import struct
 import subprocess
 import sys
+import tempfile
 
 # Prefix for every absolute path read; the tests point it at a fake tree.
 ROOT = ""
@@ -790,6 +791,51 @@ def flash_info_parse(returncode, out):
     return res
 
 
+# openFPGALoader can also write the same facts as a document, which is the
+# better of the two paths and the one tried first. `--flash-info-json FILE`
+# deletes FILE at startup and writes it, through a .tmp and a rename, only
+# when every flash access succeeded -- so exit 0 plus the file existing means
+# the flash was really read, with no stdout to scrape and no progress bars or
+# status-register noise to step around. It also promises to bump `version`
+# when a field changes meaning, which the printed report cannot.
+FLASH_JSON_FORMAT = "openFPGALoader-flash-info"
+FLASH_JSON_VERSION = 1
+
+
+def flash_info_from_json(doc):
+    """The identity fields of a flash document, or {} if it is not one.
+
+    A document whose version this code has not been taught is refused rather
+    than read hopefully: the schema says a bump means a field changed
+    meaning, so a hopeful read is how a wrong number reaches a sticker.
+    """
+    if not isinstance(doc, dict) or doc.get("format") != FLASH_JSON_FORMAT:
+        return {}
+    if doc.get("version") != FLASH_JSON_VERSION:
+        return {}
+    flashes = doc.get("flashes") or []
+    if not flashes or not isinstance(flashes[0], dict):
+        return {}
+    f = flashes[0]
+    if not f.get("jedec_id"):
+        return {}
+    uid = f.get("unique_id") or {}
+    return {"jedec": f["jedec_id"],
+            "manufacturer": f.get("manufacturer"),
+            "part": f.get("part"),
+            "size_bytes": f.get("size_bytes"),
+            # `none` means this part has no known unique-id command, and since
+            # openFPGALoader 9754753 only that: a transfer that failed now
+            # exits non-zero and writes no file, where it used to be reported
+            # as "not available" -- which is read here as a closed question
+            # and would have stopped anyone looking for a number that was
+            # really there.
+            "uid": uid.get("value"),
+            "uid_bits": uid.get("bits"),
+            "uid_opcode": uid.get("opcode"),
+            "uid_state": uid.get("state")}
+
+
 def flash_info_probe(harness, board=None):
     """openFPGALoader's flash report over `harness`, or {}.
 
@@ -800,8 +846,35 @@ def flash_info_probe(harness, board=None):
     argv = list(harness)
     if board:
         argv += ["-b", board]
-    rc, out = sh_rc(argv + ["--flash-info"], timeout=180)
-    return flash_info_parse(rc, out)
+    # The document first. Its existence after a zero exit is the whole test:
+    # the tool removes it at startup and only renames it into place once every
+    # flash access has succeeded, so there is nothing to interpret.
+    workdir = tempfile.mkdtemp(prefix="rpi-hwid-flash-")
+    path = os.path.join(workdir, "flash.json")
+    try:
+        rc, out = sh_rc(argv + ["--flash-info-json", path], timeout=180)
+        if rc == 0 and os.path.exists(path):
+            try:
+                with open(path) as handle:
+                    info = flash_info_from_json(json.load(handle))
+            except (OSError, ValueError):
+                info = {}
+            if info:
+                return info
+        # No document: an older build with no such flag, or a read that did
+        # not happen. The printed report is tried next, and it applies the
+        # same "exited 0 and printed its header" test.
+        return flash_info_parse(*sh_rc(argv + ["--flash-info"], timeout=180))
+    finally:
+        for leftover in glob.glob(os.path.join(workdir, "*")):
+            try:
+                os.unlink(leftover)
+            except OSError:
+                pass
+        try:
+            os.rmdir(workdir)
+        except OSError:
+            pass
 
 
 def digilent_cables():
