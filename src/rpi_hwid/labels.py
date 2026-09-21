@@ -981,15 +981,36 @@ JEDEC_PART = {
 }
 
 
+# How each part gives up its unique id -- which is a property of the part and
+# not one command. 0x4B is Read Unique ID on a Winbond (four dummy bytes, 64
+# bits) and an OTP read taking a three-byte address on a Spansion, whose
+# factory 128-bit random number lives in the low 16 bytes of OTP region 0. A
+# Micron N25Q carries 112 bits in the extended reply to 0x9F. And a Macronix
+# MX25L has no such command at all, which is why a blank beside one is the
+# answer rather than a gap: measured on both NeTV2s, 2026-09-21.
+FLASH_UID_METHOD = {
+    0x01: "otp",            # Spansion / Cypress / Infineon
+    0x20: "read-uid",       # Micron, in the extended 0x9F reply
+    0xC2: None,             # Macronix: no factory unique-ID command exists
+    0xEF: "read-uid",       # Winbond, 0x4B
+}
+
+
 def flash_from_jedec(jedec):
     """Vendor, part and density from a JEDEC id, as far as each is known."""
-    out = {"vendor": None, "part": None, "size": None, "jedec": None}
+    out = {"vendor": None, "part": None, "size": None, "jedec": None,
+           # "unknown" until a part is met: distinct from None, which is this
+           # part having no unique id to read at all
+           "uid_read_with": "unknown"}
     try:
         value = int(jedec, 16)
     except (TypeError, ValueError):
         return out
     if not value:
         return out
+    manufacturer = value >> 16
+    if manufacturer in FLASH_UID_METHOD:
+        out["uid_read_with"] = FLASH_UID_METHOD[manufacturer]
     out["jedec"] = "0x%06x" % value
     out["vendor"] = JEDEC_VENDOR.get(value >> 16)
     out["part"] = JEDEC_PART.get(value)

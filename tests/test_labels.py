@@ -197,6 +197,24 @@ def test_a_jedec_id_gives_the_vendor_the_part_and_the_density(jedec, vendor, par
     assert (got["vendor"], got["part"], got["size"]) == (vendor, part, size)
 
 
+@pytest.mark.parametrize(("jedec", "how"), [
+    # measured on the fleet 2026-09-21, each read twice and identical
+    ("0x20ba18", "read-uid"),    # Micron N25Q128, 112 bits in the extended 0x9F
+    ("0x010219", "otp"),         # Spansion S25FL256S, 128-bit factory number in OTP
+    ("0x012018", "otp"),         # S25FL128S/127S, the same mechanism
+    ("0xef4018", "read-uid"),    # Winbond W25Q, 64 bits via 0x4B
+    ("0xc22017", None),          # Macronix on both NeTV2s: there is no such command
+    ("0xabcdef", "unknown"),     # a part nobody here has met
+])
+def test_how_a_flash_unique_id_is_read_is_a_property_of_the_part(jedec, how):
+    """Silence about a flash uid means two different things: not read yet, or
+    no such thing to read. A Macronix part has no factory unique-ID command
+    at all, so a blank there is the answer and not a gap -- and 0x4B is not
+    one instruction either (Read Unique ID on a Winbond, OTP read with a
+    three-byte address on a Spansion), so the method has to be per part."""
+    assert labels.flash_from_jedec(jedec)["uid_read_with"] == how
+
+
 def test_every_fpga_label_renders_its_flash_the_same_way(docs, tmp_path, monkeypatch):
     """One flash block, in one place, on every FPGA label that has flash
     facts -- and absent, not placeholdered, on the ones that do not."""
