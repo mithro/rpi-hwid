@@ -49,7 +49,7 @@ sheet 1 row 1 col 1  pi-sw2-p16     rpi    Pi 4 Model B 2 GB 10000000ce8e3593
 sheet 1 row 1 col 2  pi-sw2-p16     arty   arty-hawk
 sheet 1 row 1 col 3  pi-sw2-p22     opi    Orange Pi PC 1 GB 02c000812eb7a34e
 sheet 1 row 2 col 1  pi-sw2-p47     rpi    Pi 5 1 GB c36b093f773d46b8
-sheet 1 row 2 col 2  pi-sw2-p47     acorn  Acorn CLE-215+
+sheet 1 row 2 col 2  pi-sw2-p48     unknown-fpga  FPGA 0x0054b48664b04854
 sheet 1 row 2 col 3  rpi4-tt        rpi    Pi 4 Model B 4 GB 100000003a7e1c9b
 sheet 1 row 3 col 1  rpi4-tt        tt     TT06 E6614C311B7A7A37
 sheet 1 row 3 col 2  rpi4-tt        tt     TTGF0p2 E66360B8A3C1D5F2
@@ -132,9 +132,17 @@ up the spine as on a Pi.
 
 The maker and the derived name, the die, and the immutable identifier full width
 with a QR: Device DNA where read, the Digilent serial and flash part on an Arty,
-and a line to write the DNA on when it has not been read yet. The foot names
-what it is printing, because not every board has a Device DNA — an ECP5 has
-none, so a Cynthion is keyed on its configuration flash's uid and says so.
+The foot names what it is printing, because not every board has a Device DNA
+— an ECP5 has none, so a Cynthion is keyed on its configuration flash's uid
+and says so.
+
+**A board whose identifier was never read gets no label at all.** It is a
+fatal error naming the host, the board, the identifier and the command that
+would read it. There is no "not read" on a sticker and no rule to write a DNA
+on by hand: this package exists so that nobody transcribes hex, and a label
+with a blank on it still gets printed, peeled and stuck to a board. A fact
+that is not an identifier and was not read — an Arty's flash part, say — is
+simply left off rather than announced.
 
 Nothing a reflash could change appears on any of them. Which gateware a
 Cynthion is running settles whether its USB serial may be trusted as the flash
@@ -143,7 +151,7 @@ uid, and then stays in the probe document where it belongs.
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png" alt="NeTV2" width="32%">
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/arty.png" alt="Arty A7-35T" width="32%">
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png" alt="Acorn CLE-215+, DNA not yet read" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png" alt="An Acorn CLE-215+ named by its die, keyed on its Device DNA" width="32%">
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/cynthion.png" alt="Cynthion r1.4, keyed on its ECP5 configuration flash uid with the die's TraceID above it" width="32%">
 </p>
 

@@ -80,12 +80,12 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 <tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png" alt="NeTV2" width="180"></td>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/arty.png" alt="Arty A7-35T" width="180"></td>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png" alt="Acorn CLE-215+; the die was not read, so the label has a line to write the Device DNA on" width="180"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png" alt="An Acorn CLE-215+ running gateware that hides its PCIe id, so it is named by its die and keyed on its Device DNA" width="180"></td>
 </tr>
 <tr>
 <td>NeTV2, carrying the<br>Device DNA and the<br>name derived from it</td>
 <td>Arty A7-35T, with<br>its Digilent serial<br>and flash part</td>
-<td>Acorn CLE-215+;<br>the die was not read,<br>so the DNA gets a<br>line to write it on</td>
+<td>An Acorn CLE-215+<br>under gateware that<br>hides its PCIe id:<br>named by its die</td>
 </tr>
 <tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/cynthion.png" alt="Cynthion r1.4; an ECP5 board, keyed on its configuration flash UID with the die's own TraceID above it" width="180"></td>
