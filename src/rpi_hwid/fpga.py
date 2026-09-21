@@ -833,7 +833,11 @@ def flash_info_from_json(doc):
             "uid": uid.get("value"),
             "uid_bits": uid.get("bits"),
             "uid_opcode": uid.get("opcode"),
-            "uid_state": uid.get("state")}
+            "uid_state": uid.get("state"),
+            # why, where the part says so: a Macronix reports whether a
+            # factory ESN was ever programmed, which turns "none" from an
+            # assumption about the vendor into a measurement of the chip
+            "uid_note": uid.get("note")}
 
 
 def flash_info_probe(harness, board=None):

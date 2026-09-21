@@ -547,6 +547,22 @@ def test_a_flash_document_this_code_does_not_understand_is_not_guessed_at(doc):
     assert fpga.flash_info_from_json(doc) == {}
 
 
+def test_a_reason_is_kept_when_a_flash_says_it_has_no_unique_id():
+    """Macronix reports *why*: its security register says whether a factory
+    ESN was ever programmed. Both NeTV2s read 0x00, which proves "none" for
+    those chips instead of assuming it from the vendor, so the reason is
+    worth keeping beside the answer."""
+    doc = json.loads(json.dumps(FLASH_INFO_JSON))
+    doc["flashes"][0]["unique_id"] = {
+        "state": "none", "value": None, "bits": None, "opcode": None,
+        "note": "no factory ESN: security register 0x00, bit 0 (factory lock) = 0"}
+    got = fpga.flash_info_from_json(doc)
+    assert got["uid_state"] == "none"
+    assert "factory lock" in got["uid_note"]
+    # nothing to say is not an empty string
+    assert fpga.flash_info_from_json(FLASH_INFO_JSON)["uid_note"] is None
+
+
 def test_the_three_unique_id_states_in_the_document():
     """`none` means the part has no known UID command, and only that: since
     openFPGALoader 9754753 a transfer that actually failed exits non-zero and

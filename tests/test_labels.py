@@ -182,7 +182,7 @@ def test_the_smaller_acorn_is_the_cle_101(docs):
 
 @pytest.mark.parametrize(("jedec", "vendor", "part", "size"), [
     # the Arty's, measured; one JEDEC id, two parts with the same density
-    ("0x012018", "Spansion", "S25FL128S/127S", "16 MiB"),
+    ("0x012018", "Spansion", "S25FL128S/S25FL127S", "16 MiB"),
     # pi-sw2-p48's Acorn, RDID 01 02 19 read by the Acorn deployment
     ("0x010219", "Spansion", "S25FL256S", "32 MiB"),
     ("0xef4018", "Winbond", "W25Q128", "16 MiB"),
@@ -201,9 +201,11 @@ def test_a_jedec_id_gives_the_vendor_the_part_and_the_density(jedec, vendor, par
     # measured on the fleet 2026-09-21, each read twice and identical
     ("0x20ba18", "read-uid"),    # Micron N25Q128, 112 bits in the extended 0x9F
     ("0x010219", "otp"),         # Spansion S25FL256S, 128-bit factory number in OTP
-    ("0x012018", "otp"),         # S25FL128S/127S, the same mechanism
+    ("0x012018", "otp"),         # S25FL128S/S25FL127S, the same mechanism
     ("0xef4018", "read-uid"),    # Winbond W25Q, 64 bits via 0x4B
-    ("0xc22017", None),          # Macronix on both NeTV2s: there is no such command
+    # Macronix: a factory ESN exists only on a factory-locked part, and both
+    # NeTV2s read security register 0x00, so theirs have none
+    ("0xc22017", "otp-if-factory-locked"),
     ("0xabcdef", "unknown"),     # a part nobody here has met
 ])
 def test_how_a_flash_unique_id_is_read_is_a_property_of_the_part(jedec, how):
@@ -219,7 +221,7 @@ def test_every_fpga_label_renders_its_flash_the_same_way(docs, tmp_path, monkeyp
     """One flash block, in one place, on every FPGA label that has flash
     facts -- and absent, not placeholdered, on the ones that do not."""
     seen = _drawn_strings(monkeypatch, docs, {"arty"}, tmp_path)
-    assert "Spansion S25FL128S/127S  ·  16 MiB" in seen
+    assert "Spansion S25FL128S/S25FL127S  ·  16 MiB" in seen
     assert "flash" in seen
     # a Cynthion's configuration flash: its uid is free over USB, its JEDEC
     # id is not read at all, so the block carries the row it has and no other
@@ -380,7 +382,7 @@ def test_fpga_records_named_and_typed(docs):
     assert recs["netv2"].part == "XC7A100T"
     assert recs["arty"].name == "arty-hawk"
     assert recs["arty"].model == "Arty A7-35T"
-    assert recs["arty"].flash == "Spansion S25FL128S/127S  ·  16 MiB"
+    assert recs["arty"].flash == "Spansion S25FL128S/S25FL127S  ·  16 MiB"
     assert recs["acorn"].maker == "SQRL"
 
 

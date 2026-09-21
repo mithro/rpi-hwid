@@ -497,7 +497,7 @@ def draw_fpga(lab, board):
     its Digilent serial and flash part. Bottom, full width: the DNA, or a
     rule to write it on when nobody has read it yet."""
     dna_size = 15
-    dna_h = 6 * mm
+    dna_h = 5.5 * mm
     # 18 mm rather than 20: the flash block needs the two millimetres more
     # than the code does, and a 25-module symbol is still 0.72 mm a module.
     qr_size = 18 * mm
@@ -539,28 +539,40 @@ def draw_fpga(lab, board):
             lab.fit(x, y, board.gateware, SANS, CAPTION, col_w, color=GREY)
     if board.kind == "arty":
         # the serial is a board-printed identifier: its own row, larger
-        y += 3.8 * mm
-        lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 10, col_w - 6 * mm)
+        # 9 pt on a tighter pitch than it used to have: an Arty is the only
+        # board carrying a serial, a flash line and a flash uid at once, and
+        # that stack is what decides how much room the foot has left.
+        y += 3.0 * mm
+        lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 9, col_w - 6 * mm)
 
 
     # The flash block: the same two rows, in the same place, on every FPGA
     # label that has them. Every board here has a configuration flash; what
     # differs is only how much of it could be read, and a fact that was not
     # read is left off rather than announced.
-    # One row, caption inline, the value taking whatever the caption leaves.
-    # "Spansion S25FL128S/127S  ·  16 MiB" is long for this column, so it is
-    # allowed to shrink further than the rest of the label rather than be
-    # elided -- cut, it loses the density, which is the one part of the line
-    # that cannot be guessed from the part number.
-    if board.flash:
-        y += 3.4 * mm
-        lab.text(x, y + 0.2 * mm, "flash", SANS, CAPTION, color=GREY)
-        fx = x + lab.width("flash", SANS, CAPTION) + 1 * mm
-        lab.fit(fx, y, board.flash, SANS, 7, col_w - (fx - x), min_size=5)
-    if board.flash_uid:
-        y += 3.2 * mm
-        lab.captioned(x, x + 5 * mm, y, "uid", board.flash_uid, MONO_REGULAR, 7,
-                      col_w - 5 * mm, min_size=5)
+    # The flash block sits below both columns and spans the whole label,
+    # rather than being squeezed into the right one. "Spansion
+    # S25FL128S/S25FL127S  ·  16 MiB" does not fit a column the QR has taken
+    # 18 mm from at any size worth printing, and elided it loses the density
+    # -- the one part of the line not guessable from the part number. Below
+    # the QR there is a band the full width of the label doing nothing.
+    if board.flash or board.flash_uid:
+        y = max(y + 2.8 * mm, qr_inset + qr_size + 1.2 * mm)
+        full = LABEL_W - 2 * PAD
+        # keep clear of the flash QR's column at the foot's right end
+        if board.flash_uid or board.flash_jedec:
+            full -= 8.5 * mm
+        cap_w = lab.width("flash", SANS, CAPTION) + 1 * mm
+        if board.flash:
+            lab.text(PAD, y + 0.2 * mm, "flash", SANS, CAPTION, color=GREY)
+            lab.fit(PAD + cap_w, y, board.flash, SANS, 7, full - cap_w, min_size=5)
+            y += 2.4 * mm
+        if board.flash_uid:
+            # mono, like every other identifier here: it is a number someone
+            # may have to read off the sticker and type
+            lab.text(PAD, y + 0.2 * mm, "uid", SANS, CAPTION, color=GREY)
+            lab.fit(PAD + cap_w, y, board.flash_uid, MONO_REGULAR, 7,
+                    full - cap_w, min_size=5)
 
     # The foot always carries a value: a board with none never reaches here,
     # because all_labels refuses it. There used to be a rule to write the
@@ -972,7 +984,11 @@ JEDEC_VENDOR = {
 }
 JEDEC_PART = {
     # S25FL128S and S25FL127S answer the same id: one density, two parts
-    0x012018: "S25FL128S/127S",
+    # one id, two parts: pi9's Arty proved it, answering SFDP 1.6 which the
+    # S25FL128S datasheet has not got and the S25FL127S has. Spelled as
+    # openFPGALoader's own database spells it, so the JEDEC-only path and the
+    # --flash-info path cannot disagree about the same chip.
+    0x012018: "S25FL128S/S25FL127S",
     0x010219: "S25FL256S",
     0xEF4018: "W25Q128",
     # pi3's Arty, measured 2026-09-21; openFPGALoader calls it N25Q128_3V
@@ -991,7 +1007,12 @@ JEDEC_PART = {
 FLASH_UID_METHOD = {
     0x01: "otp",            # Spansion / Cypress / Infineon
     0x20: "read-uid",       # Micron, in the extended 0x9F reply
-    0xC2: None,             # Macronix: no factory unique-ID command exists
+    # Macronix: a factory ESN exists only where one was ordered. The part
+    # reports it in its security register (RDSCUR 0x2B, bit 0, factory lock),
+    # and both NeTV2s read 0x00 -- so theirs have none, which is measured
+    # rather than assumed from the vendor. Macronix AN0218 makes a factory
+    # ESN "Special Order" only.
+    0xC2: "otp-if-factory-locked",
     0xEF: "read-uid",       # Winbond, 0x4B
 }
 
