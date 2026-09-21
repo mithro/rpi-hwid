@@ -149,6 +149,39 @@ loudly, along with the recovery (`apollo reconfigure`, or a power cycle).
 `QUIRK_FLIP_BITS_IN_WHOLE_BYTES` from `GET_INFO` is honoured; the ECP5's IR is
 8 bits at every call site in `apollo_fpga/ecp5.py`.
 
+### What the hardware corrected, once it was run (2026-09-21)
+
+Three things this design got wrong on paper, each found by running it on
+rpi5-netv2 and none of them visible from upstream source alone.
+
+- **`REQUEST_JTAG_GET_INFO` stalls on this firmware.** apollo's own
+  `JTAGChain.__enter__` wraps that very call in `except IOError: pass`; the
+  call was ported and the tolerance was not, and the first run died on it.
+  A stall there means "no quirks reported", not a failure.
+- **An IR scan must set the `advance_state` flag.** apollo's `_scan_data` sets
+  it on the last chunk of a write (`advance_state = not bool(bits_to_scan)`)
+  and its `_receive_data` never sets it at all, so the asymmetry is easy to
+  miss. It is TMS on the final clock: without it the shift state is never
+  left, `UIDCODE_PUB` is never latched, and the DR read returned 64 zero bits
+  — which the all-ones/all-zeroes guard correctly refused to name a board
+  from, so the bug surfaced as "no TraceID" rather than as a wrong one.
+- **The chain returns its bytes least significant first.** Settled by a known
+  answer rather than by guessing: with nothing shifted into the IR, a TAP
+  reset leaves the IDCODE in the DR, and the board returned `43101121` —
+  `0x21111043`, the LFE5U-12F a Cynthion r1.4 carries, reversed. Byte order
+  is the one thing here that upstream source could not have settled, and
+  getting it wrong would have minted a permanently wrong identifier.
+
+Measured result: TraceID `0x1b808604604e0e` (its user byte is `0x00`, the
+stock gateware having set no `TRACE_ID_BINARY`), flash uid
+`267125df30c460de`, analyzer restored.
+
+The restore held throughout, including on the run that threw: it is in a
+`finally`, so the board reconfigured and came back on its own and only the
+reporting was lost. That is why `RESTORED=` is now printed after the
+`finally` rather than inside the read, and why a failed read still reports
+whether the rig came back.
+
 ## Naming
 
 `cynthion_name(flash_uid)` — a pure function of the flash UID, like
@@ -172,10 +205,17 @@ Cynthion gets the flash UID under `ECP5 config flash UID`. The TraceID, when
 read, takes a captioned body row like the Arty's `S/N`. The QR stays keyed on
 `dna or serial`, which is already the flash UID.
 
-`BOARD_MODEL` gains `("Great Scott Gadgets", "Cynthion")`; `mark_maker()`
-gains the shipped GSG mark, and its type fallback changes from `lab.text` to
-`lab.fit` — at present a maker name wider than the column runs off the label,
-which bites SQRL too.
+`BOARD_MODEL` gains `("Great Scott Gadgets", "Cynthion")` and `mark_maker()`
+the shipped GSG mark, at the Digilent triangle's 6 mm rather than the
+wordmarks' 5 mm: a compact mark scaled to a wordmark's height reads as half
+the size beside it.
+
+A separate defect the first render exposed: the foot's write-it-in prompt was
+fitted to the QR's width, which `"Device DNA, write it in"` just fits and
+nothing longer does, so a Cynthion's came out `"ECP5 config flash UI…"` — a
+caption that reads as a typo, on the one label whose whole point is the
+instruction. The caption is a band of its own above the rule and now has the
+full inked width.
 
 `--only` learns to accept an FPGA sub-kind (`cynthion`, `netv2`, …) alongside
 the five existing kinds, so one board's sticker can be generated alone.

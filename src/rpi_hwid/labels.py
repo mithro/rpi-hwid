@@ -12,9 +12,11 @@ print.
 Every label carries only what cannot change: a Pi's revision code, serial
 and soldered-down MACs and the HAT it wears; an Orange Pi's SoC serial,
 MAC, SoC and device-tree id; an FPGA board's DNA or Digilent serial and the
-name derived from it; a USB adapter's own MAC; a Tiny Tapeout board's
+name derived from it, or, on an ECP5, its configuration flash's uid and the
+die's own TraceID; a USB adapter's own MAC; a Tiny Tapeout board's
 shuttle, the chip ROM's commit and the demo board's RP2 unique id. Nothing
-about where a thing is plugged in or what it is called this month. Each
+about where a thing is plugged in, what it is called this month, or which
+gateware it happens to be running. Each
 identifier someone might need to type is also a QR code, in a monospace
 face with a slashed zero where one is installed.
 

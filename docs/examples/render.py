@@ -34,6 +34,7 @@ EXAMPLES = [
     ("netv2", "netv2-grove", "netv2"),
     ("arty", "arty-hawk", "arty"),
     ("acorn", "Acorn", "acorn"),
+    ("cynthion", "cynthion-alidade", "cynthion"),
     ("tt", "TT06", "tinytapeout"),
     ("tt", "TTGF0p2", "tinytapeout-gf"),
     ("tt", "FPGA", "tinytapeout-fpga"),
@@ -54,7 +55,7 @@ def main() -> None:
     pdf = HERE / "labels.pdf"
     labels.render(docs, pdf, outline=True)
     kinds = set(labels.KINDS)
-    titles = [(kind, title) for kind, title, _d, _r in labels.all_labels(docs, kinds)]
+    titles = [(kind, title) for _host, kind, title, _d, _r in labels.all_labels(docs, kinds)]
 
     # The crop is a box of one fixed pixel size moved around the page, not four
     # edges rounded separately: rounding each edge would let a label whose left

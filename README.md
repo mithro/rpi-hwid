@@ -11,12 +11,12 @@ firmware never reads), the Pi 5's own verdict on its USB-C supply, the PMIC's
 input and RTC-cell voltages, the fan header, the USB tree, and which network
 interfaces are soldered down.
 
-Around that probe: separate modules for an FPGA board (NeTV2, Acorn, Arty) or a
-[Tiny Tapeout](https://tinytapeout.com/) demo board attached to the Pi; a
-collector that runs the lot over ssh across a fleet, one JSON document per host;
-and a label generator that turns those documents into sticker sheets carrying
-only what cannot change — serial numbers, MAC addresses, Device DNA. The same
-probe runs unchanged on an Orange Pi PC.
+Around that probe: separate modules for an FPGA board (NeTV2, Acorn, Arty,
+Cynthion) or a [Tiny Tapeout](https://tinytapeout.com/) demo board attached to
+the Pi; a collector that runs the lot over ssh across a fleet, one JSON document
+per host; and a label generator that turns those documents into sticker sheets
+carrying only what cannot change — serial numbers, MAC addresses, Device DNA,
+an ECP5's TraceID. The same probe runs unchanged on an Orange Pi PC.
 
 ## The labels
 
@@ -86,6 +86,16 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 <td>NeTV2, carrying the<br>Device DNA and the<br>name derived from it</td>
 <td>Arty A7-35T, with<br>its Digilent serial<br>and flash part</td>
 <td>Acorn CLE-215+;<br>the die was not read,<br>so the DNA gets a<br>line to write it on</td>
+</tr>
+<tr>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/cynthion.png" alt="Cynthion r1.4; an ECP5 board, keyed on its configuration flash UID with the die's own TraceID above it" width="180"></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>Cynthion r1.4, an<br>ECP5 board: its config<br>flash UID, and the<br>die's own TraceID</td>
+<td></td>
+<td></td>
 </tr>
 <tr>
 <td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tinytapeout.png" alt="TT06 chip on a TT06+ demo board" width="180"></td>

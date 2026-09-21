@@ -27,6 +27,14 @@ From what the Pi can see without touching the FPGA:
     USB: a Digilent Arty carries its own FT2232 (0403:6010, manufacturer
     "Digilent") whose serial (210319...) is the board's identity. A NeTV2 has
     no FTDI of its own; its JTAG is bit-banged from the host's GPIO.
+    A Great Scott Gadgets Cynthion answers 1d50:615b whatever gateware it is
+    running and 1d50:615c when its Apollo debug controller holds the shared
+    port; the interface subclass says which gateware (0x10 analyzer, 0x20
+    Moondancer, 0x00 the Apollo stub). Its analyzer gateware publishes the
+    ECP5 configuration flash's 64-bit unique id as the USB serial number, and
+    bcdDevice is the board revision -- 0104 is r1.4 -- so a board's identity,
+    its revision and, through the revision, its die are all readable with
+    nothing sent to it and no flag at all (rpi5-netv2, 2026-09-21).
 With --jtag, openFPGALoader reads the idcode and, on a 7-series, the Device
 DNA, over the Arty's own FT2232 when there is one and otherwise over the
 host's GPIO harness (libgpiod, pins 27:22:4:17); off by default because it
@@ -42,6 +50,20 @@ while openocd sat beside it (2026-09-16). With --flash as well, an Arty's SPI
 flash is identified by its JEDEC id, which loads openFPGALoader's spiOverJtag
 bridge into the FPGA and drops the running design until the next power cycle. Note the S25FL128S and
 S25FL127S both answer JEDEC 0x012018.
+
+With --force-offline, a Cynthion's ECP5 gives up its TraceID, the die-level
+identifier an ECP5 has in place of a Xilinx Device DNA: UIDCODE_PUB (0x19)
+into an 8-bit IR, 64 bits out of the DR, of which only the bottom 56 are
+factory (the top 8 come from the bitstream's TRACE_ID_BINARY, so keying a name
+on the unmasked value would rename a board on a gateware rebuild). Its own
+flag, never --jtag: a Cynthion's TAP is reachable only through the Apollo
+debug controller, and Apollo only takes the shared USB port by asking the
+gateware to stand down, which ends the capture and may drop power to whatever
+is on the board's TARGET port. --jtag is harmless on a NeTV2 or an Arty and a
+fleet-wide collect must not stop every analyzer on it. The read puts the board
+back -- reconfigure from flash, hand the port back, then wait to see the
+analyzer re-enumerate -- which apollo's own `info --force-offline` does not do;
+--recover-cynthion is the way home if it ever fails.
 """
 import fcntl
 import glob
