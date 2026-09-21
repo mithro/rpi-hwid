@@ -24,9 +24,10 @@ same layout with the maker's mark and the model decoding swapped, see
 ``rpi_hwid.boards``), one FPGA label per board the probe found, one Tiny
 Tapeout label per demo board, one adapter label per removable USB network
 adapter. Artwork: the package ships the Raspberry Pi raspberry, the Orange
-Pi orange, the Alphamax, Digilent and Tiny Tapeout marks and the
-public-domain USB trident (see artwork/README.md, each mark drawn only on
-its owner's hardware); ``--artwork DIR`` overrides any of them and may add
+Pi orange, the Alphamax, Digilent, Great Scott Gadgets and Tiny Tapeout
+marks and the public-domain USB trident (see artwork/README.md, each mark
+drawn only on its owner's hardware); ``--artwork DIR`` overrides any of
+them and may add
 ``netv2.svg``, and a label whose mark is missing sets the maker's name in
 type (or, on a board label, leaves the mark's box empty).
 """
@@ -349,6 +350,8 @@ def mark_maker(lab, board, x, y, height):
         w = mark_alphamax(lab, x, y, height)
     elif board.kind == "arty":
         w = mark_digilent(lab, x, y, height)
+    elif board.kind == "cynthion":
+        w = mark_raster(lab, "great-scott-gadgets.png", x, y, height)
     if not w:
         # the maker's name in the caption grey, so it labels the word below
         # rather than competing with it as a second heading
@@ -499,7 +502,10 @@ def draw_fpga(lab, board):
     x = qr_inset + qr_size + 3 * mm
     col_w = LABEL_W - PAD - x
     y = PAD
-    mark_h = 6 * mm if board.kind == "arty" else 5 * mm
+    # A wide wordmark (Alphamax) already carries its weight at 5 mm; a compact
+    # mark scaled to the same height reads as half the size beside it, so the
+    # Digilent triangle and the Great Scott Gadgets gears get 6 mm.
+    mark_h = 6 * mm if board.kind in ("arty", "cynthion") else 5 * mm
     mark_maker(lab, board, x, y, mark_h)
     y += mark_h + 0.5 * mm
     word = board.name.split("-", 1)[1] if board.name else board.model.split()[0]
@@ -523,14 +529,6 @@ def draw_fpga(lab, board):
         # is the same on both (S25FL128S/127S: one JEDEC id, two parts)
         lab.captioned(x, x + 6 * mm, y, "flash", board.flash or "not read", SANS, 7.5,
                       col_w - 6 * mm)
-
-    if board.kind == "cynthion":
-        # which gateware answered, in the row an Arty uses for its serial: it
-        # is what the board is doing, and it is how the flash uid came to be
-        # readable at all
-        y += 3.8 * mm
-        lab.captioned(x, x + 9 * mm, y, "gateware", board.mode or "not read",
-                      SANS, 7.5, col_w - 9 * mm)
 
     y = LABEL_H - PAD - dna_h
     cap_y = y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm    # the caption sits over the value
@@ -871,11 +869,6 @@ CYNTHION_PART = {
     "1.1": "LFE5U-12F", "1.2": "LFE5U-12F", "1.3": "LFE5U-12F", "1.4": "LFE5U-12F",
 }
 
-# What each gateware calls itself, as cynthion/shared/usb.toml spells it in
-# bProductString -- the name on the label is the name the board answers with.
-CYNTHION_MODE = {"analyzer": "USB Analyzer", "moondancer": "Facedancer",
-                 "apollo": "Apollo debugger"}
-
 # The foot of an FPGA label prints the identifier the sticker is keyed on. For
 # the Xilinx boards that is the Device DNA; an ECP5 has no such thing, and
 # printing "Device DNA" over a configuration flash's id would be a plain lie
@@ -938,7 +931,6 @@ class FpgaLabel:
     serial: str | None = None
     flash: str | None = None
     gateware: str | None = None      # "gateware v4.14  ·  FPGA id 9" (pcileech)
-    mode: str | None = None          # the gateware a Cynthion is running
     # The identifier the sticker is keyed on and what to call it. Every Xilinx
     # board keys on its Device DNA; a Cynthion keys on its configuration
     # flash's uid, so the caption travels with the value.
@@ -1028,7 +1020,7 @@ def fpga_records(docs, pinned_names=None):
         maker, model = BOARD_MODEL.get(b.kind, ("", b.kind))
         part = idcode_part(b.idcode)
         name = None
-        ident, ident_caption, mode = b.dna, DNA_CAPTION, None
+        ident, ident_caption = b.dna, DNA_CAPTION
         if b.kind == "netv2" and b.dna:
             name = naming.netv2_name(b.dna)
         elif b.kind == "arty" and b.serial:
@@ -1040,7 +1032,6 @@ def fpga_records(docs, pinned_names=None):
             # rather than being named from the debug controller's serial.
             model = "Cynthion r%s" % b.hw_rev if b.hw_rev else "Cynthion"
             part = CYNTHION_PART.get(b.hw_rev or "")
-            mode = CYNTHION_MODE.get(b.mode or "", b.mode)
             ident, ident_caption = b.serial, CYNTHION_IDENT_CAPTION
             if b.serial:
                 name = naming.cynthion_name(b.serial)
@@ -1056,7 +1047,7 @@ def fpga_records(docs, pinned_names=None):
             gateware = "gateware v%s  ·  FPGA id %s" % (b.gateware, b.gateware_id)
         out.append(FpgaLabel(kind=b.kind, maker=maker, model=model, host=host, part=part,
                              name=name, dna=b.dna, serial=b.serial, flash=flash,
-                             gateware=gateware, mode=mode, ident=ident,
+                             gateware=gateware, ident=ident,
                              ident_caption=ident_caption))
     return out
 

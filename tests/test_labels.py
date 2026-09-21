@@ -119,7 +119,6 @@ def test_a_cynthion_is_keyed_on_its_flash_uid_and_says_so(docs, tmp_path):
     assert rec.part == "LFE5U-12F"          # from the revision, not from JTAG
     assert rec.ident == "267125df30c460de"
     assert rec.ident_caption == "ECP5 config flash UID"
-    assert rec.mode == "USB Analyzer"
     labels.render(docs, tmp_path / "cynthion.pdf", only={"fpga"})    # and it draws
 
 
@@ -143,7 +142,6 @@ def test_a_cynthion_in_apollo_mode_is_not_keyed_on_the_wrong_chip(docs):
     assert rec.ident is None
     assert rec.name is None                  # unnameable until its uid is read
     assert rec.model == "Cynthion r1.4"
-    assert rec.mode == "Apollo debugger"
 
 
 def test_only_can_name_a_single_fpga_kind(docs):
@@ -169,6 +167,26 @@ def _drawn_strings(monkeypatch, docs, only, tmp_path):
     monkeypatch.setattr(labels.Label, "text", spy)
     labels.render(docs, tmp_path / "spy.pdf", only=only)
     return seen
+
+
+def test_a_label_records_nothing_a_reflash_would_change(docs, tmp_path, monkeypatch):
+    """A label carries only what cannot change. Which gateware answered is
+    the most changeable thing about an FPGA board -- it survives until the
+    next `cynthion flash` -- so it settles what the probe may trust and then
+    stays off the sticker."""
+    seen = _drawn_strings(monkeypatch, docs, {"cynthion"}, tmp_path)
+    assert "gateware" not in seen
+    assert "USB Analyzer" not in seen
+
+
+def test_a_cynthion_carries_the_makers_mark_not_its_name_in_type(docs, tmp_path,
+                                                                 monkeypatch):
+    """Like a NeTV2's Alphamax and an Arty's Digilent: the mark identifies
+    the maker, and the name in type is only the fallback when a mark is
+    missing."""
+    seen = _drawn_strings(monkeypatch, docs, {"cynthion"}, tmp_path)
+    assert "Great Scott Gadgets" not in seen
+    assert labels.artwork("great-scott-gadgets.png") is not None
 
 
 def test_nothing_on_a_cynthion_label_is_elided(docs, tmp_path, monkeypatch):
