@@ -518,6 +518,100 @@ def test_cynthion_revision_decodes_bcddevice_not_a_gateware_version():
     assert fpga.cynthion_revision("fe00") is None
 
 
+def test_a_trace_id_keeps_only_the_factory_bits():
+    """A TraceID is 64 bits of which the top 8 are the design's own, set from
+    the bitstream's TRACE_ID_BINARY. Keyed on unmasked, a board would be
+    renamed by a gateware rebuild -- the bug DNA_MASK already guards against
+    on the Xilinx side."""
+    # least significant byte first, so the design's own byte is the last pair
+    assert fpga.trace_id_value("7766554433221100") == "0x11223344556677"
+    # the same die under a design that set a different TRACE_ID_BINARY
+    assert fpga.trace_id_value("77665544332211ff") == "0x11223344556677"
+    # an absent or unpowered chain shifts all ones or all zeroes; naming a
+    # board from either would mint a wrong name permanently
+    assert fpga.trace_id_value("ffffffffffffffff") is None
+    assert fpga.trace_id_value("0000000000000000") is None
+    # nothing but a user byte is still nothing to key on
+    assert fpga.trace_id_value("00000000000000ab") is None
+    assert fpga.trace_id_value(None) is None
+    assert fpga.trace_id_value("junk") is None
+
+
+def test_the_chain_hands_its_bytes_back_least_significant_first():
+    """Measured on rpi5-netv2: with no instruction shifted at all, the DR
+    holds the IDCODE after a TAP reset, and the chain returned 43101121 --
+    which is 0x21111043, the LFE5U-12F a Cynthion r1.4 carries, with its
+    bytes reversed. That known answer is what settles the byte order, which
+    no amount of reading apollo's source could."""
+    assert fpga.wire_hex_to_int("43101121") == 0x21111043
+
+
+def test_a_trace_id_read_from_the_real_board():
+    """The bytes rpi5-netv2's ECP5 actually returned for UIDCODE_PUB."""
+    res = fpga.cynthion_offline_parse(
+        "FLASHUID=267125df30c460de\nTRACEIDRAW=0e4e600486801b00\n"
+        "RESTORED=267125df30c460de\n")
+    assert res["trace_id"] == "0x1b808604604e0e"
+    assert res["restored"] is True
+
+
+def test_the_offline_read_reports_whether_the_board_came_back():
+    """apollo's own `info --force-offline` reads and leaves the FPGA offline.
+    A probe that ends a capture to read a number must put the board back and
+    say whether it managed to."""
+    ok = fpga.cynthion_offline_parse(
+        "TRACEIDRAW=7766554433221100\nFLASHUID=267125df30c460de\n"
+        "RESTORED=267125df30c460de\n")
+    assert ok["trace_id"] == "0x11223344556677"
+    assert ok["flash_uid"] == "267125df30c460de"
+    assert ok["restored"] is True
+    assert "error" not in ok
+
+    # read fine, but the analyzer never re-enumerated: the number is good and
+    # the rig is not, and the caller has to be told the second part
+    stranded = fpga.cynthion_offline_parse(
+        "TRACEIDRAW=7766554433221100\nRESTORED=none\n")
+    assert stranded["trace_id"] == "0x11223344556677"
+    assert stranded["restored"] is False
+
+    failed = fpga.cynthion_offline_parse("ERROR=no Apollo after handoff\n")
+    assert failed["error"] == "no Apollo after handoff"
+    assert failed.get("trace_id") is None
+
+    # A read can fail on a board that still came back, and the caller needs
+    # both halves: the number is missing, the rig is not. Met for real on
+    # rpi5-netv2, whose firmware stalls REQUEST_JTAG_GET_INFO.
+    both = fpga.cynthion_offline_parse(
+        "FLASHUID=267125df30c460de\nRESTORED=267125df30c460de\n"
+        "ERROR=jtag read failed: [Errno 32] Broken pipe\n")
+    assert both["restored"] is True
+    assert "Broken pipe" in both["error"]
+    assert both["trace_id"] is None
+
+
+def test_fpga_verdict_carries_a_trace_id_that_was_read():
+    dev = dict(CYNTHION_ANALYZER)
+    f = {"pcie": [], "ftdi": [], "jtag": None, "cynthion": [dev],
+         "cynthion_jtag": {"trace_id": "0x11223344556677",
+                           "flash_uid": "267125df30c460de", "restored": True}}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["trace_id"] == "0x11223344556677"
+    assert fpga.fpga_summary([board])[0]["trace_id"] == "0x11223344556677"
+
+
+def test_a_trace_id_is_not_attached_to_the_wrong_board():
+    """Two Cynthions, one read. The uid the offline read returned is what
+    says which board the TraceID belongs to."""
+    other = dict(CYNTHION_ANALYZER, path="1-1.5", serial="aaaabbbbccccdddd")
+    f = {"pcie": [], "ftdi": [], "jtag": None,
+         "cynthion": [CYNTHION_ANALYZER, other],
+         "cynthion_jtag": {"trace_id": "0x11223344556677",
+                           "flash_uid": "267125df30c460de", "restored": True}}
+    by_serial = {b["serial"]: b for b in fpga.fpga_verdict(f)}
+    assert by_serial["267125df30c460de"]["trace_id"] == "0x11223344556677"
+    assert by_serial["aaaabbbbccccdddd"].get("trace_id") is None
+
+
 def test_fpga_verdict_names_a_cynthion_from_usb_alone():
     f = {"pcie": [], "ftdi": [], "jtag": None, "cynthion": [CYNTHION_ANALYZER]}
     (board,) = fpga.fpga_verdict(f)

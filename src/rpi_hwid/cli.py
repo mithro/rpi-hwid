@@ -2,7 +2,8 @@
 
     rpi-hwid probe [--json] [--fpga] [--jtag] [--flash] [--tinytapeout] [--no-stop-service]
                                                           on a Pi: what is this?
-    rpi-hwid fpga [--json] [--jtag] [--flash]             on a Pi: which FPGA board?
+    rpi-hwid fpga [--json] [--jtag] [--flash] [--force-offline]
+                                                          on a Pi: which FPGA board?
     rpi-hwid tinytapeout [--json] [--no-repl] [--no-stop-service]
                                                           on a Pi: which Tiny Tapeout board?
     rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--no-stop-service] HOST…
@@ -75,7 +76,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def cmd_fpga(args: argparse.Namespace) -> int:
     from rpi_hwid import fpga
 
-    f = fpga.collect_fpga(args.jtag, args.flash)
+    f = fpga.collect_fpga(args.jtag, args.flash, args.force_offline)
     if args.json:
         print(json.dumps(f, indent=1))
     else:
@@ -162,6 +163,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     p.add_argument("--jtag", action="store_true")
     p.add_argument("--flash", action="store_true")
+    p.add_argument("--force-offline", action="store_true",
+                   help="read a Cynthion's ECP5 TraceID, which ends its capture "
+                        "and may drop power to its TARGET port")
     p.set_defaults(func=cmd_fpga)
 
     p = sub.add_parser("tinytapeout",

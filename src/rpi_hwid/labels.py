@@ -530,6 +530,15 @@ def draw_fpga(lab, board):
         lab.captioned(x, x + 6 * mm, y, "flash", board.flash or "not read", SANS, 7.5,
                       col_w - 6 * mm)
 
+    if board.trace_id:
+        # The die's own identifier, in the row an Arty uses for its serial.
+        # Both are printed: the flash uid is what the sticker is keyed on and
+        # what the QR carries, and the TraceID is the one that survives the
+        # flash chip being replaced.
+        y += 3.8 * mm
+        lab.captioned(x, x + 9 * mm, y, "TraceID", board.trace_id, MONO, 7.5,
+                      col_w - 9 * mm)
+
     y = LABEL_H - PAD - dna_h
     cap_y = y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm    # the caption sits over the value
     if board.ident:
@@ -931,6 +940,10 @@ class FpgaLabel:
     serial: str | None = None
     flash: str | None = None
     gateware: str | None = None      # "gateware v4.14  ·  FPGA id 9" (pcileech)
+    # The ECP5's die identifier, masked to its factory 56 bits. Shown, never
+    # keyed on: reaching it costs the board's capture, so a name derived from
+    # it could not be recovered without taking the board offline again.
+    trace_id: str | None = None
     # The identifier the sticker is keyed on and what to call it. Every Xilinx
     # board keys on its Device DNA; a Cynthion keys on its configuration
     # flash's uid, so the caption travels with the value.
@@ -1047,7 +1060,7 @@ def fpga_records(docs, pinned_names=None):
             gateware = "gateware v%s  ·  FPGA id %s" % (b.gateware, b.gateware_id)
         out.append(FpgaLabel(kind=b.kind, maker=maker, model=model, host=host, part=part,
                              name=name, dna=b.dna, serial=b.serial, flash=flash,
-                             gateware=gateware, ident=ident,
+                             gateware=gateware, ident=ident, trace_id=b.trace_id,
                              ident_caption=ident_caption))
     return out
 

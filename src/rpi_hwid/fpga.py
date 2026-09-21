@@ -187,6 +187,87 @@ def cynthion_flash_uid(dev):
     return None
 
 
+# --- the ECP5's TraceID, over Apollo ---------------------------------------------
+#
+# The die-level identifier, the ECP5's answer to a Xilinx Device DNA. Read by
+# shifting UIDCODE_PUB (0x19) into an 8-bit IR and 64 bits out of the DR --
+# the same shape as the FUSE_DNA read above. _PUB is the public instruction,
+# so the read itself does not disturb a configured device, as ecpdap's
+# read_uid() shows by issuing it with no ISC_ENABLE.
+#
+# Reaching it is what costs. A Cynthion's TAP hangs off the Apollo debug
+# controller, and Apollo only takes the shared USB port by asking the gateware
+# to stand down, which ends the capture and leaves the FPGA held offline. So
+# this is behind its own flag, never --jtag: on a NeTV2 or an Arty --jtag is
+# harmless, and a routine collect across the fleet must not silently stop
+# every analyzer on it.
+#
+# Of the 64 bits the top 8 are the design's own, set from the bitstream's
+# TRACE_ID_BINARY preference, and only the bottom 56 are factory. Naming a
+# board on the unmasked value would rename it whenever its gateware was
+# rebuilt.
+UIDCODE_PUB = 0x19
+TRACE_ID_BITS = 64
+TRACE_ID_MASK = 0x00FFFFFFFFFFFFFF
+ECP5_IR_BITS = 8
+
+
+def wire_hex_to_int(raw):
+    """A scan result's bytes, as the chain clocked them out, as a number.
+
+    Least significant byte first. Settled by a known answer rather than by
+    reading apollo's source: with nothing shifted into the IR, a TAP reset
+    leaves the IDCODE in the DR, and rpi5-netv2's ECP5 returned 43101121 --
+    0x21111043, the LFE5U-12F a Cynthion r1.4 carries, reversed (2026-09-21).
+    """
+    try:
+        data = bytearray.fromhex(raw)
+    except (TypeError, ValueError):
+        return None
+    value = 0
+    for byte in reversed(data):
+        value = (value << 8) | byte
+    return value
+
+
+def trace_id_value(raw):
+    """The factory 56 bits of a TraceID, or None if the chain said nothing."""
+    value = wire_hex_to_int(raw)
+    if value is None:
+        return None
+    masked = value & TRACE_ID_MASK
+    # An absent or unpowered chain shifts all ones or all zeroes; either would
+    # otherwise become a board's permanent name.
+    if masked in (0, TRACE_ID_MASK):
+        return None
+    return "0x%014x" % masked
+
+
+def cynthion_offline_parse(out):
+    """What the offline reader said, as values rather than text.
+
+    The reader moves bytes and nothing else; every decision about what they
+    mean is made here, where it can be tested without hardware -- the split
+    the pcileech reader already uses.
+    """
+    res = {}
+    # Whether the board came back is reported even when the read failed: a
+    # stranded rig is the thing the caller most needs to hear about, and it
+    # is independent of whether a number was obtained.
+    err = re.search(r"ERROR=(.*)", out)
+    if err:
+        res["error"] = err.group(1).strip()
+    m = re.search(r"TRACEIDRAW=([0-9a-fA-F]+)", out)
+    res["trace_id"] = trace_id_value(m.group(1)) if m else None
+    m = re.search(r"FLASHUID=([0-9a-fA-F]+)", out)
+    res["flash_uid"] = m.group(1).lower() if m else None
+    # Whether the analyzer came back, which apollo's own --force-offline never
+    # checks: it reads and leaves the FPGA held offline.
+    m = re.search(r"RESTORED=(\S+)", out)
+    res["restored"] = bool(m and m.group(1) != "none")
+    return res
+
+
 def cynthion_revision(bcd):
     """The board revision bcdDevice carries: '0104' -> '1.4'."""
     try:
@@ -641,6 +722,227 @@ finally:
 '''
 
 
+# Apollo's JTAG is a pure vendor-control-request protocol -- no bulk endpoints
+# -- so it needs nothing but usbdevfs, which is why this can run on a Pi with
+# no libusb and no apollo installed. Requests from apollo_fpga/jtag.py and
+# apollo_fpga/__init__.py; the TAP state numbers are JTAGChain.STATE_NUMBERS.
+#
+# The restore at the end is the part apollo itself does not do: `apollo info
+# --force-offline` reads and leaves the FPGA held offline. Ours reconfigures
+# from flash, hands the shared port back, and then waits to see the analyzer
+# re-enumerate, so the caller learns whether the rig came back. With
+# "restore-only" it does the handoff and the restore and no JTAG at all,
+# which is how the dangerous half gets proven before a read is attempted.
+APOLLO_READER = r'''
+import ctypes, fcntl, glob, os, sys, time
+class Ctrl(ctypes.Structure):
+    _fields_ = [("bRequestType", ctypes.c_uint8), ("bRequest", ctypes.c_uint8),
+                ("wValue", ctypes.c_uint16), ("wIndex", ctypes.c_uint16),
+                ("wLength", ctypes.c_uint16), ("timeout", ctypes.c_uint32),
+                ("data", ctypes.c_void_p)]
+# _IOWR('U', 0, struct usbdevfs_ctrltransfer); the size differs with the
+# userland, so it is derived rather than written down.
+USBDEVFS_CONTROL = 0xC0000000 | (ctypes.sizeof(Ctrl) << 16) | (ord("U") << 8) | 0
+CLAIM, RELEASE = 0x8004550F, 0x80045510
+OUT_DEV, IN_DEV, OUT_IFACE = 0x40, 0xC0, 0x41
+GET_INFO, START, STOP = 0xb8, 0xbf, 0xbe
+CLEAR_OUT, SET_OUT, GET_IN, SCAN, GO_TO = 0xb0, 0xb1, 0xb2, 0xb3, 0xb5
+FORCE_OFFLINE, RECONFIGURE, ALLOW_TAKEOVER = 0xc1, 0xc0, 0xc2
+RESET, DRSHIFT, IRSHIFT, IRPAUSE, DRPAUSE = 0, 4, 11, 13, 6
+UIDCODE_PUB = 0x19
+
+def rd(d, name):
+    try:
+        f = open(d + "/" + name)
+    except IOError:
+        return None
+    try:
+        return f.read().strip()
+    finally:
+        f.close()
+
+def find(pid):
+    for d in sorted(glob.glob("/sys/bus/usb/devices/*")):
+        if rd(d, "idVendor") == "1d50" and rd(d, "idProduct") == pid:
+            try:
+                node = "/dev/bus/usb/%03d/%03d" % (int(rd(d, "busnum")), int(rd(d, "devnum")))
+            except (TypeError, ValueError):
+                continue
+            return d, node
+    return None, None
+
+def wait_for(pid, seconds=6.0):
+    end = time.time() + seconds
+    while time.time() < end:
+        d, node = find(pid)
+        if d:
+            return d, node
+        time.sleep(0.1)
+    return None, None
+
+def ctrl(fd, rtype, req, value=0, index=0, data=None, length=0, timeout=2000):
+    buf = None
+    if data is not None:
+        buf = ctypes.create_string_buffer(bytes(data), len(data))
+        length = len(data)
+    elif length:
+        buf = ctypes.create_string_buffer(length)
+    t = Ctrl(rtype, req, value, index, length, timeout,
+             ctypes.addressof(buf) if buf is not None else None)
+    n = fcntl.ioctl(fd, USBDEVFS_CONTROL, t)
+    return buf.raw[:n] if buf is not None else b""
+
+def stub_iface(sysdir):
+    """The Apollo stub's interface number: class ff, subclass 00."""
+    for i in sorted(glob.glob(sysdir + "/*:*")):
+        if rd(i, "bInterfaceSubClass") == "00" and rd(i, "bInterfaceClass") == "ff":
+            try:
+                return int(rd(i, "bInterfaceNumber"), 16)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+def scan(fd, bits, out=None):
+    """One JTAG scan: optional TDI bytes, then `bits` clocks, then TDO.
+
+    `advance` is apollo's advance_state flag, which its _scan_data sets on
+    the last chunk of a write ("advance_state = not bool(bits_to_scan)") and
+    its _receive_data never sets at all. It is TMS on the final clock, so a
+    write without it never leaves the shift state and the instruction is
+    never latched: measured on rpi5-netv2, UIDCODE_PUB shifted without it
+    returned 64 zero bits, and with it returned the TraceID.
+    """
+    advance = 0
+    if out is None:
+        ctrl(fd, OUT_DEV, CLEAR_OUT)
+    else:
+        ctrl(fd, OUT_DEV, SET_OUT, data=out)
+        advance = 1
+    ctrl(fd, OUT_DEV, SCAN, value=bits, index=advance)
+    return ctrl(fd, IN_DEV, GET_IN, length=(bits + 7) // 8)
+
+restore_only = "restore-only" in sys.argv
+if "recover" in sys.argv:
+    # A board left in Apollo mode -- because a restore failed, or because
+    # something else put it there -- told to reconfigure from flash and give
+    # the shared port back. No handoff, no JTAG: the way home and nothing else.
+    sysdir, node = find("615c")
+    if sysdir is None:
+        print("ERROR=no Apollo (1d50:615c) to recover"); sys.exit(0)
+    fd = os.open(node, os.O_RDWR)
+    try:
+        ctrl(fd, OUT_DEV, RECONFIGURE)
+        ctrl(fd, OUT_DEV, ALLOW_TAKEOVER)
+    finally:
+        os.close(fd)
+    sysdir, _node = wait_for("615b", 15.0)
+    print("RESTORED=" + ((rd(sysdir, "serial") or "yes") if sysdir else "none"))
+    sys.exit(0)
+
+sysdir, node = find("615b")
+if sysdir is None:
+    print("ERROR=no Cynthion gateware (1d50:615b) on this host"); sys.exit(0)
+iface = stub_iface(sysdir)
+if iface is None:
+    print("ERROR=no Apollo stub interface: this gateware will not hand the port over")
+    sys.exit(0)
+# The serial the gateware is publishing right now is the configuration
+# flash's uid, and it is what says which board this reading belongs to once
+# the handoff has changed what is on the bus.
+before = rd(sysdir, "serial")
+if before:
+    print("FLASHUID=" + before)
+fd = os.open(node, os.O_RDWR)
+try:
+    try:
+        fcntl.ioctl(fd, CLAIM, ctypes.c_uint(iface))
+    except IOError:
+        pass                      # no driver is bound to the stub; claiming is best effort
+    # REQUEST_APOLLO_ADV_STOP: the gateware stands down and the port is Apollo's
+    ctrl(fd, OUT_IFACE, 0xF0, index=iface, timeout=5000)
+finally:
+    os.close(fd)
+
+sysdir, node = wait_for("615c")
+if sysdir is None:
+    print("ERROR=handoff sent but Apollo (1d50:615c) never appeared"); sys.exit(0)
+fd = os.open(node, os.O_RDWR)
+err = None
+try:
+  if not restore_only:
+    try:
+        ctrl(fd, OUT_DEV, FORCE_OFFLINE)
+        # GET_INFO is optional firmware: apollo's own JTAGChain.__enter__
+        # wraps this very call in `except IOError: pass`, and this board
+        # stalls it. A stall here means "no quirks reported", not a failure.
+        quirks = 0
+        try:
+            info = ctrl(fd, IN_DEV, GET_INFO, length=8)
+            if len(info) == 8:
+                quirks = info[4] | (info[5] << 8) | (info[6] << 16) | (info[7] << 24)
+        except (IOError, OSError):
+            pass
+        flip = bool(quirks & 1)          # QUIRK_FLIP_BITS_IN_WHOLE_BYTES
+        def rev(b):
+            return int("{:08b}".format(b)[::-1], 2)
+        ctrl(fd, OUT_DEV, START)
+        ctrl(fd, OUT_DEV, GO_TO, value=RESET)
+        # IR <- UIDCODE_PUB. Resting in IRPAUSE is what apollo's own ECP5 code
+        # does, and leaving it toward DRSHIFT is what passes through IRUPDATE
+        # and latches the instruction.
+        ctrl(fd, OUT_DEV, GO_TO, value=IRSHIFT)
+        scan(fd, 8, bytearray([rev(UIDCODE_PUB) if flip else UIDCODE_PUB]))
+        ctrl(fd, OUT_DEV, GO_TO, value=IRPAUSE)
+        ctrl(fd, OUT_DEV, GO_TO, value=DRSHIFT)
+        got = bytearray(scan(fd, 64))
+        if flip:
+            got = bytearray(rev(b) for b in got)
+        ctrl(fd, OUT_DEV, GO_TO, value=DRPAUSE)
+        ctrl(fd, OUT_DEV, STOP)
+        # The bytes exactly as the chain clocked them out. What they mean is
+        # decided above, unprivileged, where a test can hold the reader to
+        # the numbers a real board returned.
+        print("TRACEIDRAW=" + "".join("%02x" % b for b in got))
+    except (IOError, OSError) as e:
+        # A failed read must not cost the reporting of whether the rig came
+        # back: that is the line the caller most needs.
+        err = "jtag read failed: %s" % e
+finally:
+    # Always, even if the read above threw: a board left unconfigured is a
+    # dead rig, and that matters more than any number.
+    try:
+        ctrl(fd, OUT_DEV, RECONFIGURE)
+        ctrl(fd, OUT_DEV, ALLOW_TAKEOVER)
+    except (IOError, OSError) as e:
+        err = err or ("restore failed: %s" % e)
+    os.close(fd)
+
+sysdir, _node = wait_for("615b", 15.0)
+after = rd(sysdir, "serial") if sysdir else None
+print("RESTORED=" + (after if after else "none"))
+if err:
+    print("ERROR=" + err)
+if before and after and before != after:
+    print("NOTE=came back with a different serial: %s then %s" % (before, after))
+'''
+
+
+def cynthion_offline_probe(restore_only=False, recover=False):
+    """The ECP5 TraceID over Apollo, putting the analyzer back afterwards.
+
+    Ends the board's capture for the duration and may drop power to whatever
+    is on its TARGET port, which is why nothing calls this without being asked
+    to. `restore_only` does the handoff and the restore and no JTAG, to prove
+    the board comes back before a read is ever attempted on it.
+    """
+    argv = ["sudo", sys.executable or "python3", "-c", APOLLO_READER]
+    if recover:
+        argv.append("recover")
+    elif restore_only:
+        argv.append("restore-only")
+    return cynthion_offline_parse(sh_all(argv, timeout=120))
+
+
 def pcileech_probe():
     """The gateware's identity over its FT601, or {"error": why}.
 
@@ -693,13 +995,17 @@ def fpga_verdict(d):
         elif pc["id"].startswith("10ee:") or pc["id"].startswith("1e24:"):
             boards.append({"kind": "unknown-fpga", "how": "PCIe %s, BARs %s" % (pc["id"], sizes),
                            "slot": pc["slot"]})
+    # A TraceID belongs to the board whose flash uid the offline read came
+    # back with, not to whichever Cynthion happens to be listed first.
+    read = d.get("cynthion_jtag") or {}
     for c in d.get("cynthion") or ():
         mode = cynthion_mode(c)
         uid = cynthion_flash_uid(c)
         rev = cynthion_revision(c.get("bcd_device"))
+        trace = read.get("trace_id") if uid and read.get("flash_uid") == uid else None
         boards.append({
             "kind": "cynthion", "path": c["path"], "serial": uid,
-            "hw_rev": rev, "mode": mode,
+            "hw_rev": rev, "mode": mode, "trace_id": trace,
             "how": "USB %s%s%s%s" % (
                 c["id"],
                 (", Cynthion r%s" % rev) if rev else "",
@@ -747,7 +1053,7 @@ def fpga_summary(boards):
     for b in boards:
         entry = {"kind": b["kind"]}
         for k in ("serial", "dna", "idcode", "flash", "flash_jedec", "gateware",
-                  "gateware_id", "hw_rev", "mode"):
+                  "gateware_id", "hw_rev", "mode", "trace_id"):
             # not plain truthiness: FPGA id 0 is a real class (SP605_FT601)
             if b.get(k) is not None and b.get(k) != "":
                 entry[k] = b[k]
@@ -755,7 +1061,7 @@ def fpga_summary(boards):
     return out
 
 
-def collect_fpga(jtag=False, flash=False):
+def collect_fpga(jtag=False, flash=False, force_offline=False):
     # A Cynthion is read from its descriptors alone, so it is collected
     # unconditionally: unlike every other board here, nothing is sent to it.
     f = {"pcie": pcie_devices(), "ftdi": ftdi_devices(), "cynthion": cynthion_devices()}
@@ -768,6 +1074,12 @@ def collect_fpga(jtag=False, flash=False):
     if jtag and any(is_pcileech_pcie(pc) for pc in f["pcie"]) \
             and any(u["id"] == "0403:601f" for u in f["ftdi"]):
         f["pcileech"] = pcileech_probe()
+    # The ECP5 TraceID, and only when asked for by name. This ends the
+    # board's capture and may drop power to whatever is on its TARGET port,
+    # so it is not folded into --jtag, which is harmless everywhere else.
+    f["cynthion_jtag"] = None
+    if force_offline and any(cynthion_flash_uid(c) for c in f["cynthion"]):
+        f["cynthion_jtag"] = cynthion_offline_probe()
     f["boards"] = fpga_verdict(f)
     f["summary"] = fpga_summary(f["boards"])
     return f
@@ -775,7 +1087,7 @@ def collect_fpga(jtag=False, flash=False):
 
 def merge_fpga(doc, f):
     """Fold an fpga document into a Pi probe document (in place)."""
-    doc["fpga"] = {k: f[k] for k in ("pcie", "ftdi", "jtag", "cynthion")}
+    doc["fpga"] = {k: f[k] for k in ("pcie", "ftdi", "jtag", "cynthion", "cynthion_jtag")}
     doc["verdict"]["fpga"] = f["boards"]
     doc["verdict"]["summary"]["fpga"] = f["summary"]
     return doc
@@ -790,11 +1102,25 @@ def describe(boards):
 
 
 def main():
-    f = collect_fpga("--jtag" in sys.argv, "--flash" in sys.argv)
+    if "--recover-cynthion" in sys.argv:
+        # The way home for a board left in Apollo mode, which is the one
+        # state this tool can leave a rig in that a person has to undo.
+        res = cynthion_offline_probe(recover=True)
+        print("cynthion: %s" % ("back in gateware mode" if res.get("restored")
+                                else res.get("error") or "did not come back"))
+        return
+    f = collect_fpga("--jtag" in sys.argv, "--flash" in sys.argv,
+                     "--force-offline" in sys.argv)
     if "--json" in sys.argv:
         print(json.dumps(f, indent=1))
         return
     describe(f["boards"])
+    read = f.get("cynthion_jtag") or {}
+    if read.get("error"):
+        print("  cynthion: %s" % read["error"])
+    if read and not read.get("restored"):
+        print("  cynthion: THE ANALYZER DID NOT COME BACK. Recover with:\n"
+              "            rpi-hwid fpga --recover-cynthion")
 
 
 if __name__ == "__main__" and not globals().get("RPI_HWID_EMBEDDED"):

@@ -93,7 +93,7 @@ PI5_NETV2 = _doc(
     # Cynthion wired in line on its USB, read from sysfs alone 2026-09-21.
     [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "idcode": "0x3631093"},
      {"kind": "cynthion", "serial": "267125df30c460de", "hw_rev": "1.4",
-      "mode": "analyzer"}],
+      "mode": "analyzer", "trace_id": "0x1b808604604e0e"}],
     [{"kind": "eth", "mac": "2c:cf:67:16:bd:98"}, {"kind": "wlan", "mac": "2c:cf:67:16:bd:99"}],
     [{"iface": "eth-netv2", "mac": "00:0e:c6:82:b5:e1", "driver": "ax88179_178a",
       "vidpid": "0b95:1790", "manufacturer": "ASIX Elec. Corp.", "product": "AX88179",

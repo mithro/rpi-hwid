@@ -122,6 +122,27 @@ def test_a_cynthion_is_keyed_on_its_flash_uid_and_says_so(docs, tmp_path):
     labels.render(docs, tmp_path / "cynthion.pdf", only={"fpga"})    # and it draws
 
 
+def test_a_trace_id_is_printed_when_it_has_been_read(tmp_path, monkeypatch):
+    """The ECP5's die identifier, read from rpi5-netv2 on 2026-09-21. It is
+    displayed and never keyed on: reaching it costs the board's capture, so a
+    name derived from it could not be recovered without going offline again."""
+    doc = ProbeDocument.from_dict("h", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
+        "power_class": "usbc-supply",
+        "fpga": [{"kind": "cynthion", "serial": "267125df30c460de", "hw_rev": "1.4",
+                  "mode": "analyzer", "trace_id": "0x1b808604604e0e"}]}}})
+    docs = {"h": doc}
+    (rec,) = labels.fpga_records(docs)
+    assert rec.trace_id == "0x1b808604604e0e"
+    # still keyed on the uid, which is readable without disturbing anything
+    assert rec.ident == "267125df30c460de"
+    assert rec.name == "cynthion-alidade"
+    seen = _drawn_strings(monkeypatch, docs, {"cynthion"}, tmp_path)
+    assert "0x1b808604604e0e" in seen
+    assert "TraceID" in seen
+    assert not [s for s in seen if s.endswith("…")]
+
+
 def test_the_other_boards_still_say_device_dna(docs):
     """The four existing kinds must be untouched: same foot, same caption."""
     recs = {r.kind: r for r in labels.fpga_records(docs)}
