@@ -494,6 +494,56 @@ def test_openocd_reads_the_chain_when_openfpgaloader_is_installed_but_cannot(
     assert res["dna"] == "0x0038a44663258854"          # netv2-basil, pi-sw1-p10
 
 
+# openFPGALoader --flash-info on pi3's Arty, verbatim (branch flash-info
+# @7a11a6a); the same report test_core parses field by field.
+FLASH_INFO = """JEDEC ID: 0x20ba18
+
+SPI Flash information
+JEDEC ID          : 0x20ba18 (manufacturer 0x20, type 0xba, capacity 0x18)
+Manufacturer      : micron
+Part              : N25Q128_3V
+Size              : 16777216 Byte (16 MiB / 128 Mbit, database)
+Unique ID         : 235351451900080037091015126b (opcode 0x9F, 112 bits)
+Done
+"""
+
+
+def test_openfpgaloader_is_told_which_gpiochip_the_header_is(fake_root, monkeypatch):
+    """A Pi 5 drives its header from the RP1, which the kernel registers as
+    gpiochip15, and p48 has no gpiochip0 at all -- so openFPGALoader's
+    default lands on nothing. openocd is already told the chip by label;
+    this hands it the same answer."""
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "header_gpiochip", lambda chips: 15)
+    monkeypatch.setattr(fpga, "gpiochips", lambda: [(15, "pinctrl-rp1")])
+    seen = []
+
+    def fake_all(args, timeout=15):
+        seen.append(args)
+        return "idcode 0x3631093"
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/openFPGALoader")
+    monkeypatch.setattr(fpga, "sh_all", fake_all)
+    fpga.jtag_probe(pins="10:9:11:8")
+    assert seen, "openFPGALoader was never run"
+    assert "-d" in seen[0]
+    assert seen[0][seen[0].index("-d") + 1] == "/dev/gpiochip15"
+
+
+def test_a_flash_report_reaches_the_summary(fake_root, monkeypatch):
+    """The whole point of --flash-info: the part, the density and the flash's
+    own unique id, on the record where a label can use them."""
+    monkeypatch.setattr(fpga, "digilent_cables", lambda: [{"serial": "210319A43AD3"}])
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/openFPGALoader")
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "idcode 0x362d093")
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (0, FLASH_INFO))
+    res = fpga.jtag_probe(want_flash=True)
+    assert res["flash_jedec"] == "0x20ba18"
+    assert res["flash"] == "micron N25Q128_3V"
+    assert res["flash_uid"] == "235351451900080037091015126b"
+    assert res["flash_uid_bits"] == 112
+    assert res["flash_uid_state"] == "read"
+
+
 @pytest.mark.parametrize(("idcode", "profile"), [
     ("0x362d093", "arty_a7_35t"),
     ("0x3631093", "arty_a7_100t"),
@@ -517,6 +567,8 @@ def test_the_arty_flash_profile_follows_the_die_not_the_spelling(fake_root, monk
             return "/usr/bin/openFPGALoader"
         return ""
     monkeypatch.setattr(fpga, "sh", fake_sh)
+    # this build has no --flash-info, so the JEDEC-only read is what runs
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (1, "unknown option"))
     fpga.jtag_probe(want_flash=True)
     flash = [a for a in seen if "-f" in a]
     assert flash

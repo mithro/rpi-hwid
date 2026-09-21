@@ -483,6 +483,70 @@ def test_fpga_verdict_by_pcie_bars_and_ftdi():
         "idcode": "0x362d093", "flash": "spansion S25FL128S", "flash_jedec": "0x012018"}]
 
 
+# openFPGALoader --flash-info on pi3's Arty, verbatim, branch flash-info
+# @7a11a6a. The older unpadded "JEDEC ID:" and "Detected:" lines come first
+# and are deliberately not parsed: they are printed before the id is
+# validated, so a garbage read appears there too.
+FLASH_INFO = """JEDEC ID: 0x20ba18
+Detected: micron N25Q128_3V 256 sectors size: 128Mb
+
+SPI Flash information
+JEDEC ID          : 0x20ba18 (manufacturer 0x20, type 0xba, capacity 0x18)
+Manufacturer      : micron
+Part              : N25Q128_3V
+Size              : 16777216 Byte (16 MiB / 128 Mbit, database)
+Unique ID         : 235351451900080037091015126b (opcode 0x9F, 112 bits)
+SFDP revision     : 1.5
+RDSR : 0x00
+Done
+"""
+
+
+def test_flash_info_is_read_from_the_report_and_not_the_older_lines():
+    got = fpga.flash_info_parse(0, FLASH_INFO)
+    assert got["jedec"] == "0x20ba18"
+    assert got["manufacturer"] == "micron"
+    assert got["part"] == "N25Q128_3V"
+    assert got["uid"] == "235351451900080037091015126b"
+    # the width and the command are recorded beside the value: this package
+    # names boards from identifiers, and a value whose length quietly changed
+    # between tool versions would be a permanent mislabel
+    assert got["uid_bits"] == 112
+    assert got["uid_opcode"] == "0x9F"
+    assert got["uid_state"] == "read"
+
+
+def test_a_flash_read_that_failed_yields_nothing_at_all():
+    """The report is trusted only when the tool exited 0 and printed its
+    header. Before openFPGALoader 5c83c71 a read that never happened still
+    exited 0, and before 7a11a6a a NeTV2 with no bridge loaded answered
+    RDID with garbage that was printed as an ordinary report -- either would
+    have put a wrong flash identity on a sticker."""
+    assert fpga.flash_info_parse(1, FLASH_INFO) == {}
+    assert fpga.flash_info_parse(0, "JEDEC ID: 0xc009a0\nDetected: junk\n") == {}
+    assert fpga.flash_info_parse(1, "Invalid JEDEC ID 0xc009a0: ... parity") == {}
+    assert fpga.flash_info_parse(0, "") == {}
+
+
+@pytest.mark.parametrize(("line", "state", "uid"), [
+    ("Unique ID         : 235351451900080037091015126b (opcode 0x9F, 112 bits)",
+     "read", "235351451900080037091015126b"),
+    ("Unique ID         : blank (opcode 0x4B, 128 bits returned all 0x00/0xFF)",
+     "blank", None),
+    ("Unique ID         : not available (unsupported for this manufacturer/part)",
+     "none", None),
+])
+def test_the_three_answers_a_flash_can_give_about_its_unique_id(line, state, uid):
+    """A part that has no UID command, a part whose UID reads as all ones,
+    and a part that gave one up are three different facts. Only the last may
+    be printed; the first is not a gap to chase and the second is a failed
+    read dressed as a value."""
+    got = fpga.flash_info_parse(0, "SPI Flash information\n"
+                                   "JEDEC ID          : 0x20ba18 (x)\n" + line + "\n")
+    assert got["uid_state"] == state
+    assert got["uid"] == uid
+
+
 def test_the_pcie_subsystem_id_names_the_card_under_the_gateware():
     """vendor:device describes the gateware; subsystem exists precisely to
     name the board under it. pi-sw2-p48 reports 10ee:7021 with subsystem
@@ -1036,7 +1100,9 @@ def test_probe_document_from_json_skips_banner():
                                               "gateware": None, "gateware_id": None,
                                               "hw_rev": None, "mode": None, "trace_id": None,
                                               "dna_sources": [], "dna_agree": None,
-                                              "dna_conflict": None, "soc_model": None}]
+                                              "dna_conflict": None, "soc_model": None,
+                                              "flash_uid": None, "flash_uid_bits": None,
+                                              "flash_uid_state": None}]
     with pytest.raises(ValueError, match="no JSON"):
         ProbeDocument.from_json("h", "no json")
     with pytest.raises(ValueError, match=r"verdict\.summary"):

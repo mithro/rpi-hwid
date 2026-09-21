@@ -1203,7 +1203,10 @@ def fpga_records(docs, pinned_names=None):
         out.append(FpgaLabel(kind=b.kind, maker=maker, model=model, host=host, part=part,
                              name=name, dna=b.dna, serial=b.serial, flash=flash,
                              gateware=gateware, ident=ident, trace_id=b.trace_id,
-                             flash_uid=b.serial if b.kind == "cynthion" else None,
+                             # a Cynthion's USB serial *is* its flash uid, and
+                             # any board can also have it read from the flash
+                             flash_uid=b.flash_uid or (
+                                 b.serial if b.kind == "cynthion" else None),
                              flash_jedec=b.flash_jedec,
                              ident_caption=ident_caption))
     return out

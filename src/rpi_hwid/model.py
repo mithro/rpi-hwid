@@ -73,6 +73,16 @@ class FpgaBoard:
     dna_agree: bool | None = None
     dna_conflict: dict[str, str] | None = None
     soc_model: str | None = None   # the card its SoC says it was built for
+    # The configuration flash's own unique id, with the width and the state
+    # of the read beside it. The width matters: it differs by part (112 bits
+    # on a Micron N25Q, 128 on a Spansion, 64 on a Winbond), and a value
+    # whose length quietly changed between tool versions would be a
+    # permanent mislabel. `flash_uid_state` distinguishes a part that gave
+    # one up from one that has no such command and from a read that came
+    # back all ones -- three different facts, one of them printable.
+    flash_uid: str | None = None
+    flash_uid_bits: int | None = None
+    flash_uid_state: str | None = None   # read | blank | none
 
     @property
     def identity(self) -> str | None:

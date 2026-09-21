@@ -528,6 +528,19 @@ DNA_BITS = 64
 DNA_MASK = 0x1ffffffffffffff
 
 
+def sh_rc(args, timeout=15):
+    """As sh_all(), but the exit status too: a tool that failed and a tool
+    that printed nothing useful are different things, and only the status
+    tells them apart -- openFPGALoader printed a whole flash report for a
+    read that never happened until it was taught to exit 1."""
+    try:
+        r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           universal_newlines=True, timeout=timeout)   # 3.5-safe
+        return r.returncode, r.stdout
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return 1, str(exc)
+
+
 def sh_all(args, timeout=15):
     """As sh(), but stderr too: openocd says everything on stderr."""
     try:
@@ -710,6 +723,87 @@ def openocd_probe(digilent_serial=None, pins=None):
     return res
 
 
+# openFPGALoader's --flash-info report: JEDEC id, the part, its density, and
+# the flash's own unique id, all in one invocation. Fields are padded to
+# column 18 as "Label<spaces>: value" under a header line that is exactly
+# "SPI Flash information".
+#
+# Two things make the parse strict rather than generous, both of them
+# openFPGALoader bugs found while this was being specified:
+#   Before 5c83c71, --detect -f and --flash-info exited 0 even when the flash
+#   was never read at all.
+#   Before 7a11a6a, a NeTV2 with no spiOverJtag bridge loaded answered RDID
+#   with garbage (0xc009a0) which was printed as an ordinary report.
+# Either would have put a wrong flash identity on a printed sticker, so the
+# report is believed only when the tool exited 0 *and* printed its header.
+# The older unpadded "JEDEC ID:" and "Detected:" lines are never read: they
+# come out before the id is validated, so garbage appears there too.
+#
+# This is human-oriented text and not a promised interface, so a wording
+# change upstream will make this return nothing rather than something wrong.
+FLASH_INFO_HEADER = "SPI Flash information"
+FLASH_INFO_FIELD = re.compile(r"^(\S[^:]*?)\s*:\s*(.*\S)\s*$")
+# "<hex> (opcode 0xNN, NNN bits)", or "blank (...)", or "not available (...)"
+FLASH_UID_READ = re.compile(r"^([0-9a-fA-F]{8,})\s*\(opcode\s*(0x[0-9a-fA-F]+),\s*(\d+)\s*bits")
+FLASH_UID_BLANK = re.compile(r"^blank\s*\(opcode\s*(0x[0-9a-fA-F]+),\s*(\d+)\s*bits")
+
+
+def flash_info_parse(returncode, out):
+    """What openFPGALoader's flash report said, or {} if it said nothing good."""
+    if returncode != 0:
+        return {}
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        if line.strip() == FLASH_INFO_HEADER:
+            break
+    else:
+        return {}
+    fields = {}
+    for line in lines[i + 1:]:
+        m = FLASH_INFO_FIELD.match(line)
+        if m:
+            fields[m.group(1).strip()] = m.group(2)
+    if "JEDEC ID" not in fields:
+        return {}
+    res = {"jedec": fields["JEDEC ID"].split()[0],
+           "manufacturer": fields.get("Manufacturer"),
+           "part": fields.get("Part"),
+           "uid": None, "uid_bits": None, "uid_opcode": None, "uid_state": None}
+    # a part openFPGALoader has never met says so in words, not a number
+    if res["part"] and res["part"].startswith("unknown"):
+        res["part"] = None
+    uid = fields.get("Unique ID")
+    if uid:
+        m = FLASH_UID_READ.match(uid)
+        if m:
+            res.update(uid=m.group(1).lower(), uid_opcode=m.group(2),
+                       uid_bits=int(m.group(3)), uid_state="read")
+        elif FLASH_UID_BLANK.match(uid):
+            # all 0x00 or all 0xFF: a read that happened and answered nothing,
+            # which is a failure wearing a value's clothes
+            m = FLASH_UID_BLANK.match(uid)
+            res.update(uid_opcode=m.group(1), uid_bits=int(m.group(2)),
+                       uid_state="blank")
+        elif uid.startswith("not available"):
+            # the part has no unique-id command; this is an answer, not a gap
+            res["uid_state"] = "none"
+    return res
+
+
+def flash_info_probe(harness, board=None):
+    """openFPGALoader's flash report over `harness`, or {}.
+
+    Loads the spiOverJtag bridge, so it drops the running design exactly as
+    the JEDEC read already does -- which is why it is only ever reached with
+    --flash.
+    """
+    argv = list(harness)
+    if board:
+        argv += ["-b", board]
+    rc, out = sh_rc(argv + ["--flash-info"], timeout=180)
+    return flash_info_parse(rc, out)
+
+
 def digilent_cables():
     """The Digilent FT2232 cables on this host, an Arty's own JTAG."""
     return [f for f in ftdi_devices()
@@ -733,6 +827,13 @@ def jtag_probe(want_flash=False, pins=None):
     else:
         harness = ["sudo", "openFPGALoader", "-c", "libgpiod",
                    "--pins=" + (pins or HARNESS_PINS)]
+        # Which chip, by driver label, the same way openocd is told. Its
+        # default is gpiochip0, which on a Pi 5 is not the header -- the RP1
+        # registers as gpiochip15 -- and on pi-sw2-p48 there is no gpiochip0
+        # at all, so the default reaches nothing.
+        chip = header_gpiochip(gpiochips())
+        if chip is not None:
+            harness += ["-d", "/dev/gpiochip%d" % chip]
     # stderr as well: that is where openFPGALoader says why it failed, and
     # without it a build missing its GPIO backend recorded raw "" and the
     # board simply vanished from the verdict.
@@ -758,17 +859,35 @@ def jtag_probe(want_flash=False, pins=None):
     res["cable"] = "digilent" if digilent else "gpio"
     if not digilent:
         res["pins"] = pins or HARNESS_PINS
-    if want_flash and digilent:
-        # the board profile supplies the part; the bridge replaces the design
+    if want_flash:
+        # The bridge replaces the running design either way, which is what
+        # --flash pays for. The board profile is only needed on a Digilent
+        # cable; on the GPIO harness the part comes from the chain. Matched
         # by number with the revision nibble masked, as labels.idcode_part
-        # does: a string list only ever matched the revisions written into it
-        is_100t = (int(res["idcode"], 16) & 0x0FFFFFFF) == 0x3631093
-        board = "arty_a7_100t" if is_100t else "arty_a7_35t"
-        fl = sh(["sudo", "openFPGALoader", "-b", board, "--detect", "-f"], timeout=120)
-        m = re.search(r"JEDEC ID: (0x[0-9a-f]+)", fl)
-        res["flash_jedec"] = m.group(1) if m else None
-        m = re.search(r"Detected: (.*)", fl)
-        res["flash"] = m.group(1).strip() if m else None
+        # does: a string list only ever matched the revisions written into it.
+        board = None
+        if digilent:
+            is_100t = (int(res["idcode"], 16) & 0x0FFFFFFF) == 0x3631093
+            board = "arty_a7_100t" if is_100t else "arty_a7_35t"
+        # --flash-info first: it reports the part, the density and the flash's
+        # own unique id in one go, and it exits non-zero when the read did not
+        # actually happen. Older builds have no such flag, so the JEDEC-only
+        # read stays as the fallback rather than the flash going unread.
+        info = flash_info_probe(harness, board)
+        if info:
+            res["flash_jedec"] = info["jedec"]
+            res["flash"] = " ".join(x for x in (info.get("manufacturer"),
+                                                info.get("part")) if x) or None
+            res["flash_uid"] = info["uid"]
+            res["flash_uid_bits"] = info["uid_bits"]
+            res["flash_uid_state"] = info["uid_state"]
+        else:
+            argv = list(harness) + (["-b", board] if board else [])
+            fl = sh(argv + ["--detect", "-f"], timeout=120)
+            m = re.search(r"JEDEC ID: (0x[0-9a-f]+)", fl)
+            res["flash_jedec"] = m.group(1) if m else None
+            m = re.search(r"Detected: (.*)", fl)
+            res["flash"] = m.group(1).strip() if m else None
     return res
 
 
@@ -1353,7 +1472,8 @@ def fpga_summary(boards):
         entry = {"kind": b["kind"]}
         for k in ("serial", "dna", "idcode", "flash", "flash_jedec", "gateware",
                   "gateware_id", "hw_rev", "mode", "trace_id",
-                  "dna_sources", "dna_agree", "dna_conflict", "soc_model"):
+                  "dna_sources", "dna_agree", "dna_conflict", "soc_model",
+                  "flash_uid", "flash_uid_bits", "flash_uid_state"):
             # not plain truthiness: FPGA id 0 is a real class (SP605_FT601)
             if b.get(k) is not None and b.get(k) != "":
                 entry[k] = b[k]
