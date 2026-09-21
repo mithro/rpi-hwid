@@ -57,6 +57,22 @@ def test_cynthion_names_are_pure_and_decorrelated():
     assert len(cluster) >= 10
 
 
+def test_acorn_names_are_pure_and_decorrelated():
+    """An Acorn is keyed on its Device DNA like a NeTV2, so it gets a name
+    the same way. The two boards actually on the fleet, read 2026-09-21."""
+    p48 = "0x0054b48664b04854"          # pi-sw2-p48, CLE-215+, XC7A200T
+    pi20 = "0x0028e5c45e304854"         # ps1 pi20, CLE-101, XC7A100T
+    assert names.acorn_name(p48).startswith("acorn-")
+    assert names.acorn_name(pi20).startswith("acorn-")
+    assert names.acorn_name(p48) != names.acorn_name(pi20)
+    # pure, however it is spelled
+    assert names.acorn_name("0054b48664b04854") == names.acorn_name(p48)
+    assert names.acorn_name(p48.upper()) == names.acorn_name(p48)
+    # DNAs off one wafer differ in a digit; the names must not
+    cluster = {names.acorn_name(p48[:-1] + c) for c in "0123456789abcdef"}
+    assert len(cluster) >= 10
+
+
 def test_cynthion_name_rejects_junk():
     with pytest.raises(ValueError, match="not a hex"):
         names.cynthion_name("not-hex")
@@ -467,6 +483,163 @@ def test_fpga_verdict_by_pcie_bars_and_ftdi():
         "idcode": "0x362d093", "flash": "spansion S25FL128S", "flash_jedec": "0x012018"}]
 
 
+def test_the_pcie_subsystem_id_names_the_card_under_the_gateware():
+    """vendor:device describes the gateware; subsystem exists precisely to
+    name the board under it. pi-sw2-p48 reports 10ee:7021 with subsystem
+    1e24:021f -- Squirrels Research Labs' own id for the CLE-215+ -- so the
+    card is named without a harness, a BAR or a guess (2026-09-21)."""
+    def board(subsystem):
+        return fpga.fpga_verdict({
+            "pcie": [{"slot": "0001:01:00.0", "id": "10ee:7021",
+                      "class": "0x058000", "bars": [1 << 20],
+                      "subsystem": subsystem}],
+            "ftdi": [], "jtag": None})[0]
+
+    p48 = board("1e24:021f")
+    assert p48["kind"] == "acorn"
+    assert p48["soc_model"] == "cle-215+"
+    assert board("1e24:0101")["soc_model"] == "cle-101"
+    # the flash still holds an image that states no model; a power cycle
+    # brings it back, and it must not become a different board when it does
+    assert board("10ee:0007")["kind"] == "unknown-fpga"
+    assert "soc_model" not in board("10ee:0007")
+
+
+def test_the_soc_ident_string_names_the_card_it_is_built_for():
+    """The fpgas.online Acorn SoC keeps an ident string at BAR0 0x800, one
+    character per 32-bit word: "fpgas-online Acorn PCIe SoC cle-215+ ...".
+    That is the board saying what it is, where its PCIe id only says what
+    gateware is loaded."""
+    words = [*b"fpgas-online Acorn PCIe SoC cle-215+ 2026-09-21", 0]
+    assert fpga.soc_ident(words) == "fpgas-online Acorn PCIe SoC cle-215+ 2026-09-21"
+    assert fpga.soc_model(fpga.soc_ident(words)) == "cle-215+"
+    assert fpga.soc_model("fpgas-online Acorn PCIe SoC cle-101 x") == "cle-101"
+    assert fpga.soc_model("something else entirely") is None
+    assert fpga.soc_ident([]) is None
+    # the same window copied bytewise comes back 0xff; that is not an ident
+    assert fpga.soc_ident([0xFFFFFFFF] * 64) is None
+
+
+def test_the_soc_dna_is_two_words_at_a_known_offset():
+    """DNA at BAR0 0x2800 (hi) and 0x2804 (lo), as the SoC lays it out."""
+    assert fpga.soc_dna(0x0054b486, 0x64b04854) == "0x0054b48664b04854"
+    assert fpga.soc_dna(0, 0) is None            # an unconfigured read
+    assert fpga.soc_dna(0xFFFFFFFF, 0xFFFFFFFF) is None
+
+
+def test_two_readings_of_one_dna_are_checked_against_each_other():
+    """An identifier read more than one way is worth more than one read twice
+    only if the readings are compared. Agreement is recorded so a label can
+    say how well known its number is; disagreement is never silently
+    resolved, because there is no way to tell which reading is the lie."""
+    agree = fpga.cross_check({"jtag": "0x0054b48664b04854",
+                              "pcie": "0x0054b48664b04854"})
+    assert agree["value"] == "0x0054b48664b04854"
+    assert agree["sources"] == ["jtag", "pcie"]
+    assert agree["agree"] is True
+    assert "conflict" not in agree
+
+    # spelled differently by two tools is still one value
+    same = fpga.cross_check({"jtag": "0x0054b48664b04854",
+                             "pcie": "54b48664b04854"})
+    assert same["agree"] is True
+
+    clash = fpga.cross_check({"jtag": "0x0054b48664b04854",
+                              "pcie": "0x0028e5c45e304854"})
+    assert clash["agree"] is False
+    assert clash["conflict"] == {"jtag": "0x0054b48664b04854",
+                                 "pcie": "0x0028e5c45e304854"}
+    assert clash["value"] is None       # no arbitrary winner is picked
+
+    one = fpga.cross_check({"jtag": "0x0054b48664b04854", "pcie": None})
+    assert one["value"] == "0x0054b48664b04854"
+    assert one["sources"] == ["jtag"]
+    assert one["agree"] is None         # nothing to agree with
+    assert fpga.cross_check({})["value"] is None
+
+
+def test_a_dna_read_two_ways_is_recorded_as_checked():
+    """pi-sw2-p48's real numbers: the chain and the SoC agree, so the board
+    records which methods saw it and that they matched."""
+    boards = [{"kind": "acorn", "slot": "0001:01:00.0", "dna": "0x0054b48664b04854",
+               "idcode": "0x13636093", "how": "x"}]
+    soc = {"0001:01:00.0": {"dna": "0x0054b48664b04854", "model": "cle-215+",
+                            "ident": "fpgas-online Acorn PCIe SoC cle-215+ 2026-09-21"}}
+    (board,) = fpga.merge_soc(boards, soc)
+    assert board["dna"] == "0x0054b48664b04854"
+    assert board["dna_sources"] == ["jtag", "pcie"]
+    assert board["dna_agree"] is True
+    assert board["soc_model"] == "cle-215+"
+
+
+def test_a_board_whose_two_readings_disagree_keeps_neither():
+    """There is no way to tell which reading is the lie, and the wrong one
+    would be printed. The board is left with no DNA, which the label
+    generator then refuses outright."""
+    boards = [{"kind": "acorn", "slot": "0001:01:00.0", "dna": "0x0054b48664b04854",
+               "how": "x"}]
+    soc = {"0001:01:00.0": {"dna": "0x0028e5c45e304854"}}
+    (board,) = fpga.merge_soc(boards, soc)
+    assert board["dna"] is None
+    assert board["dna_agree"] is False
+    assert board["dna_conflict"] == {"jtag": "0x0054b48664b04854",
+                                     "pcie": "0x0028e5c45e304854"}
+
+
+def test_the_soc_names_a_card_whose_pcie_id_no_longer_can():
+    """A board with no harness at all: the SoC's ident string is the only
+    thing left that says which card it is."""
+    boards = [{"kind": "unknown-fpga", "slot": "0001:01:00.0", "how": "x"}]
+    soc = {"0001:01:00.0": {"dna": "0x0054b48664b04854", "model": "cle-215+",
+                            "ident": "fpgas-online Acorn PCIe SoC cle-215+ x"}}
+    (board,) = fpga.merge_soc(boards, soc)
+    assert board["kind"] == "acorn"
+    assert board["dna"] == "0x0054b48664b04854"
+    assert board["dna_sources"] == ["pcie"]
+    assert "dna_agree" not in board          # nothing to agree with
+
+
+def test_a_failed_soc_read_leaves_the_jtag_reading_alone():
+    boards = [{"kind": "acorn", "slot": "0001:01:00.0", "dna": "0x0054b48664b04854",
+               "how": "x"}]
+    (board,) = fpga.merge_soc(boards, {"0001:01:00.0": {"error": "cannot map BAR0"}})
+    assert board["dna"] == "0x0054b48664b04854"
+    assert "dna_agree" not in board
+
+
+def test_the_harness_names_the_board_it_is_wired_to():
+    """A harness is not generic wiring: its pins are the card's own JTAG
+    header. 27:22:4:17 reaches a NeTV2 off the Pi header; 10:9:11:8 and
+    2:3:4:14 reach an Acorn's P1 Pico-EZmate on a Pi 5 and a Compute Blade.
+    Driving those pins is driving that card, which is the same evidence that
+    has always named a NeTV2."""
+    def chain(pins, idcode="0x13636093"):
+        return fpga.fpga_verdict({
+            "pcie": [], "ftdi": [],
+            "jtag": {"idcode": idcode, "dna": "0x0054b48664b04854",
+                     "cable": "gpio", "pins": pins}})[0]
+
+    assert chain("27:22:4:17", "0x3631093")["kind"] == "netv2"
+    assert chain("10:9:11:8")["kind"] == "acorn"
+    assert chain("2:3:4:14", "0x3631093")["kind"] == "acorn"
+    # a harness nobody has described still names nothing
+    assert chain("1:2:3:4")["kind"] == "jtag"
+
+
+def test_the_harness_upgrades_the_pcie_entry_rather_than_doubling_it():
+    """pi-sw2-p48: one Acorn, seen once on PCIe as its gateware and once on
+    the chain. It is one card and gets one label, named by the harness."""
+    f = {"pcie": [{"slot": "0001:01:00.0", "id": "10ee:7021", "class": "0x058000",
+                   "bars": [1 << 20], "subsystem": "10ee:0007"}],
+         "ftdi": [],
+         "jtag": {"idcode": "0x13636093", "dna": "0x0054b48664b04854",
+                  "cable": "gpio", "pins": "10:9:11:8"}}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["kind"] == "acorn"
+    assert board["dna"] == "0x0054b48664b04854"
+    assert board["idcode"] == "0x13636093"
+
+
 def test_a_chain_on_a_foreign_harness_is_not_called_a_netv2():
     """"The only board on the GPIO harness in this fleet is a NeTV2" stopped
     being true when Acorns went onto harnesses of their own. Measured on
@@ -861,7 +1034,9 @@ def test_probe_document_from_json_skips_banner():
     assert doc.summary.to_dict()["fpga"] == [{"kind": "acorn", "serial": None, "dna": None,
                                               "idcode": None, "flash": None, "flash_jedec": None,
                                               "gateware": None, "gateware_id": None,
-                                              "hw_rev": None, "mode": None, "trace_id": None}]
+                                              "hw_rev": None, "mode": None, "trace_id": None,
+                                              "dna_sources": [], "dna_agree": None,
+                                              "dna_conflict": None, "soc_model": None}]
     with pytest.raises(ValueError, match="no JSON"):
         ProbeDocument.from_json("h", "no json")
     with pytest.raises(ValueError, match=r"verdict\.summary"):

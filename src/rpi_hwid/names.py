@@ -45,6 +45,15 @@ CYNTHION_WORDS = [
     "prism", "reticle", "micrometer",
 ]
 
+# An Acorn is keyed on its Device DNA like a NeTV2, and DNAs off one wafer
+# differ in a digit, so it needs the same treatment. Trees, for the acorn.
+ACORN_WORDS = [
+    "oak", "rowan", "alder", "birch", "hazel", "holly", "willow", "aspen",
+    "beech", "elm", "hawthorn", "juniper", "larch", "linden", "maple", "poplar",
+    "spruce", "yew", "cedar", "cypress", "fir", "hornbeam", "ash", "chestnut",
+    "walnut", "sycamore", "laurel", "myrtle", "olive", "plane", "teak", "ebony",
+]
+
 ARTY_WORDS = [
     "otter", "heron", "finch", "raven", "wren", "stork", "swift", "kite",
     "robin", "egret", "crane", "gull", "lark", "owl", "hawk", "dove",
@@ -84,6 +93,12 @@ def cynthion_name(flash_uid: str) -> str:
     """
     digest = hashlib.sha256(normalise_dna(flash_uid).encode()).hexdigest()
     return "cynthion-" + CYNTHION_WORDS[int(digest, 16) % len(CYNTHION_WORDS)]
+
+
+def acorn_name(dna: str) -> str:
+    """The name for an Acorn's Device DNA. Pure, like a NeTV2's."""
+    digest = hashlib.sha256(normalise_dna(dna).encode()).hexdigest()
+    return "acorn-" + ACORN_WORDS[int(digest, 16) % len(ACORN_WORDS)]
 
 
 def arty_candidates(serial: str) -> Iterator[str]:

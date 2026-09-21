@@ -867,12 +867,22 @@ def draw_tinytapeout(lab, tt):
 USB_SPEED = {"12": "FS 12 Mbit/s", "480": "HS 480 Mbit/s", "5000": "SS 5 Gbit/s",
              "10000": "SS+ 10 Gbit/s", "20000": "SS+ 20 Gbit/s"}
 BOARD_MODEL = {"netv2": ("Alphamax", "NeTV2"), "arty": ("Digilent", "Arty A7"),
-               "acorn": ("SQRL", "Acorn CLE-215+"), "jtag": ("", "FPGA"),
+               "acorn": ("SQRL", "Acorn"), "jtag": ("", "FPGA"),
                # no maker: the gateware is known, the board under it is not
                "pcileech": ("", "PCILeech FPGA"),
                # named by its chain alone: the die is printed beside it
                "unknown-fpga": ("", "FPGA"),
                "cynthion": ("Great Scott Gadgets", "Cynthion")}
+
+# Which Acorn a die means. Both variants are SQRL cards on the same P1
+# harness, and once a board runs gateware of its own its PCIe id describes
+# that gateware rather than the card, so the die is what still tells a
+# CLE-215+ from a CLE-101 (the LiteFury). Measured: pi-sw2-p48 is XC7A200T,
+# ps1's blades are XC7A100T.
+ACORN_MODEL = {"XC7A200T": "Acorn CLE-215+", "XC7A100T": "Acorn CLE-101"}
+# ...and what the board says about itself, which beats inferring from the die:
+# the SoC's ident string names the card its image was built for.
+ACORN_SOC_MODEL = {"cle-215+": "Acorn CLE-215+", "cle-101": "Acorn CLE-101"}
 
 # The ECP5 each Cynthion revision carries, from that revision's platform file
 # in the cynthion package (`device` in cynthion/gateware/platform/*.py). Every
@@ -1069,6 +1079,12 @@ def fpga_records(docs, pinned_names=None):
             name = naming.netv2_name(b.dna)
         elif b.kind == "arty" and b.serial:
             name = arty_names[b.serial]
+        elif b.kind == "acorn":
+            # named from the DNA like a NeTV2, and the die picks the variant
+            model = ACORN_SOC_MODEL.get(b.soc_model or "") or ACORN_MODEL.get(
+                part or "", model)
+            if b.dna:
+                name = naming.acorn_name(b.dna)
         elif b.kind == "cynthion":
             # The revision names both the model and the die; the probe records
             # a flash uid only where the gateware published one, so a board

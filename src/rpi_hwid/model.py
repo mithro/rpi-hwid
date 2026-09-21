@@ -65,6 +65,14 @@ class FpgaBoard:
     # costs the board's capture, so a name derived from it could not be
     # recovered without taking the board offline again.
     trace_id: str | None = None
+    # Which methods read this board's DNA, and whether they agreed. An
+    # identifier read two ways is only worth more than one read twice if the
+    # readings are compared; a conflict is recorded rather than resolved,
+    # because there is no way to tell which reading is the lie.
+    dna_sources: tuple[str, ...] = ()
+    dna_agree: bool | None = None
+    dna_conflict: dict[str, str] | None = None
+    soc_model: str | None = None   # the card its SoC says it was built for
 
     @property
     def identity(self) -> str | None:
@@ -131,7 +139,8 @@ class Summary:
             power_class=d["power_class"],
             compatible=d.get("compatible") or "", memory=d.get("memory"),
             header=tuple(d.get("header", ())), hat_uuid=d.get("hat_uuid"),
-            fpga=tuple(FpgaBoard(**b) for b in d.get("fpga", ())),
+            fpga=tuple(FpgaBoard(**dict(b, dna_sources=tuple(b.get("dna_sources", ()))))
+                       for b in d.get("fpga", ())),
             tinytapeout=tuple(TinyTapeoutBoard(**b) for b in d.get("tinytapeout", ())),
             macs=tuple(Mac(**m) for m in d.get("macs", ())),
             usb_net=tuple(UsbNetAdapter(**u) for u in d.get("usb_net", ())),
@@ -143,6 +152,9 @@ class Summary:
         d = asdict(self)
         for key in ("header", "fpga", "tinytapeout", "macs", "usb_net"):
             d[key] = list(d[key])
+        # nested tuples too, or the document does not round-trip through JSON
+        for board in d["fpga"]:
+            board["dna_sources"] = list(board["dna_sources"])
         return d
 
 

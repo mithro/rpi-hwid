@@ -82,7 +82,8 @@ def test_listing_titles_carry_the_identifier_on_the_label(docs):
     assert rows["arty"].startswith("arty-hawk ")
     # pi-sw2-p48's Acorn, keyed on the DNA its chain gave up. Its PCIe id is
     # its gateware's, so the model comes out "FPGA" and the die names the part.
-    assert rows["unknown-fpga"] == "FPGA 0x0054b48664b04854"
+    assert rows["acorn"].endswith(" 0x0054b48664b04854")
+    assert rows["acorn"].startswith("acorn-")
 
 
 def test_a_pcileech_board_gets_a_model_but_no_invented_maker_or_name():
@@ -148,14 +149,44 @@ def test_a_trace_id_is_printed_when_it_has_been_read(tmp_path, monkeypatch):
     assert not [s for s in seen if s.endswith("…")]
 
 
+def test_an_acorn_is_named_and_modelled_like_every_other_board(docs, tmp_path,
+                                                               monkeypatch):
+    """The Acorn used to be the one FPGA that came out as a bare "FPGA" with
+    no name and no model, because it alone was made to prove itself through
+    PCIe. The harness names it, the die picks the variant, and the DNA names
+    it -- exactly as for a NeTV2."""
+    rec = {r.kind: r for r in labels.fpga_records(docs)}["acorn"]
+    assert rec.model == "Acorn CLE-215+"          # XC7A200T picks the variant
+    assert rec.part == "XC7A200T"
+    assert rec.maker == "SQRL"
+    assert rec.name == labels.naming.acorn_name("0x0054b48664b04854")
+    assert rec.ident == "0x0054b48664b04854"
+    seen = _drawn_strings(monkeypatch, docs, {"acorn"}, tmp_path)
+    assert "Acorn CLE-215+  ·  XC7A200T" in seen
+    assert not [s for s in seen if "not read" in s or s.endswith("…")]
+
+
+def test_the_smaller_acorn_is_the_cle_101(docs):
+    """ps1's blades carry the XC7A100T card; the die is what tells the two
+    Acorn variants apart once a PCIe id can no longer be relied on."""
+    doc = ProbeDocument.from_dict("pi20", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
+        "power_class": "usbc-supply",
+        "fpga": [{"kind": "acorn", "dna": "0x0028e5c45e304854",
+                  "idcode": "0x3631093"}]}}})
+    (rec,) = labels.fpga_records({"pi20": doc})
+    assert rec.model == "Acorn CLE-101"
+    assert rec.part == "XC7A100T"
+
+
 def test_the_other_boards_still_say_device_dna(docs):
     """The four existing kinds must be untouched: same foot, same caption."""
     recs = {r.kind: r for r in labels.fpga_records(docs)}
     assert recs["netv2"].ident == "0x00742c4e63b9085c"
     assert recs["netv2"].ident_caption == "Device DNA"
-    assert recs["unknown-fpga"].ident == "0x0054b48664b04854"
-    assert recs["unknown-fpga"].ident_caption == "Device DNA"
-    assert recs["unknown-fpga"].part == "XC7A200T"
+    assert recs["acorn"].ident == "0x0054b48664b04854"
+    assert recs["acorn"].ident_caption == "Device DNA"
+    assert recs["acorn"].part == "XC7A200T"
 
 
 def test_nothing_on_any_fpga_label_says_it_was_not_read(docs, tmp_path, monkeypatch):
@@ -170,19 +201,23 @@ def test_nothing_on_any_fpga_label_says_it_was_not_read(docs, tmp_path, monkeypa
         "power_class": "usbc-supply",
         "fpga": [{"kind": "arty", "serial": "210319A43AD3",
                   "dna": "0x0064f5483229085c", "idcode": "0x362d093"}]}}})
-    for kind, where in (("cynthion", docs), ("netv2", docs), ("unknown-fpga", docs),
+    for kind, where in (("cynthion", docs), ("netv2", docs), ("acorn", docs),
                         ("arty", docs), ("arty", {"pi3": bare_arty})):
         seen = _drawn_strings(monkeypatch, where, {kind}, tmp_path)
         assert not [s for s in seen if "not read" in s], kind
         assert not [s for s in seen if s.endswith("…")], kind
 
 
-def test_a_board_named_only_by_its_die_does_not_say_it_twice(docs, tmp_path,
-                                                             monkeypatch):
-    """With no derived name the headline falls back to the model, and for a
-    board known only by its chain that model is "FPGA" -- which printed
-    "FPGA" as the headline and "FPGA · XC7A200T" under it."""
-    seen = _drawn_strings(monkeypatch, docs, {"unknown-fpga"}, tmp_path)
+def test_a_board_named_only_by_its_die_does_not_say_it_twice(tmp_path, monkeypatch):
+    """A chain on a harness nobody has described still names no board, so the
+    headline falls back to the model -- which is "FPGA" and printed twice,
+    once as the headline and again in the row below."""
+    doc = ProbeDocument.from_dict("h", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
+        "power_class": "usbc-supply",
+        "fpga": [{"kind": "jtag", "dna": "0x0054b48664b04854",
+                  "idcode": "0x13636093"}]}}})
+    seen = _drawn_strings(monkeypatch, {"h": doc}, {"jtag"}, tmp_path)
     assert "XC7A200T" in seen            # the die is the headline
     assert "FPGA  ·  XC7A200T" not in seen
     assert seen.count("FPGA") <= 1
@@ -293,10 +328,7 @@ def test_fpga_records_named_and_typed(docs):
     assert recs["arty"].name == "arty-hawk"
     assert recs["arty"].model == "Arty A7-35T"
     assert recs["arty"].flash == "S25FL128S/127S"
-    # identified by its chain, not its gateware's PCIe id: no maker can be
-    # claimed from a DNA, and no name is derived from one either
-    assert recs["unknown-fpga"].name is None
-    assert recs["unknown-fpga"].maker == ""
+    assert recs["acorn"].maker == "SQRL"
 
 
 def test_tinytapeout_records(docs):
@@ -434,7 +466,7 @@ def test_all_labels_order_and_count(docs):
         ("pi-sw2-p33", "rpi"), ("pi-sw2-p33", "tt"),
         ("pi-sw2-p37", "rpi"), ("pi-sw2-p37", "usb"),
         ("pi-sw2-p47", "rpi"),
-        ("pi-sw2-p48", "rpi"), ("pi-sw2-p48", "unknown-fpga"),
+        ("pi-sw2-p48", "rpi"), ("pi-sw2-p48", "acorn"),
         ("rpi4-tt", "rpi"), ("rpi4-tt", "tt"), ("rpi4-tt", "tt"),
         ("rpi5-433mhz", "rpi"), ("rpi5-433mhz", "usb"),
         # this rig carries two FPGA boards, and both come out with it

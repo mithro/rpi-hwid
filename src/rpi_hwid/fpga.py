@@ -317,6 +317,181 @@ HARNESS_TCK, HARNESS_TMS, HARNESS_TDI, HARNESS_TDO = 4, 17, 27, 22
 # between a label and no label. --pins overrides it.
 
 
+# Which board each harness reaches. A harness is not generic wiring: its pins
+# are the card's own JTAG header, so driving them is driving that card. This
+# is the same evidence that has always named a NeTV2 -- it was simply the only
+# harness there was. Measured on the fleet 2026-09-20/21.
+HARNESS_BOARD = {
+    "27:22:4:17": "netv2",      # the NeTV2's, off the Pi's 40-pin header
+    "10:9:11:8": "acorn",       # an Acorn's P1 Pico-EZmate, on a Pi 5
+    "2:3:4:14": "acorn",        # an Acorn's P1, on a ps1 Compute Blade
+}
+
+
+# --- the fpgas.online Acorn SoC, over PCIe BAR0 ---------------------------------
+#
+# A second way to read an Acorn's identity, and the only one that needs no
+# JTAG harness at all. The SoC these cards now carry keeps an ident string and
+# the Device DNA in its register space:
+#     BAR0 + 0x800   ident, one ASCII character per 32-bit word, NUL-terminated
+#                    ("fpgas-online Acorn PCIe SoC cle-215+ <build date>")
+#     BAR0 + 0x2800  DNA, high word      BAR0 + 0x2804  DNA, low word
+# Offsets from the Acorn deployment, which built the SoC (2026-09-21).
+#
+# This is what makes the DNA checkable rather than merely read: the same
+# number comes back over JTAG and over PCIe, and cross_check() compares them.
+# The ident string is also the only thing on one of these cards that still
+# names the board once the Sqrl factory image is gone -- its PCIe id describes
+# the gateware, not the card under it.
+#
+# Reads only, and only within this one register window. The file's standing
+# rule against mapping a BAR came from mapping an *unknown* board's BAR, which
+# wedged a host; this is a known window in a known SoC, identified by its own
+# magic before anything is believed.
+SOC_IDENT_OFFSET = 0x800
+SOC_IDENT_WORDS = 64
+SOC_DNA_HI, SOC_DNA_LO = 0x2800, 0x2804
+SOC_IDENT_MAGIC = "fpgas-online"
+SOC_MODELS = ("cle-215+", "cle-101")
+
+
+def soc_ident(words):
+    """The ident string from BAR0: the low byte of each 32-bit word.
+
+    Takes the words themselves rather than a block of bytes, because this
+    BAR only answers naturally-aligned 32-bit reads. A bytewise copy of the
+    same window -- an ordinary mmap slice -- comes back as every byte 0xff
+    while word reads return the string (measured on pi-sw2-p48, 2026-09-21),
+    so how the window is read is part of what it means.
+    """
+    text = ""
+    for word in words:
+        char = word & 0xFF
+        if char == 0:
+            break
+        text += chr(char)
+    text = text.strip()
+    return text if text.startswith(SOC_IDENT_MAGIC) else None
+
+
+def soc_model(ident):
+    """Which Acorn the SoC says it was built for, from its ident string."""
+    if not ident:
+        return None
+    lowered = ident.lower()
+    for model in SOC_MODELS:
+        if model in lowered:
+            return model
+    return None
+
+
+def soc_dna(hi, lo):
+    """The Device DNA the SoC reports, or None for an unconfigured read."""
+    value = ((hi & 0xFFFFFFFF) << 32) | (lo & 0xFFFFFFFF)
+    if value in (0, 0xFFFFFFFFFFFFFFFF):
+        return None
+    return "0x%016x" % value
+
+
+# Run as root by the same interpreter, like the other readers here, and kept
+# to moving bytes: it maps the one register window, copies it, and unmaps.
+# Bus mastering is never enabled and nothing is written.
+SOC_READER = r'''
+import mmap, os, struct, sys
+bdf = sys.argv[1]
+path = "/sys/bus/pci/devices/%s/resource0" % bdf
+try:
+    fd = os.open(path, os.O_RDONLY)
+except OSError as e:
+    print("ERROR=cannot open %s: %s" % (path, e)); sys.exit(0)
+try:
+    size = 0x3000
+    m = mmap.mmap(fd, size, mmap.MAP_SHARED, mmap.PROT_READ)
+except (OSError, ValueError) as e:
+    os.close(fd); print("ERROR=cannot map BAR0: %s" % e); sys.exit(0)
+try:
+    # word reads, never a slice: this BAR answers a bytewise copy with 0xff
+    words = [struct.unpack_from("<I", m, 0x800 + 4 * i)[0] for i in range(64)]
+    hi, lo = struct.unpack_from("<I", m, 0x2800)[0], struct.unpack_from("<I", m, 0x2804)[0]
+    print("IDENT=" + ",".join("%08x" % w for w in words))
+    print("DNA=%08x%08x" % (hi, lo))
+finally:
+    m.close()
+    os.close(fd)
+'''
+
+
+def soc_probe(slot):
+    """The SoC's ident and DNA over PCIe, or {"error": why}."""
+    out = sh_all(["sudo", sys.executable or "python3", "-c", SOC_READER, slot],
+                 timeout=30)
+    err = re.search(r"ERROR=(.*)", out)
+    if err:
+        return {"error": err.group(1).strip()}
+    res = {}
+    m = re.search(r"IDENT=([0-9a-f,]*)", out)
+    if m:
+        words = [int(w, 16) for w in m.group(1).split(",") if w]
+        ident = soc_ident(words)
+        res["ident"] = ident
+        res["model"] = soc_model(ident)
+    m = re.search(r"DNA=([0-9a-f]{16})", out)
+    if m:
+        res["dna"] = soc_dna(int(m.group(1)[:8], 16), int(m.group(1)[8:], 16))
+    return res
+
+
+def normalise_id(value):
+    """A hex identifier as one canonical string, however a tool spelled it.
+
+    openFPGALoader prints 0x0054b48664b04854 where another path hands back
+    54b48664b04854; they are the same number and must compare equal, or a
+    board read two ways would look like two boards.
+    """
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text.startswith("0x"):
+        text = text[2:]
+    try:
+        return "0x%016x" % int(text, 16)
+    except ValueError:
+        return None
+
+
+def cross_check(readings):
+    """One identifier read several ways, compared.
+
+    A value read twice is worth more than a value read once only if the two
+    readings are actually checked against each other. `readings` maps the
+    method to what it returned; the result carries the agreed value, which
+    methods contributed, and whether they agreed.
+
+    A disagreement is never resolved here. There is no way to tell which
+    reading is the lie, and picking one would put an arbitrary number on a
+    sticker; the caller is told instead, and an identifier in conflict is
+    treated as one that was not read.
+    """
+    got = {}
+    for method, raw in sorted(readings.items()):
+        value = normalise_id(raw)
+        if value is not None:
+            got[method] = value
+    if not got:
+        return {"value": None, "sources": [], "agree": None}
+    distinct = set(got.values())
+    if len(distinct) > 1:
+        return {"value": None, "sources": sorted(got), "agree": False,
+                "conflict": dict(got)}
+    return {"value": distinct.pop(), "sources": sorted(got),
+            "agree": True if len(got) > 1 else None}
+
+
+def harness_board(pins):
+    """The board a GPIO harness is wired to, or None if nobody has said."""
+    return HARNESS_BOARD.get(pins or HARNESS_PINS)
+
+
 def harness_nums(pins):
     """openFPGALoader's TDI:TDO:TCK:TMS as openocd's (tck, tms, tdi, tdo).
 
@@ -617,6 +792,14 @@ def jtag_probe(want_flash=False, pins=None):
 PCILEECH_MAGIC = 0xAB89
 PCILEECH_ADDRS = (0x0000, 0x0008, 0x000A, 0x0010, 0x0012, 0x0014, 0x0016, 0x0022)
 PCILEECH_FILLER = 0x55556666        # an idle FIFO word, read little-endian
+
+
+# An Acorn names itself in its PCIe subsystem id, which is where a board
+# under a generic controller belongs. Measured on pi-sw2-p48 2026-09-21.
+# An image that states no model keeps the Xilinx default 10ee:0007 and is
+# deliberately absent here: it must stay unknown rather than become a
+# different board when the flash image comes back after a power cycle.
+ACORN_SUBSYSTEM = {"1e24:021f": "cle-215+", "1e24:0101": "cle-101"}
 
 
 def is_pcileech_pcie(pc):
@@ -1032,6 +1215,18 @@ def fpga_verdict(d):
                            "how": "PCIe %s, 128 KiB + 64 KiB BARs (%s)" % (
                                pc["id"], "SQRL Acorn CLE-215+" if pc["id"] == "1e24:021f"
                                else "RHS Research XDMA sample image")})
+        elif pc["subsystem"] in ACORN_SUBSYSTEM:
+            # vendor:device describes the gateware; the subsystem id exists to
+            # name the board under it, and 1e24 is Squirrels Research Labs'
+            # own. This is what still identifies an Acorn once its factory
+            # image is gone, with no harness, no BAR and no guess. It remains
+            # a claim made by gateware, like every PCI id here -- but the
+            # image that makes it is refused by its own flash tool when the
+            # IDCODE does not match the part.
+            model = ACORN_SUBSYSTEM[pc["subsystem"]]
+            boards.append({"kind": "acorn", "slot": pc["slot"], "soc_model": model,
+                           "how": "PCIe %s, subsystem %s (SQRL Acorn %s)" % (
+                               pc["id"], pc["subsystem"], model.upper())})
         elif pc["id"] == "1e24:0101":
             # SQRL's own vendor id, so this one does identify the card: the
             # CLE-101, sold as the LiteFury. pi14 and pi16 answer with it.
@@ -1090,19 +1285,20 @@ def fpga_verdict(d):
         # never a usable test). When PCIe already named the board, the
         # idcode and DNA join that entry. An Arty is on its own FTDI, never
         # the harness, so a chain beside an Arty stays "jtag".
-        netv2 = [b for b in boards if b["kind"] == "netv2"]
         arty = [b for b in boards if b["kind"] == "arty"]
-        # A chain read over a harness that is not the NeTV2's cannot be a
-        # NeTV2: Acorns are on harnesses of their own (10:9:11:8 on a Pi 5,
-        # 2:3:4:14 on a Compute Blade), and assuming otherwise put a
-        # netv2-<word> name on an Acorn CLE-215+ on pi-sw2-p48 (2026-09-21).
-        own_harness = j.get("cable") != "digilent" and j.get("pins") not in (
-            None, HARNESS_PINS)
+        # What the harness says this card is. On a Digilent cable the board is
+        # already named by its own FTDI, so the harness has nothing to add.
+        named = None if j.get("cable") == "digilent" else harness_board(j.get("pins"))
         # One card, one label: a chain read beside a PCIe endpoint that has no
-        # idcode yet is that endpoint's, not a second board.
+        # idcode yet is that endpoint's, not a second board. When the harness
+        # names the card, a generic PCIe entry is upgraded to it -- an Acorn
+        # running gateware of its own reports a PCIe id that describes the
+        # gateware, and the harness is what still knows the board.
+        same = [b for b in boards if b["kind"] == named] if named else []
         unclaimed = [b for b in boards
-                     if b["kind"] in ("unknown-fpga", "acorn", "pcileech")
+                     if b["kind"] in ("unknown-fpga", "pcileech")
                      and not b.get("idcode")]
+        netv2 = same if named else []
         if netv2:
             netv2[0].update(idcode=j["idcode"], dna=j.get("dna"),
                             how=netv2[0]["how"] + "; " + entry["how"])
@@ -1111,13 +1307,42 @@ def fpga_verdict(d):
                            how=arty[0]["how"] + "; " + entry["how"])
             if j.get("flash_jedec"):
                 arty[0].update(flash_jedec=j["flash_jedec"], flash=j.get("flash"))
-        elif own_harness and unclaimed:
-            unclaimed[0].update(idcode=j["idcode"], dna=j.get("dna"),
+        elif named and unclaimed:
+            unclaimed[0].update(kind=named, idcode=j["idcode"], dna=j.get("dna"),
                                 how=unclaimed[0]["how"] + "; " + entry["how"])
         else:
-            if not arty and not own_harness:
-                entry["kind"] = "netv2"
+            if named and not arty:
+                entry["kind"] = named
             boards.append(entry)
+    return boards
+
+
+def merge_soc(boards, soc):
+    """Fold each SoC reading into its board, checking the DNA against JTAG.
+
+    This is the point of reading a thing twice: the DNA the chain gave up and
+    the DNA the SoC reports are compared, and a board whose two readings
+    disagree keeps neither -- there is no way to tell which is the lie, and
+    an arbitrary choice would be printed on a sticker.
+    """
+    for board in boards:
+        reading = soc.get(board.get("slot") or "")
+        if not reading or reading.get("error"):
+            continue
+        checked = cross_check({"jtag": board.get("dna"), "pcie": reading.get("dna")})
+        board["dna_sources"] = checked["sources"]
+        if checked["agree"] is not None:
+            board["dna_agree"] = checked["agree"]
+        if checked.get("conflict"):
+            board["dna_conflict"] = checked["conflict"]
+        board["dna"] = checked["value"]
+        if reading.get("ident"):
+            board["soc_ident"] = reading["ident"]
+            # the SoC names the card its image was built for, which on a board
+            # whose factory image is gone is the only thing that still does
+            if reading.get("model") and board["kind"] in ("acorn", "unknown-fpga", "jtag"):
+                board["kind"] = "acorn"
+                board["soc_model"] = reading["model"]
     return boards
 
 
@@ -1127,7 +1352,8 @@ def fpga_summary(boards):
     for b in boards:
         entry = {"kind": b["kind"]}
         for k in ("serial", "dna", "idcode", "flash", "flash_jedec", "gateware",
-                  "gateware_id", "hw_rev", "mode", "trace_id"):
+                  "gateware_id", "hw_rev", "mode", "trace_id",
+                  "dna_sources", "dna_agree", "dna_conflict", "soc_model"):
             # not plain truthiness: FPGA id 0 is a real class (SP605_FT601)
             if b.get(k) is not None and b.get(k) != "":
                 entry[k] = b[k]
@@ -1135,7 +1361,7 @@ def fpga_summary(boards):
     return out
 
 
-def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None):
+def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=False):
     # A Cynthion is read from its descriptors alone, so it is collected
     # unconditionally: unlike every other board here, nothing is sent to it.
     f = {"pcie": pcie_devices(), "ftdi": ftdi_devices(), "cynthion": cynthion_devices()}
@@ -1154,14 +1380,24 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None):
     f["cynthion_jtag"] = None
     if force_offline and any(cynthion_flash_uid(c) for c in f["cynthion"]):
         f["cynthion_jtag"] = cynthion_offline_probe()
-    f["boards"] = fpga_verdict(f)
+    # A second reading of the same identity, over PCIe rather than JTAG, from
+    # the SoC these Acorns now carry. Opt-in because it maps a BAR: the window
+    # is known and read-only, but the rule against mapping one was written
+    # after an unknown board's BAR wedged a host, so it is asked for by name.
+    f["soc"] = {}
+    if soc:
+        for pc in f["pcie"]:
+            if pc["id"].startswith(("10ee:", "1e24:")):
+                f["soc"][pc["slot"]] = soc_probe(pc["slot"])
+    f["boards"] = merge_soc(fpga_verdict(f), f["soc"])
     f["summary"] = fpga_summary(f["boards"])
     return f
 
 
 def merge_fpga(doc, f):
     """Fold an fpga document into a Pi probe document (in place)."""
-    doc["fpga"] = {k: f[k] for k in ("pcie", "ftdi", "jtag", "cynthion", "cynthion_jtag")}
+    doc["fpga"] = {k: f[k] for k in ("pcie", "ftdi", "jtag", "cynthion",
+                                     "cynthion_jtag", "soc")}
     doc["verdict"]["fpga"] = f["boards"]
     doc["verdict"]["summary"]["fpga"] = f["summary"]
     return doc
@@ -1188,7 +1424,7 @@ def main():
         if arg.startswith("--pins="):
             pins = arg.split("=", 1)[1]
     f = collect_fpga("--jtag" in sys.argv, "--flash" in sys.argv,
-                     "--force-offline" in sys.argv, pins)
+                     "--force-offline" in sys.argv, pins, "--soc" in sys.argv)
     if "--json" in sys.argv:
         print(json.dumps(f, indent=1))
         return

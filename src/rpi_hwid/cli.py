@@ -83,7 +83,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def cmd_fpga(args: argparse.Namespace) -> int:
     from rpi_hwid import fpga
 
-    f = fpga.collect_fpga(args.jtag, args.flash, args.force_offline, args.pins)
+    f = fpga.collect_fpga(args.jtag, args.flash, args.force_offline, args.pins, args.soc)
     if args.json:
         print(json.dumps(f, indent=1))
     else:
@@ -173,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force-offline", action="store_true",
                    help="read a Cynthion's ECP5 TraceID, which ends its capture "
                         "and may drop power to its TARGET port")
+    p.add_argument("--soc", action="store_true",
+                   help="also read an fpgas.online SoC's ident and DNA over PCIe "
+                        "BAR0, to check them against JTAG")
     p.add_argument("--pins", metavar="TDI:TDO:TCK:TMS",
                    help="the GPIO JTAG harness, when it is not the NeTV2's "
                         f"{fpga_module_pins()} (an Acorn is 2:3:4:14 on a "
