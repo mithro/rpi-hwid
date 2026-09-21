@@ -156,6 +156,40 @@ def test_only_can_name_a_single_fpga_kind(docs):
     assert [k for _h, k, _t, _d, _r in rows] == ["cynthion"]
 
 
+def _drawn_strings(monkeypatch, docs, only, tmp_path):
+    """Every string that actually reaches the canvas, after fitting has had
+    its way with it -- so an elided value is visible to a test."""
+    seen: list[str] = []
+    real = labels.Label.text
+
+    def spy(self, x, y, s, *args, **kwargs):
+        seen.append(s)
+        return real(self, x, y, s, *args, **kwargs)
+
+    monkeypatch.setattr(labels.Label, "text", spy)
+    labels.render(docs, tmp_path / "spy.pdf", only=only)
+    return seen
+
+
+def test_nothing_on_a_cynthion_label_is_elided(docs, tmp_path, monkeypatch):
+    """`fit` cuts with an ellipsis rather than running off the label, which
+    is right for a board name and wrong for a caption: "ECP5 config flash
+    UI…" reads as a typo, and the instruction to write the uid in is gone."""
+    seen = _drawn_strings(monkeypatch, docs, {"cynthion"}, tmp_path)
+    assert "ECP5 config flash UID" in seen
+    assert not [s for s in seen if s.endswith("…")]
+
+
+def test_an_unread_cynthion_still_says_what_to_write_in(tmp_path, monkeypatch):
+    doc = ProbeDocument.from_dict("h", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
+        "power_class": "usbc-supply",
+        "fpga": [{"kind": "cynthion", "hw_rev": "1.4", "mode": "apollo"}]}}})
+    seen = _drawn_strings(monkeypatch, {"h": doc}, {"cynthion"}, tmp_path)
+    assert "ECP5 config flash UID, write it in" in seen
+    assert not [s for s in seen if s.endswith("…")]
+
+
 def test_fpga_records_named_and_typed(docs):
     recs = {r.kind: r for r in labels.fpga_records(docs)}
     assert recs["netv2"].name == "netv2-grove"

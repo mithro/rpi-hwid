@@ -539,9 +539,13 @@ def draw_fpga(lab, board):
         lab.fit(PAD, y + 0.5 * mm, board.ident, MONO, dna_size, LABEL_W - 2 * PAD)
     else:
         # the "0x" sits on the rule at the foot; the space above the rule,
-        # to the right of the QR column, is where the digits get written
+        # to the right of the QR column, is where the digits get written.
+        # The caption is a band of its own above that row, so it may have the
+        # whole inked width: held to the QR's width instead, a caption longer
+        # than "Device DNA" is elided mid-word ("ECP5 config flash UI…"),
+        # which reads as a typo and loses the instruction with it.
         lab.fit(PAD, cap_y, board.ident_caption + ", write it in", SANS, CAPTION,
-                qr_size, color=GREY)
+                LABEL_W - 2 * PAD, color=GREY)
         lab.text(PAD, y + 0.5 * mm, "0x", MONO, dna_size)
         lab.rule(PAD + 6 * mm, y + 0.5 * mm + dna_size * 0.72 + 0.3 * mm,
                  LABEL_W - 2 * PAD - 6 * mm)
