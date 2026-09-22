@@ -411,3 +411,22 @@ def data_dir(tmp_path):
     for name, raw in RAW.items():
         (tmp_path / f"{name}.json").write_text(json.dumps(raw))
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def no_downloads(monkeypatch):
+    """Nothing in this suite reaches the network.
+
+    `fpga.openfpgaloader_tool` fetches a static openFPGALoader when the
+    host's own copy cannot read a flash, which is the right behaviour on a
+    Pi and wrong in a test: it would make the suite depend on GitHub being
+    up and on a release existing. Stubbed to "no answer", which is the same
+    path a host with no route out takes. A test that wants the download path
+    stubs this itself.
+    """
+    from rpi_hwid import fpga
+
+    def refuse(url, timeout=180):
+        raise AssertionError("a test tried to fetch " + url)
+
+    monkeypatch.setattr(fpga, "ofl_get", refuse)

@@ -1518,3 +1518,34 @@ def test_a_checksum_is_only_accepted_for_the_file_it_names():
     star = ("7a8b12d15e3abdbe90d6637da6eed9af2d4d5aeb705120ffa6dd9e1bc501a7ad"
             " *openFPGALoader-1.1.1-linux-arm64\n")
     assert fpga.sha256_expected(star, "openFPGALoader-1.1.1-linux-arm64")
+
+
+def test_the_downloaded_tree_is_laid_out_as_the_release_documents_it():
+    """The published asset is a tarball, not a bare executable, because a
+    bare executable cannot read a flash. Measured 2026-09-22 on rpi5-netv2
+    with rp1-jtag's static build: --detect and --read-dna work perfectly,
+    and --flash-info fails with "Can't program SPI flash: missing
+    device-package information" because the spiOverJtag bridge bitstreams
+    are runtime data in a compiled-in DATA_DIR that does not exist on the
+    host. The tarball carries them, and OPENFPGALOADER_SOJ_DIR points the
+    binary at them."""
+    tree = fpga.ofl_tree("/cache", "1.1.1+fpgasonline.0.0.post12", "arm64")
+    assert tree["binary"] == (
+        "/cache/openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64"
+        "/bin/openFPGALoader")
+    assert tree["bridges"] == (
+        "/cache/openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64"
+        "/share/openFPGALoader")
+
+
+def test_a_downloaded_binary_is_run_with_its_own_bridges():
+    """`sudo` drops the environment, so the variable has to be set on the
+    other side of it -- which is why this is a prefix and not a dict the
+    caller merges into os.environ."""
+    argv = fpga.ofl_argv({"binary": "/c/t/bin/openFPGALoader",
+                          "bridges": "/c/t/share/openFPGALoader"})
+    assert argv == ["sudo", "env", "OPENFPGALOADER_SOJ_DIR=/c/t/share/openFPGALoader",
+                    "/c/t/bin/openFPGALoader"]
+    # the host's own copy needs no such thing: its bridges are where it was
+    # built to look for them
+    assert fpga.ofl_argv(None) == ["sudo", "openFPGALoader"]

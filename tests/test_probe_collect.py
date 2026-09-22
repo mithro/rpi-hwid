@@ -529,6 +529,18 @@ def test_openfpgaloader_is_told_which_gpiochip_the_header_is(fake_root, monkeypa
     assert seen[0][seen[0].index("-d") + 1] == "/dev/gpiochip15"
 
 
+def host_openfpgaloader(monkeypatch):
+    """Pin the tool to the host's own copy, flash-capable.
+
+    These tests stub sh_rc with one answer for every command, including
+    `openFPGALoader --help`, which would otherwise read as "this build cannot
+    read a flash" and send the probe off to fetch a static one. What they are
+    about is the reading, not which binary does it.
+    """
+    monkeypatch.setattr(fpga, "openfpgaloader_tool", lambda download=True: {
+        "argv": ["sudo", "openFPGALoader"], "source": "host", "flash_info": True})
+
+
 def test_a_flash_report_reaches_the_summary(fake_root, monkeypatch):
     """The whole point of --flash-info: the part, the density and the flash's
     own unique id, on the record where a label can use them."""
@@ -536,6 +548,7 @@ def test_a_flash_report_reaches_the_summary(fake_root, monkeypatch):
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/openFPGALoader")
     monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "idcode 0x362d093")
     monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (0, FLASH_INFO))
+    host_openfpgaloader(monkeypatch)
     res = fpga.jtag_probe(want_flash=True)
     assert res["flash_jedec"] == "0x20ba18"
     assert res["flash"] == "micron N25Q128_3V"
@@ -569,6 +582,7 @@ def test_the_arty_flash_profile_follows_the_die_not_the_spelling(fake_root, monk
     monkeypatch.setattr(fpga, "sh", fake_sh)
     # this build has no --flash-info, so the JEDEC-only read is what runs
     monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (1, "unknown option"))
+    host_openfpgaloader(monkeypatch)
     fpga.jtag_probe(want_flash=True)
     flash = [a for a in seen if "-f" in a]
     assert flash
@@ -1261,3 +1275,137 @@ def test_a_port_this_probe_itself_holds_is_still_read(monkeypatch):
     monkeypatch.setattr(tinytapeout, "port_holder_info",
                         lambda tty: ("pytest", str(os.getpid())))
     assert tinytapeout.foreign_holder("/dev/ttyACM0") is None
+
+
+# A release asset built here, with the layout the release documents: the
+# binary under bin/ and the spiOverJtag bridges under share/. The fake binary
+# answers --help the way a build carrying the flash-info series does, which
+# is the only question asked of it.
+OFL_VERSION = "1.1.1+fpgasonline.0.0.post12"
+OFL_ASSET = f"openFPGALoader-{OFL_VERSION}-linux-arm64.tar.gz"
+OFL_INDEX = {"series": "v0.0", "latest": {"stable": {"openfpgaloader": {
+    "arm64": {"asset": OFL_ASSET, "version": OFL_VERSION}}}}}
+
+
+def _release_tarball():
+    import io
+    import tarfile
+
+    root = f"openFPGALoader-{OFL_VERSION}-linux-arm64"
+    fake = b"#!/bin/sh\necho '      --flash-info-json arg     write it out'\n"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as archive:
+        for name, blob, mode in (
+                (root + "/bin/openFPGALoader", fake, 0o755),
+                (root + "/share/openFPGALoader/spiOverJtag_xc7a100tfgg484.bit.gz",
+                 b"not really a bitstream", 0o644),
+                (root + "/README.txt", b"set OPENFPGALOADER_SOJ_DIR\n", 0o644)):
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(blob), mode
+            archive.addfile(info, io.BytesIO(blob))
+    return buf.getvalue()
+
+
+def _serve(monkeypatch, tmp_path, tarball, digest=None):
+    """Stand in for the release: the index, the digest, and the asset."""
+    import hashlib
+
+    blob = tarball
+    sums = f"{digest or hashlib.sha256(blob).hexdigest()}  {OFL_ASSET}\n"
+    pages = {fpga.OFL_LATEST_JSON: json.dumps(OFL_INDEX).encode(),
+             OFL_ASSET + ".sha256": sums.encode(), OFL_ASSET: blob}
+
+    def get(url, timeout=180):
+        for name, body in pages.items():
+            if url.endswith("/" + name):
+                return body
+        return None
+
+    monkeypatch.setattr(fpga, "ofl_get", get)
+    monkeypatch.setattr(fpga, "OFL_CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (
+        (0, "      --flash-info-json arg") if args[0] != "openFPGALoader"
+        else (0, "      --detect   detect FPGA")))
+    monkeypatch.setattr(os, "uname", lambda: ("Linux", "h", "6", "#1", "aarch64"))
+
+
+def test_a_host_whose_openfpgaloader_is_too_old_fetches_one_that_is_not(
+        monkeypatch, tmp_path):
+    """Most of these Pis carry a distro openFPGALoader from before the
+    flash-info series existed, and a flash read is now the difference between
+    a label and no label. So the probe fetches the published static build --
+    verifying it against the digest published beside it before anything is
+    executed -- and runs it with its own bridge bitstreams, without which a
+    Xilinx flash read cannot happen at all."""
+    _serve(monkeypatch, tmp_path, _release_tarball())
+    tool = fpga.openfpgaloader_tool()
+    assert tool["flash_info"] is True
+    assert tool["source"] == OFL_ASSET
+    assert tool["version"] == OFL_VERSION
+    assert tool["argv"][:2] == ["sudo", "env"]
+    assert tool["argv"][2].startswith("OPENFPGALOADER_SOJ_DIR=")
+    assert tool["argv"][2].endswith("/share/openFPGALoader")
+    assert tool["argv"][3].endswith("/bin/openFPGALoader")
+    assert os.access(tool["argv"][3], os.X_OK)
+    # the bridges are the whole reason the asset is a tarball
+    bridges = tool["argv"][2].split("=", 1)[1]
+    assert os.listdir(bridges) == ["spiOverJtag_xc7a100tfgg484.bit.gz"]
+    # ...and a second call is a cache hit: nothing is fetched or re-verified
+    fetched = []
+    real = fpga.ofl_get
+    monkeypatch.setattr(fpga, "ofl_get", lambda url, timeout=180: (
+        fetched.append(url) or real(url, timeout)))
+    again = fpga.openfpgaloader_tool()
+    assert again["argv"] == tool["argv"]
+    assert again["sha256"] is None
+    assert [u for u in fetched if u.endswith(OFL_ASSET)] == []
+    # ...and with no route out at all, the build already here is still used,
+    # which on a rig with no path to GitHub is the difference between a
+    # label and none
+    monkeypatch.setattr(fpga, "ofl_get", lambda url, timeout=180: None)
+    offline = fpga.openfpgaloader_tool()
+    assert offline["argv"] == tool["argv"]
+    assert offline["cached"] is True
+    assert offline["version"] == OFL_VERSION
+
+
+def test_a_download_that_does_not_match_its_digest_is_never_run(monkeypatch,
+                                                                tmp_path):
+    """The digest is the only thing between a download and a binary handed to
+    sudo on a host full of hardware, so a mismatch is not a warning. Nothing
+    is unpacked, nothing is cached, and the probe falls back to whatever the
+    host has -- saying why."""
+    _serve(monkeypatch, tmp_path, _release_tarball(), digest="0" * 64)
+    tool = fpga.openfpgaloader_tool()
+    assert tool["flash_info"] is False
+    assert tool["source"] == "host"
+    assert "did not match its published sha256" in tool["why"]
+    assert not os.path.exists(str(tmp_path / "cache"
+                                  / f"openFPGALoader-{OFL_VERSION}-linux-arm64"))
+
+
+def test_a_tarball_that_would_write_outside_the_cache_is_refused(monkeypatch,
+                                                                 tmp_path):
+    """Python 3.5 has no extraction filter and this tarball came off the
+    network, so every member is checked before anything is written."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as archive:
+        info = tarfile.TarInfo("../escaped")
+        info.size = 3
+        archive.addfile(info, io.BytesIO(b"no!"))
+    assert fpga.ofl_unpack(buf.getvalue(), str(tmp_path)) is False
+    assert not os.path.exists(str(tmp_path.parent / "escaped"))
+
+
+def test_no_static_build_is_fetched_for_a_host_nothing_is_built_for(monkeypatch,
+                                                                    tmp_path):
+    """The workstation running the tests is one of these, and it has no FPGA
+    on it either. Saying so beats fetching an aarch64 binary for an x86."""
+    _serve(monkeypatch, tmp_path, _release_tarball())
+    monkeypatch.setattr(os, "uname", lambda: ("Linux", "h", "6", "#1", "x86_64"))
+    tool = fpga.openfpgaloader_tool()
+    assert tool["flash_info"] is False
+    assert "no static build is published for x86_64" in tool["why"]

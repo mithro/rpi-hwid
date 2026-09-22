@@ -67,6 +67,7 @@ analyzer re-enumerate -- which apollo's own `info --force-offline` does not do;
 """
 import fcntl
 import glob
+import hashlib
 import json
 import os
 import re
@@ -808,6 +809,11 @@ OFL_LATEST_JSON = "latest.json"
 # reports "armhf" or "arm64" literally; a Pi 3/4 on a 32-bit userland answers
 # armv7l even under a 64-bit kernel, and that is the binary it can run.
 OFL_ARCH = {"aarch64": "arm64", "armv7l": "armv7", "armv6l": "armv6"}
+# Where a fetched build is kept. Under the collecting user's home, not
+# /tmp and not a system directory: the probe runs unprivileged and a
+# binary it is going to hand to sudo should not be somewhere another
+# user could have written it.
+OFL_CACHE = "~/.cache/rpi-hwid/openfpgaloader"
 
 
 def ofl_supports_flash_info(help_text):
@@ -833,6 +839,52 @@ def ofl_asset(latest, track, arch):
         return None
 
 
+def ofl_tree(cache, version, arch):
+    """Where the binary and its bridge bitstreams sit once unpacked.
+
+    The asset is a tarball and not a bare executable, because a bare
+    executable cannot read a flash. Measured on rpi5-netv2 (2026-09-22) with
+    rp1-jtag's static build: --detect and --read-dna work perfectly, and
+    --flash-info fails with "Can't program SPI flash: missing device-package
+    information", because openFPGALoader's spiOverJtag bridge bitstreams are
+    runtime data in a compiled-in DATA_DIR that does not exist on these
+    hosts. The tarball carries them; OPENFPGALOADER_SOJ_DIR points the
+    binary at them (upstream src/xilinx.cpp, in v1.1.1 and master).
+    """
+    root = "%s/openFPGALoader-%s-linux-%s" % (cache, version, arch)
+    return {"root": root, "binary": root + "/bin/openFPGALoader",
+            "bridges": root + "/share/openFPGALoader"}
+
+
+def ofl_cached(cache, arch):
+    """The newest build already fetched for `arch`, or None.
+
+    Its version is read back out of the directory name the release gave it,
+    so a host with no route out still knows what it is holding.
+    """
+    best = None
+    for root in sorted(glob.glob("%s/openFPGALoader-*-linux-%s" % (cache, arch))):
+        name = os.path.basename(root)
+        version = name[len("openFPGALoader-"):-len("-linux-" + arch)]
+        tree = ofl_tree(cache, version, arch)
+        if os.path.exists(tree["binary"]):
+            tree["version"] = version
+            best = tree
+    return best
+
+
+def ofl_argv(tree):
+    """How to invoke openFPGALoader: the host's own copy, or a fetched tree.
+
+    `sudo` drops the environment, so the bridge directory has to be set on
+    the far side of it rather than merged into this process's environ.
+    """
+    if not tree:
+        return ["sudo", "openFPGALoader"]
+    return ["sudo", "env", "OPENFPGALOADER_SOJ_DIR=" + tree["bridges"],
+            tree["binary"]]
+
+
 def sha256_expected(sums, name):
     """The digest `sums` gives for `name`, or None.
 
@@ -853,6 +905,132 @@ def sha256_expected(sums, name):
             continue
         return digest
     return None
+
+
+def ofl_get(url, timeout=180):
+    """The bytes at `url`, or None. Nothing here is fatal on its own: a host
+    with no route to GitHub still has whatever openFPGALoader it has."""
+    import http.client
+    import urllib.request
+    try:
+        handle = urllib.request.urlopen(url, timeout=timeout)
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    try:
+        return handle.read()
+    except (OSError, http.client.HTTPException):
+        return None
+    finally:
+        handle.close()
+
+
+def ofl_unpack(blob, into):
+    """Unpack a release tarball under `into`, refusing any member that would
+    land outside it. Python 3.5 has no extraction filter, and a tarball
+    fetched over the network is exactly what one is for."""
+    import io
+    import tarfile
+    try:
+        archive = tarfile.open(fileobj=io.BytesIO(blob), mode="r:gz")
+    except tarfile.TarError:
+        return False
+    try:
+        root = os.path.abspath(into)
+        for member in archive.getmembers():
+            if not (member.isfile() or member.isdir()):
+                return False       # links, devices: not in a tool tarball
+            where = os.path.abspath(os.path.join(root, member.name))
+            if where != root and not where.startswith(root + os.sep):
+                return False
+        try:
+            # 3.12 and later: ask for the safe filter as well, even though
+            # every member has just been checked. 3.5 has no such argument,
+            # which is why the check above exists rather than the filter.
+            archive.extractall(root, filter="data")
+        except TypeError:
+            archive.extractall(root)
+    except (tarfile.TarError, OSError):
+        return False
+    finally:
+        archive.close()
+    return True
+
+
+def openfpgaloader_tool(download=True):
+    """An openFPGALoader that can read a flash, and where it came from.
+
+    The host's own copy if it has the flash-info series, else the published
+    static build, fetched once into a cache and verified against the digest
+    published beside it before anything is executed. A host whose copy is too
+    old is the normal case rather than an error: these Pis mostly carry a
+    distro build from before the series existed.
+    """
+    rc, out = sh_rc(["openFPGALoader", "--help"], timeout=20)
+    if ofl_supports_flash_info(out):
+        return {"argv": ofl_argv(None), "source": "host", "flash_info": True}
+    unable = {"argv": ofl_argv(None), "source": "host", "flash_info": False,
+              "why": "this host's openFPGALoader has no " + OFL_FLASH_FLAG}
+    if rc is None or not out:
+        unable["why"] = "no openFPGALoader on this host"
+    if not download:
+        return unable
+    arch = ofl_arch(os.uname()[4])
+    if arch is None:
+        unable["why"] = "no static build is published for " + os.uname()[4]
+        return unable
+    cache = os.path.expanduser(OFL_CACHE)
+    index = ofl_get(OFL_RELEASE_URL % (OFL_SERIES, OFL_LATEST_JSON), timeout=60)
+    try:
+        latest = json.loads(index.decode("utf-8"))
+    except (AttributeError, UnicodeDecodeError, ValueError):
+        latest = None
+    found = ofl_asset(latest, "stable", arch) if latest else None
+    if found is None:
+        # No index: no route out, or a release that has not been cut. A build
+        # fetched earlier is still on this host and still reads a flash, and
+        # falling back to it is the difference between a label and none on a
+        # rig with no path to GitHub.
+        held = ofl_cached(cache, arch)
+        if held is None:
+            unable["why"] = ("no static %s build could be found, and none is "
+                             "cached on this host" % arch)
+            return unable
+        return {"argv": ofl_argv(held), "source": os.path.basename(held["root"]),
+                "version": held["version"], "sha256": None, "cached": True,
+                "flash_info": True}
+    asset, version = found
+    tree = ofl_tree(cache, version, arch)
+    digest = None
+    if not os.path.exists(tree["binary"]):
+        sums = ofl_get(OFL_RELEASE_URL % (OFL_SERIES, asset + ".sha256"), timeout=60)
+        want = sha256_expected(sums.decode("utf-8", "replace") if sums else "", asset)
+        blob = ofl_get(OFL_RELEASE_URL % (OFL_SERIES, asset)) if want else None
+        if not want or not blob:
+            unable["why"] = "could not fetch %s and its digest" % asset
+            return unable
+        digest = hashlib.sha256(blob).hexdigest()
+        if digest != want:
+            # Never executed, never cached, and said out loud: a digest that
+            # does not match is the one case here that is not just a host
+            # being old.
+            unable["why"] = "%s did not match its published sha256" % asset
+            return unable
+        try:
+            os.makedirs(cache)
+        except OSError:
+            pass
+        if not ofl_unpack(blob, cache) or not os.path.exists(tree["binary"]):
+            unable["why"] = "%s did not unpack as the release documents" % asset
+            return unable
+        os.chmod(tree["binary"], 0o755)
+    got = sh_rc([tree["binary"], "--help"], timeout=20)[1]
+    if not ofl_supports_flash_info(got):
+        unable["why"] = "the fetched %s has no %s either" % (asset, OFL_FLASH_FLAG)
+        return unable
+    return {"argv": ofl_argv(tree), "source": asset, "version": version,
+            # the digest this run verified, where this run is the one that
+            # fetched it; a cache hit re-verifies nothing and says so
+            "sha256": digest, "flash_info": True}
 
 
 # openFPGALoader's --flash-info report: JEDEC id, the part, its density, and
@@ -1022,7 +1200,12 @@ def jtag_probe(want_flash=False, pins=None):
     """openFPGALoader over whichever cable this host has, else openocd.
     Returns the idcode line when a chain answers."""
     cables = digilent_cables()
-    if not sh(["which", "openFPGALoader"]):
+    # Which openFPGALoader, and whether it can read a flash at all. The
+    # static build is only worth fetching when the flash is actually wanted:
+    # every host's own copy can read a chain, and the tarball is 8 MB of
+    # bridge bitstreams that a --detect has no use for.
+    tool = openfpgaloader_tool(download=want_flash)
+    if not sh(["which", "openFPGALoader"]) and tool["source"] == "host":
         # openocd drives the Digilent FT2232 as well as the GPIO harness, so
         # the fallback covers an Arty too, not just a NeTV2.
         ocd = openocd_probe(cables[0]["serial"] if cables else None, pins)
@@ -1031,10 +1214,10 @@ def jtag_probe(want_flash=False, pins=None):
         return {"error": "openFPGALoader not installed"}
     digilent = bool(cables)
     if digilent:
-        harness = ["sudo", "openFPGALoader", "-c", "digilent"]
+        harness = tool["argv"] + ["-c", "digilent"]
     else:
-        harness = ["sudo", "openFPGALoader", "-c", "libgpiod",
-                   "--pins=" + (pins or HARNESS_PINS)]
+        harness = tool["argv"] + ["-c", "libgpiod",
+                                  "--pins=" + (pins or HARNESS_PINS)]
         # Which chip, by driver label, the same way openocd is told. Its
         # default is gpiochip0, which on a Pi 5 is not the header -- the RP1
         # registers as gpiochip15 -- and on pi-sw2-p48 there is no gpiochip0
@@ -1065,6 +1248,10 @@ def jtag_probe(want_flash=False, pins=None):
     m = re.search(r'"dna":\s*"(0x[0-9a-f]+)"', dna)
     res["dna"] = m.group(1) if m else None
     res["cable"] = "digilent" if digilent else "gpio"
+    # Which build read this, so a value can be traced to the thing that read
+    # it -- and so a host whose copy cannot read a flash says why rather than
+    # simply having no flash in its document.
+    res["openfpgaloader"] = tool
     if not digilent:
         res["pins"] = pins or HARNESS_PINS
     if want_flash:
