@@ -84,16 +84,16 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 </tr>
 <tr>
 <td>NeTV2, carrying the<br>Device DNA and the<br>name derived from it</td>
-<td>Arty A7-35T, with<br>its Digilent serial<br>and flash part</td>
+<td>Arty A7-35T, with<br>its Digilent serial and<br>its flash's unique id</td>
 <td>An Acorn CLE-215+<br>under gateware that<br>hides its PCIe id:<br>named by its die</td>
 </tr>
 <tr>
-<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/cynthion.png" alt="Cynthion r1.4; an ECP5 board, keyed on its configuration flash UID with the die's own TraceID above it" width="180"></td>
+<td><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/cynthion.png" alt="Cynthion r1.4; an ECP5 board, keyed on the TraceID burned into its die, with its configuration flash's UID among the flash facts" width="180"></td>
 <td></td>
 <td></td>
 </tr>
 <tr>
-<td>Cynthion r1.4, an<br>ECP5 board: its config<br>flash UID, and the<br>die's own TraceID</td>
+<td>Cynthion r1.4, an<br>ECP5 board, keyed on<br>the die's TraceID; its<br>flash UID sits below</td>
 <td></td>
 <td></td>
 </tr>

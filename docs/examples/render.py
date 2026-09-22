@@ -32,7 +32,7 @@ PX = DPI / 72.0
 # (kind, title substring) -> file name
 EXAMPLES = [
     ("netv2", "netv2-grove", "netv2"),
-    ("arty", "arty-hawk", "arty"),
+    ("arty", "arty-hoopoe", "arty"),
     ("acorn", "0x0054b48664b04854", "acorn"),
     ("cynthion", "0x1b808604604e0e", "cynthion"),
     ("tt", "TT06", "tinytapeout"),
@@ -40,7 +40,7 @@ EXAMPLES = [
     ("tt", "FPGA", "tinytapeout-fpga"),
     ("rpi", "Pi 5 4 GB", "rpi5"),
     ("rpi", "Pi 5 1 GB", "rpi5-poe-hat"),
-    ("rpi", "10000000ce8e3593", "rpi4-pmod-hat"),
+    ("rpi", "10000000f1b7bb5a", "rpi4"),
     ("rpi", "Pi 3", "rpi3bplus"),
     ("rpi", "Zero", "rpi-zero-w-bonnet"),
     ("opi", "Orange Pi PC", "orange-pi-pc"),

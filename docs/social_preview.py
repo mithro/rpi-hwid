@@ -70,7 +70,7 @@ STICKERS = [
     ("rpi", "Pi 5 4 GB", 938, 126, 2.5),
     ("rpi", "Zero", 150, 336, 1.5),
     ("usb", "AX88179", 510, 356, -2.0),
-    ("arty", "arty-hawk", 870, 372, -2.5),
+    ("arty", "arty-hoopoe", 870, 372, -2.5),
 ]
 
 
@@ -86,7 +86,11 @@ def corners(x, y, angle):
 
 
 def find(titles, kind, needle):
-    hits = [(draw, data) for k, title, draw, data in titles if k == kind and needle in title]
+    # all_labels yields (host, kind, title, draw, record); it grew the host in
+    # fd1774a and this had gone on unpacking four, so the generator had not
+    # run since -- the same way docs/examples/render.py had stopped running.
+    hits = [(draw, data) for _host, k, title, draw, data in titles
+            if k == kind and needle in title]
     if len(hits) != 1:
         raise SystemExit(f"{len(hits)} fixture labels match {kind} {needle!r}, want one")
     return hits[0]

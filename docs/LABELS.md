@@ -45,21 +45,22 @@ matched back to the machine it came from.
 
 ```
 $ rpi-hwid labels --data data/ --list
-sheet 1 row 1 col 1  pi-sw2-p16     rpi    Pi 4 Model B 2 GB 10000000ce8e3593
-sheet 1 row 1 col 2  pi-sw2-p16     arty   arty-hawk
 sheet 1 row 1 col 3  pi-sw2-p22     opi    Orange Pi PC 1 GB 02c000812eb7a34e
-sheet 1 row 2 col 1  pi-sw2-p47     rpi    Pi 5 1 GB c36b093f773d46b8
-sheet 1 row 2 col 2  pi-sw2-p48     unknown-fpga  FPGA 0x0054b48664b04854
-sheet 1 row 2 col 3  rpi4-tt        rpi    Pi 4 Model B 4 GB 100000003a7e1c9b
-sheet 1 row 3 col 1  rpi4-tt        tt     TT06 E6614C311B7A7A37
-sheet 1 row 3 col 2  rpi4-tt        tt     TTGF0p2 E66360B8A3C1D5F2
-sheet 1 row 3 col 3  rpi5-netv2     rpi    Pi 5 4 GB d88100008543dc30
-sheet 1 row 4 col 1  rpi5-netv2     netv2  netv2-grove
-sheet 1 row 4 col 2  rpi5-netv2     usb    ASIX Elec. Corp. AX88179 00:0e:c6:82:b5:e1
-sheet 1 row 7 col 3  rpicm1-serial  rpi    Pi Compute Module 1 512 MB 0000000067bdbf54
-sheet 2 row 1 col 1  rpicm1-serial  usb    Realtek USB 10/100/1000 LAN 00:e0:4c:68:36:95
+sheet 1 row 3 col 1  pi-sw2-p47     rpi    Pi 5 1 GB c36b093f773d46b8
+sheet 1 row 3 col 2  pi-sw2-p48     rpi    Pi 5 2 GB 0cd35697db04a4ab
+sheet 1 row 3 col 3  pi-sw2-p48     acorn  acorn-willow 0x0054b48664b04854
+sheet 1 row 4 col 1  pi3            rpi    Pi 4 Model B 1 GB 10000000f1b7bb5a
+sheet 1 row 4 col 2  pi3            arty   arty-hoopoe 0x0064f5483229085c
+sheet 1 row 4 col 3  rpi4-tt        rpi    Pi 4 Model B 4 GB 100000003a7e1c9b
+sheet 1 row 5 col 1  rpi4-tt        tt     TT06 E6614C311B7A7A37
+sheet 1 row 6 col 2  rpi5-netv2     rpi    Pi 5 4 GB d88100008543dc30
+sheet 1 row 6 col 3  rpi5-netv2     netv2  netv2-grove 0x00742c4e63b9085c
+sheet 1 row 7 col 1  rpi5-netv2     cynthion cynthion-theodolite 0x1b808604604e0e
+sheet 1 row 7 col 2  rpi5-netv2     usb    ASIX Elec. Corp. AX88179 00:0e:c6:82:b5:e1
+sheet 1 row 7 col 3  rpib-serial    rpi    Pi Model B 512 MB 00000000110aeed6
+sheet 2 row 1 col 1  rpib-serial    usb    Realtek 802.11n NIC 80:3f:5d:13:8e:67
 $ rpi-hwid labels --data data/ --out labels.pdf
-13 labels on 1 sheet -> labels.pdf
+26 labels on 2 sheets -> labels.pdf
 ```
 
 `--outline` draws the die-cut edges for an alignment print on plain paper;
@@ -87,7 +88,7 @@ The layout is always the same, so a stack of them reads at a glance.
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5-poe-hat.png" alt="Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read" width="49%">
 </p>
 <p>
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4-pmod-hat.png" alt="Pi 4 with a Digilent Pmod HAT Adaptor" width="49%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4.png" alt="Pi 4; its header carries nothing identifiable" width="49%">
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi3bplus.png" alt="Pi 3B+; the wlan MAC is derived from the eth MAC" width="49%">
 </p>
 <p>
