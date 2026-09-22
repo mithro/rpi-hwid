@@ -945,3 +945,16 @@ def test_a_part_that_says_it_has_no_unique_id_still_gets_a_label(tmp_path,
     # the evidence stays in the document and off the 48 mm label
     assert not [s for s in seen if "security register" in s]
     assert not [s for s in seen if s.endswith("…")]
+
+
+def test_the_cynthions_flash_reads_the_same_whichever_way_it_is_learned():
+    """Its type comes from the revision's bill of materials today, and from
+    the chip itself once something asks it over background SPI. The two must
+    not describe the same part in two different ways, or a board would
+    change its label by being read."""
+    from_bom = labels.CYNTHION_FLASH["1.4"]
+    from_chip = labels.flash_text(labels.flash_from_jedec("0xef4016"))
+    assert from_bom == from_chip == "Winbond W25Q32JV  ·  4 MiB"
+    # ...and the part gives its unique id up to 0x4B, which is what the
+    # gateware used: the published serial is 64 bits, Read Unique ID's width.
+    assert labels.flash_from_jedec("0xef4016")["uid_read_with"] == "read-uid"

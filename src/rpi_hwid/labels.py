@@ -1028,6 +1028,12 @@ JEDEC_PART = {
     0x012018: "S25FL128S/S25FL127S",
     0x010219: "S25FL256S",
     0xEF4018: "W25Q128",
+    # The Cynthion's configuration flash, which its revision's bill of
+    # materials names (U7, W25Q32JVSS, 32 Mbit). The id is this table's usual
+    # standing -- a datasheet fact, not a reading -- and it is here so that
+    # the BOM's answer and the chip's own answer describe the part the same
+    # way, rather than a board changing its label by being read.
+    0xEF4016: "W25Q32JV",
     # pi3's Arty, measured 2026-09-21; openFPGALoader calls it N25Q128_3V
     0x20BA18: "N25Q128",
     0xEF4019: "W25Q256",
