@@ -1088,8 +1088,11 @@ JEDEC_VENDOR = {
 JEDEC_PART = {
     # MX25L6405, 6405D, 6406E, 6408E, 6436E, 6445E, 6465E, 6473E: the NeTV2's
     0xC22017: "MX25L64xx",
-    # S25FL127S, 128P, 128S and 129P. pi9's Arty is a 127S -- it answers SFDP
-    # 1.6, which the 128S has not got -- but the id alone cannot say so.
+    # S25FL127S, 128P, 128S and 129P. The extended id narrows an FL-S to the
+    # 127S or the 128S, and SFDP separates those two: the S25FL127S datasheet
+    # (Infineon 001-98282 Rev. *K, 10.2.4) documents RSFDP 5Ah, and the
+    # S25FL128S/256S datasheet (002-19099 Rev. *D) has no such command and
+    # never mentions SFDP. Not used yet: see SPANSION_FAMILY.
     0x012018: "S25FL12x",
     # S25FL256S, and the 1.8 V S25FS256S: p48's Acorn
     0x010219: "S25Fx256S",
