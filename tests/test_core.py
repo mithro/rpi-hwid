@@ -432,7 +432,7 @@ def test_the_gateware_is_only_asked_when_both_signatures_are_there(monkeypatch, 
     calls = []
     monkeypatch.setattr(fpga, "pcie_devices", lambda: pcie)
     monkeypatch.setattr(fpga, "ftdi_devices", lambda: ftdi)
-    monkeypatch.setattr(fpga, "jtag_probe", lambda flash=False, pins=None: None)
+    monkeypatch.setattr(fpga, "jtag_probe", lambda flash=False, pins=None, parts=None: None)
     monkeypatch.setattr(fpga, "pcileech_probe", lambda: calls.append(1) or {"version": "4.14",
                                                                              "fpga_id": 9})
     fpga.collect_fpga(jtag=True)
@@ -448,6 +448,15 @@ def test_the_gateware_is_only_asked_when_both_signatures_are_there(monkeypatch, 
 # its JTAG.
 P38_CHAIN = {"idcode": "0x3632093", "family": "artix a7 75t",
              "dna": "0x006425440bc8985c", "cable": "ch347"}
+
+
+def test_only_gateware_built_for_one_package_names_it():
+    """FPGA id 9 is LeechCore's "Enigma X1", built for xc7a75tfgg484 alone.
+    An id with no single package behind it, or no id at all, names none."""
+    assert fpga.gateware_parts({"fpga_id": 9}) == {0x3632093: "xc7a75tfgg484"}
+    assert fpga.gateware_parts({"fpga_id": 3}) == {}
+    assert fpga.gateware_parts({"error": "no reply"}) == {}
+    assert fpga.gateware_parts(None) == {}
 
 
 def test_a_chain_on_a_usb_jtag_cable_is_the_card_on_pcie():

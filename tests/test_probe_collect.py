@@ -680,6 +680,34 @@ def test_a_ch347_chain_is_driven_as_one_and_its_flash_left_alone(fake_root,
     assert "no package is known" in res["flash_error"]
 
 
+def _ch347_flash(monkeypatch, idcode, parts):
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "ch347_cables", lambda: [{"path": "3-2"}])
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
+                        "/usr/bin/openFPGALoader" if args[:1] == ["which"]
+                        else '{"dna": "0x006425440bc8985c"}')
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: f"idcode {idcode}")
+    ran = []
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (ran.append(args), (1, ""))[1])
+    host_openfpgaloader(monkeypatch)
+    res = fpga.jtag_probe(want_flash=True, parts=parts)
+    return [a for a in ran if "--flash-info-json" in a], res
+
+
+def test_the_gateware_names_the_package_when_the_die_agrees(fake_root, monkeypatch):
+    """pi-sw1-p38's gateware reports FPGA id 9, LeechCore's "Enigma X1", whose
+    pcileech-fpga project is built for xc7a75tfgg484 -- and the chain reads
+    an XC7A75T. With the two in agreement the bridge for that package is
+    loaded; the flash's own bitstream header then says whether it was right."""
+    parts = fpga.gateware_parts({"version": "4.14", "fpga_id": 9})
+    (flash, *_rest), _res = _ch347_flash(monkeypatch, "0x3632093", parts)
+    assert flash[flash.index("--fpga-part") + 1] == "xc7a75tfgg484"
+    # ...but not for a die the gateware was not built for
+    none, res = _ch347_flash(monkeypatch, "0x3631093", parts)
+    assert none == []
+    assert "no package is known" in res["flash_error"]
+
+
 def test_a_chain_neither_tool_can_read_says_why_twice(fake_root, monkeypatch):
     monkeypatch.setattr(fpga, "digilent_cables", list)
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:

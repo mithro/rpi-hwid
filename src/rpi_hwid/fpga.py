@@ -1222,6 +1222,22 @@ def flash_info_from_json(doc):
 GPIO_HARNESS_PART = {0x3631093: "xc7a100tfgg484", 0x3636093: "xc7a200tfbg484"}
 
 
+# The package a PCILeech gateware was built for, by the FPGA id it reports
+# (register 0x0A), where its project builds for exactly one: LeechCore's
+# device_fpga.c lists id 9 as "Enigma X1", and pcileech-fpga's EnigmaX1
+# project (vivado_generate_project.tcl at 7938a89) is xc7a75tfgg484-2. Keyed
+# with the die too, because a gateware only says what it was built for: the
+# part is used only where the chain reads that same die. It picks the bridge
+# and nothing else -- the flash's own bitstream header is what confirms it.
+PCILEECH_GATEWARE_PART = {9: (0x3632093, "xc7a75tfgg484")}
+
+
+def gateware_parts(pcileech):
+    """{die: part} for the chain beside this PCILeech gateware, or {}."""
+    entry = PCILEECH_GATEWARE_PART.get((pcileech or {}).get("fpga_id"))
+    return {entry[0]: entry[1]} if entry else {}
+
+
 def flash_info_probe(harness, board=None, part=None):
     """(openFPGALoader's flash report over `harness` or {}, and the tail of
     what it said when there is no report).
@@ -1278,9 +1294,10 @@ def digilent_cables():
             if f["id"] == "0403:6010" and (f["manufacturer"] or "").startswith("Digilent")]
 
 
-def jtag_probe(want_flash=False, pins=None):
+def jtag_probe(want_flash=False, pins=None, parts=None):
     """openFPGALoader over whichever cable this host has, else openocd.
-    Returns the idcode line when a chain answers."""
+    Returns the idcode line when a chain answers. `parts` is {die: part} from
+    what the card's own gateware said, for a cable with no harness to go by."""
     cables = digilent_cables()
     # Which openFPGALoader, and whether it can read a flash at all. The
     # static build is only worth fetching when the flash is actually wanted:
@@ -1357,8 +1374,9 @@ def jtag_probe(want_flash=False, pins=None):
         if digilent:
             board = "arty_a7_100t" if die == 0x3631093 else "arty_a7_35t"
         else:
-            # Nothing is known of a CH347's card but its die, so it gets no part
-            part = GPIO_HARNESS_PART.get(die) if cable == "gpio" else None
+            # A CH347's card is known only by its die and what its gateware
+            # was built for, so it gets a part only where the two agree
+            part = (GPIO_HARNESS_PART if cable == "gpio" else parts or {}).get(die)
             if part is None:
                 res["flash_jedec"] = res["flash"] = None
                 res["flash_error"] = ("no package is known for idcode %s on a %s "
@@ -2095,15 +2113,17 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     # A Cynthion is read from its descriptors alone, so it is collected
     # unconditionally: unlike every other board here, nothing is sent to it.
     f = {"pcie": pcie_devices(), "ftdi": ftdi_devices(), "cynthion": cynthion_devices()}
-    f["jtag"] = jtag_probe(flash, pins) if jtag else None
     # The gateware is asked only when the PCIe edge has already shown its
     # signature and an FT601 is present: sending register reads into some
     # other device's FT601 would be writing into whatever that device is.
-    # Opt-in with --jtag, which already means "talk to the FPGA".
+    # Opt-in with --jtag, which already means "talk to the FPGA". Asked before
+    # the chain, because a flash read replaces the gateware -- and what it
+    # says it was built for is what picks that read's bridge.
     f["pcileech"] = None
     if jtag and any(is_pcileech_pcie(pc) for pc in f["pcie"]) \
             and any(u["id"] == "0403:601f" for u in f["ftdi"]):
         f["pcileech"] = pcileech_probe()
+    f["jtag"] = jtag_probe(flash, pins, gateware_parts(f["pcileech"])) if jtag else None
     # The ECP5 TraceID, and only when asked for by name. This ends the
     # board's capture and may drop power to whatever is on its TARGET port,
     # so it is not folded into --jtag, which is harmless everywhere else.
