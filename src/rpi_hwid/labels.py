@@ -1091,6 +1091,7 @@ JEDEC_PART = {
     # Micron's N25Q128 and the same die renamed MT25QL128: pi3's Arty
     0x20BA18: "N25Q128/MT25QL128",
     0xEF4016: "W25Q32xx",      # BV, FV and JV-IQ; the Cynthion's
+    0xEF4017: "W25Q64xx",      # BV, CV and FV; pi-sw1-p38's PCILeech card
     0xEF4018: "W25Q128xx",     # BV, FV and JV-IQ
     0xEF4019: "W25Q256xx",     # FV and JV-IQ
 }

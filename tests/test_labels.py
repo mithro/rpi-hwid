@@ -116,6 +116,31 @@ def test_a_pcileech_board_shows_its_gateware_as_numbers_not_a_board_name(tmp_pat
         list(labels.all_labels(docs, {"fpga"}))
 
 
+# pi-sw1-p38's card, read on 2026-09-22 by openfpgaloader-36 with rpi-hwid's
+# probe (gateware and DNA) and openFPGALoader's flash document (--fpga-part
+# xc7a75tfgg484, the package its gateware's project is built for).
+P38_CARD = {"kind": "pcileech", "dna": "0x006425440bc8985c", "idcode": "0x3632093",
+            "gateware": "4.14", "gateware_id": 9, "flash_jedec": "0xef4017",
+            "flash": "Winbond W25Q64", "flash_uid": "df64ac431b4b202f",
+            "flash_uid_bits": 64, "flash_uid_state": "read"}
+
+
+def test_a_pcileech_card_with_its_die_and_flash_read_gets_a_label(tmp_path, monkeypatch):
+    """Everything a label needs, read off the card itself: the Device DNA over
+    the CH347 and the flash over the bridge. Its gateware is still printed as
+    numbers and never as a board name."""
+    docs = {"pi-sw1-p38": ProbeDocument.from_dict("pi-sw1-p38", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "e8387e35dbce7843",
+        "revision": "b04171", "power_class": "undetermined", "fpga": [P38_CARD]}}})}
+    (row,) = labels.all_labels(docs, {"fpga"})
+    assert row[2] == "PCILeech FPGA 0x006425440bc8985c"
+    seen = _drawn_strings(monkeypatch, docs, {"pcileech"}, tmp_path)
+    assert "Winbond W25Q64xx  ·  8 MiB" in seen
+    assert "df64ac431b4b202f" in seen
+    assert "gateware v4.14  ·  FPGA id 9" in seen
+    assert not [s for s in seen if s.endswith("…")]
+
+
 def test_a_cynthion_is_keyed_on_the_die_not_the_flash_chip(docs, tmp_path):
     """An ECP5's TraceID is the number burned into the die, which is what a
     Xilinx Device DNA is, so it belongs in the same place and carries the
@@ -960,6 +985,7 @@ def test_no_shuttle_mark_is_a_wordmark():
     ("0x010219", "Spansion S25Fx256S  ·  32 MiB"),   # S25FL256S and S25FS256S
     ("0x20ba18", "Micron N25Q128/MT25QL128  ·  16 MiB"),   # one die, renamed
     ("0xef4016", "Winbond W25Q32xx  ·  4 MiB"),      # BV FV JV
+    ("0xef4017", "Winbond W25Q64xx  ·  8 MiB"),      # BV CV FV: pi-sw1-p38's
     ("0xef4018", "Winbond W25Q128xx  ·  16 MiB"),
     ("0xef4019", "Winbond W25Q256xx  ·  32 MiB"),
     # a manufacturer byte nobody here has met: there is no family to name,
