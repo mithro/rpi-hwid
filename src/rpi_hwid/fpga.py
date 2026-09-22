@@ -2208,6 +2208,17 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     if jtag and any(is_pcileech_pcie(pc) for pc in f["pcie"]) \
             and any(u["id"] == "0403:601f" for u in f["ftdi"]):
         f["pcileech"] = pcileech_probe()
+    # A second reading of the same identity, over PCIe rather than JTAG, from
+    # the SoC these Acorns now carry. Opt-in because it maps a BAR: the window
+    # is known and read-only, but the rule against mapping one was written
+    # after an unknown board's BAR wedged a host, so it is asked for by name.
+    # Asked before the chain for the same reason as the gateware: a flash
+    # read replaces the SoC, and read afterwards it answered nothing at all.
+    f["soc"] = {}
+    if soc:
+        for pc in f["pcie"]:
+            if pc["id"].startswith(("10ee:", "1e24:")):
+                f["soc"][pc["slot"]] = soc_probe(pc["slot"])
     f["jtag"] = jtag_probe(flash, pins, gateware_parts(f["pcileech"]),
                            fpga_endpoints(f["pcie"])) if jtag else None
     # The ECP5 TraceID, and only when asked for by name. This ends the
@@ -2216,15 +2227,6 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     f["cynthion_jtag"] = None
     if force_offline and any(cynthion_flash_uid(c) for c in f["cynthion"]):
         f["cynthion_jtag"] = cynthion_offline_probe()
-    # A second reading of the same identity, over PCIe rather than JTAG, from
-    # the SoC these Acorns now carry. Opt-in because it maps a BAR: the window
-    # is known and read-only, but the rule against mapping one was written
-    # after an unknown board's BAR wedged a host, so it is asked for by name.
-    f["soc"] = {}
-    if soc:
-        for pc in f["pcie"]:
-            if pc["id"].startswith(("10ee:", "1e24:")):
-                f["soc"][pc["slot"]] = soc_probe(pc["slot"])
     f["boards"] = merge_soc(fpga_verdict(f), f["soc"])
     f["summary"] = fpga_summary(f["boards"])
     return f

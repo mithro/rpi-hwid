@@ -443,6 +443,25 @@ def test_the_gateware_is_only_asked_when_both_signatures_are_there(monkeypatch, 
     assert not calls, "and never without --jtag"
 
 
+def test_the_soc_is_read_before_a_flash_read_replaces_it(monkeypatch):
+    """A flash read loads the spiOverJtag bridge over the running design and
+    takes the card off PCIe while it does. Read after it, pi-sw2-p48's Acorn
+    SoC answered nothing (ident and DNA both null, 2026-09-22), so the DNA's
+    PCIe cross-check silently went missing from the board."""
+    order = []
+    monkeypatch.setattr(fpga, "pcie_devices",
+                        lambda: [{"slot": "0001:01:00.0", "id": "10ee:7021",
+                                  "class": "0x058000", "bars": [1 << 20],
+                                  "subsystem": "10ee:0007"}])
+    monkeypatch.setattr(fpga, "ftdi_devices", list)
+    monkeypatch.setattr(fpga, "jtag_probe",
+                        lambda flash=False, pins=None, parts=None, detach=None:
+                        order.append("jtag") or None)
+    monkeypatch.setattr(fpga, "soc_probe", lambda slot: order.append("soc") or {})
+    fpga.collect_fpga(jtag=True, flash=True, soc=True)
+    assert order == ["soc", "jtag"]
+
+
 # pi-sw1-p38's chain, read by openfpgaloader-36 on 2026-09-22 over the WCH
 # CH347 on the Pi's USB (`-c ch347_jtag --detect`, then `--read-dna` twice,
 # identical both times). The FT601 beside it is PCILeech's data path, not
