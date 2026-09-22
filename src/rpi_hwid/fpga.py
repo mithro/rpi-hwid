@@ -266,6 +266,46 @@ def trace_id_value(raw):
     return "0x%014x" % masked
 
 
+def flash_id_from_raw(raw):
+    """The JEDEC id out of a 0x9F reply: one turnaround byte, then three.
+
+    Rejects the two answers a chip that is not there gives -- all ones and
+    all zeroes -- for the same reason the TraceID mask does: either would
+    otherwise be printed on a sticker as an identity.
+    """
+    try:
+        data = bytearray.fromhex(raw)
+    except (TypeError, ValueError):
+        return None
+    if len(data) < 4:
+        return None
+    ident = data[1] << 16 | data[2] << 8 | data[3]
+    if ident in (0, 0xFFFFFF):
+        return None
+    return "0x%06x" % ident
+
+
+def flash_uid_from_raw(raw):
+    """The unique id out of a 0x4B reply: four dummy bytes, then eight.
+
+    In the order the flash clocked them out. apollo folds the same bytes up
+    little-endian for display, which is a presentation choice rather than a
+    fact about the chip; what makes this readable at all is that the same
+    number is already on the USB bus as the gateware's serial, so the order
+    is settled by comparison rather than by assumption (see the caller).
+    """
+    try:
+        data = bytearray.fromhex(raw)
+    except (TypeError, ValueError):
+        return None
+    if len(data) < 13:
+        return None
+    uid = data[5:13]
+    if not any(uid) or all(b == 0xFF for b in uid):
+        return None
+    return "".join("%02x" % b for b in uid)
+
+
 def cynthion_offline_parse(out):
     """What the offline reader said, as values rather than text.
 
@@ -284,6 +324,24 @@ def cynthion_offline_parse(out):
     res["trace_id"] = trace_id_value(m.group(1)) if m else None
     m = re.search(r"FLASHUID=([0-9a-fA-F]+)", out)
     res["flash_uid"] = m.group(1).lower() if m else None
+    # ...and the same chip asked directly, over the ECP5's background SPI.
+    m = re.search(r"FLASHIDRAW=([0-9a-fA-F]+)", out)
+    res["flash_jedec"] = flash_id_from_raw(m.group(1)) if m else None
+    m = re.search(r"FLASHUIDRAW=([0-9a-fA-F]+)", out)
+    read = flash_uid_from_raw(m.group(1)) if m else None
+    if read:
+        # Two paths to one number: the gateware read it off the flash and
+        # published it as a USB string descriptor, and this read it off the
+        # flash over JTAG. They are independent enough that agreement is
+        # real evidence -- a framing error in one cannot agree with the
+        # other -- so the disagreement is recorded rather than resolved.
+        res["flash_uid_read"] = read
+        res["flash_uid_bits"] = 64
+        res["flash_uid_state"] = "read"
+        if res["flash_uid"]:
+            res["flash_uid_agree"] = read == res["flash_uid"]
+        else:
+            res["flash_uid"] = read
     # Whether the analyzer came back, which apollo's own --force-offline never
     # checks: it reads and leaves the FPGA held offline.
     m = re.search(r"RESTORED=(\S+)", out)
@@ -1031,6 +1089,8 @@ def jtag_probe(want_flash=False, pins=None):
             res["flash_uid"] = info["uid"]
             res["flash_uid_bits"] = info["uid_bits"]
             res["flash_uid_state"] = info["uid_state"]
+            # only the document carries a note; the printed report has none
+            res["flash_uid_note"] = info.get("uid_note")
         else:
             argv = list(harness) + (["-b", board] if board else [])
             fl = sh(argv + ["--detect", "-f"], timeout=120)
@@ -1247,10 +1307,23 @@ USBDEVFS_CONTROL = 0xC0000000 | (ctypes.sizeof(Ctrl) << 16) | (ord("U") << 8) | 
 CLAIM, RELEASE = 0x8004550F, 0x80045510
 OUT_DEV, IN_DEV, OUT_IFACE = 0x40, 0xC0, 0x41
 GET_INFO, START, STOP = 0xb8, 0xbf, 0xbe
-CLEAR_OUT, SET_OUT, GET_IN, SCAN, GO_TO = 0xb0, 0xb1, 0xb2, 0xb3, 0xb5
+CLEAR_OUT, SET_OUT, GET_IN, SCAN, GO_TO, RUN_CLOCK = 0xb0, 0xb1, 0xb2, 0xb3, 0xb5, 0xb4
 FORCE_OFFLINE, RECONFIGURE, ALLOW_TAKEOVER = 0xc1, 0xc0, 0xc2
-RESET, DRSHIFT, IRSHIFT, IRPAUSE, DRPAUSE = 0, 4, 11, 13, 6
+RESET, IDLE, DRSHIFT, IRSHIFT, IRPAUSE, DRPAUSE = 0, 1, 4, 11, 13, 6
 UIDCODE_PUB = 0x19
+# The ECP5 will hand its configuration SPI lines to JTAG: this instruction,
+# then a two-byte unlock into the DR, after which every DR shift is an SPI
+# transaction with the configuration flash. It is how `apollo flash-info`
+# reads the flash, and the only way to reach a chip whose pins belong to the
+# FPGA's configuration bank.
+ENTER_BACKGROUND_SPI = 0x3A
+SPI_UNLOCK = (0x68, 0xFE)
+READ_JEDEC_ID, READ_UID = 0x9F, 0x4B
+# 0xFF x8 clears any half-issued command, then 0x66 0x99 is the flash's own
+# reset-enable/reset pair; apollo sends the same three before it trusts a
+# reply. Sizes: the id is three bytes after one turnaround byte, and 0x4B is
+# four dummy bytes then eight of unique id.
+SPI_WAKE = ((0xFF,) * 8, (0x66,), (0x99,))
 
 def rd(d, name):
     try:
@@ -1322,6 +1395,30 @@ def scan(fd, bits, out=None):
     ctrl(fd, OUT_DEV, SCAN, value=bits, index=advance)
     return ctrl(fd, IN_DEV, GET_IN, length=(bits + 7) // 8)
 
+
+def rev(b):
+    return int("{:08b}".format(b)[::-1], 2)
+
+
+def spi(fd, data, flip):
+    """One SPI transaction with the configuration flash, over background SPI.
+
+    JTAG shifts bits and SPI moves bytes, so a transaction goes out with its
+    byte order reversed and each byte bit-reversed, and comes back the same
+    way: apollo's _background_spi_transfer does both in software, and its
+    `bits` type undoes the byte order again on the way in because bytes() of
+    one is little-endian. The two reversals commute, so the net effect is
+    that response[i] is the byte the flash sent while receiving data[i].
+    Where the firmware reports that it flips bits in whole bytes itself, the
+    software half is dropped rather than done twice.
+    """
+    def turn(seq):
+        out = list(seq)[::-1]
+        return out if flip else [rev(b) for b in out]
+    ctrl(fd, OUT_DEV, GO_TO, value=DRSHIFT)
+    got = scan(fd, len(data) * 8, bytearray(turn(data)))
+    return bytearray(turn(bytearray(got)))
+
 restore_only = "restore-only" in sys.argv
 if "recover" in sys.argv:
     # A board left in Apollo mode -- because a restore failed, or because
@@ -1384,8 +1481,6 @@ try:
         except (IOError, OSError):
             pass
         flip = bool(quirks & 1)          # QUIRK_FLIP_BITS_IN_WHOLE_BYTES
-        def rev(b):
-            return int("{:08b}".format(b)[::-1], 2)
         ctrl(fd, OUT_DEV, START)
         ctrl(fd, OUT_DEV, GO_TO, value=RESET)
         # IR <- UIDCODE_PUB. Resting in IRPAUSE is what apollo's own ECP5 code
@@ -1399,11 +1494,39 @@ try:
         if flip:
             got = bytearray(rev(b) for b in got)
         ctrl(fd, OUT_DEV, GO_TO, value=DRPAUSE)
-        ctrl(fd, OUT_DEV, STOP)
         # The bytes exactly as the chain clocked them out. What they mean is
         # decided above, unprivileged, where a test can hold the reader to
         # the numbers a real board returned.
         print("TRACEIDRAW=" + "".join("%02x" % b for b in got))
+        # The configuration flash, in the same offline window: the die's
+        # number and the flash's are both wanted and the window is the
+        # expensive part, so one visit takes both. Background SPI is entered
+        # from RESET, because the TAP has just been left in DRPAUSE.
+        ctrl(fd, OUT_DEV, GO_TO, value=RESET)
+        ctrl(fd, OUT_DEV, GO_TO, value=IRSHIFT)
+        scan(fd, 8, bytearray([rev(ENTER_BACKGROUND_SPI) if flip
+                               else ENTER_BACKGROUND_SPI]))
+        ctrl(fd, OUT_DEV, GO_TO, value=IRPAUSE)
+        ctrl(fd, OUT_DEV, GO_TO, value=DRSHIFT)
+        scan(fd, 16, bytearray(list(SPI_UNLOCK)[::-1] if flip
+                               else [rev(b) for b in list(SPI_UNLOCK)[::-1]]))
+        ctrl(fd, OUT_DEV, GO_TO, value=IDLE)
+        ctrl(fd, OUT_DEV, RUN_CLOCK, value=1)
+        for wake in SPI_WAKE:
+            spi(fd, wake, flip)
+        time.sleep(0.1)
+        # 0x9F: one turnaround byte, then manufacturer, type, capacity.
+        print("FLASHIDRAW=" + "".join(
+            "%02x" % b for b in spi(fd, (READ_JEDEC_ID, 0, 0, 0), flip)))
+        # 0x4B: four dummy bytes, then eight of unique id. Read as well as
+        # the id because the gateware already published it as the USB serial,
+        # so the two together say whether this transport is being read right
+        # at all -- a framing error cannot agree with a number taken off the
+        # bus by an entirely different path.
+        print("FLASHUIDRAW=" + "".join(
+            "%02x" % b for b in spi(fd, (READ_UID,) + (0,) * 12, flip)))
+        ctrl(fd, OUT_DEV, GO_TO, value=RESET)
+        ctrl(fd, OUT_DEV, STOP)
     except (IOError, OSError) as e:
         # A failed read must not cost the reporting of whether the rig came
         # back: that is the line the caller most needs.
@@ -1526,10 +1649,16 @@ def fpga_verdict(d):
         mode = cynthion_mode(c)
         uid = cynthion_flash_uid(c)
         rev = cynthion_revision(c.get("bcd_device"))
-        trace = read.get("trace_id") if uid and read.get("flash_uid") == uid else None
+        mine = bool(uid) and read.get("flash_uid") == uid
+        trace = read.get("trace_id") if mine else None
         boards.append({
             "kind": "cynthion", "path": c["path"], "serial": uid,
             "hw_rev": rev, "mode": mode, "trace_id": trace,
+            # the flash's own answers, from the same offline window
+            "flash_jedec": read.get("flash_jedec") if mine else None,
+            "flash_uid": uid,
+            "flash_uid_bits": read.get("flash_uid_bits") if mine else None,
+            "flash_uid_state": read.get("flash_uid_state") if mine else None,
             "how": "USB %s%s%s%s" % (
                 c["id"],
                 (", Cynthion r%s" % rev) if rev else "",
@@ -1623,7 +1752,8 @@ def fpga_summary(boards):
         for k in ("serial", "dna", "idcode", "flash", "flash_jedec", "gateware",
                   "gateware_id", "hw_rev", "mode", "trace_id",
                   "dna_sources", "dna_agree", "dna_conflict", "soc_model",
-                  "flash_uid", "flash_uid_bits", "flash_uid_state"):
+                  "flash_uid", "flash_uid_bits", "flash_uid_state",
+                  "flash_uid_note"):
             # not plain truthiness: FPGA id 0 is a real class (SP605_FT601)
             if b.get(k) is not None and b.get(k) != "":
                 entry[k] = b[k]

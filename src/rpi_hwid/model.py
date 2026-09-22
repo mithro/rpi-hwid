@@ -83,6 +83,12 @@ class FpgaBoard:
     flash_uid: str | None = None
     flash_uid_bits: int | None = None
     flash_uid_state: str | None = None   # read | blank | none
+    # Why, where the part itself says so. `none` on its own is only the
+    # reading tool saying it knows no unique-id command for this part, which
+    # is not evidence the silicon has none; `none` with a note is the chip
+    # having been asked and answered, as a Macronix does in its security
+    # register. Only the second is a fact a label may carry.
+    flash_uid_note: str | None = None
 
     @property
     def identity(self) -> str | None:

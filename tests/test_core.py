@@ -1017,6 +1017,11 @@ def test_fpga_verdict_names_a_cynthion_from_usb_alone():
     assert board["mode"] == "analyzer"
     assert fpga.fpga_summary([board]) == [{
         "kind": "cynthion", "serial": "267125df30c460de",
+        # the serial is recorded twice on purpose: it is the board's
+        # identifier on the bus and it is the configuration flash's own
+        # unique id, and a reader of the document should not have to know
+        # that those are the same number to find either of them.
+        "flash_uid": "267125df30c460de",
         "hw_rev": "1.4", "mode": "analyzer"}]
 
 
@@ -1190,7 +1195,8 @@ def test_probe_document_from_json_skips_banner():
                                               "dna_sources": [], "dna_agree": None,
                                               "dna_conflict": None, "soc_model": None,
                                               "flash_uid": None, "flash_uid_bits": None,
-                                              "flash_uid_state": None}]
+                                              "flash_uid_state": None,
+                                              "flash_uid_note": None}]
     with pytest.raises(ValueError, match="no JSON"):
         ProbeDocument.from_json("h", "no json")
     with pytest.raises(ValueError, match=r"verdict\.summary"):
@@ -1229,7 +1235,7 @@ def test_summary_round_trips_tinytapeout_boards():
 
 def test_load_collected(data_dir):
     docs = load_collected(data_dir)
-    assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi-sw2-p16", "rpiz-serial",
+    assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi3", "rpiz-serial",
                          "pi-sw2-p47", "pi-sw2-p48",
                          "pi-sw2-p22", "rpi4-tt", "pi-sw2-p33", "pi-sw2-p37", "rpi5-433mhz",
                          "rpib-serial", "rpicm1-serial"}
