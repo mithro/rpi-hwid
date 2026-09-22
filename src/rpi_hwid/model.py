@@ -89,6 +89,9 @@ class FpgaBoard:
     # having been asked and answered, as a Macronix does in its security
     # register. Only the second is a fact a label may carry.
     flash_uid_note: str | None = None
+    # What stopped a flash read that was attempted, in the reading tool's
+    # words, so a refused label can say why the obvious command will not do.
+    flash_error: str | None = None
 
     @property
     def identity(self) -> str | None:

@@ -1371,7 +1371,8 @@ def test_probe_document_from_json_skips_banner():
                                               "dna_conflict": None, "soc_model": None,
                                               "flash_uid": None, "flash_uid_bits": None,
                                               "flash_uid_state": None,
-                                              "flash_uid_note": None}]
+                                              "flash_uid_note": None,
+                                              "flash_error": None}]
     with pytest.raises(ValueError, match="no JSON"):
         ProbeDocument.from_json("h", "no json")
     with pytest.raises(ValueError, match=r"verdict\.summary"):

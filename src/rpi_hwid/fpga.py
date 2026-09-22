@@ -2042,7 +2042,7 @@ def fpga_verdict(d):
 
 # What a chain's flash read leaves on the board it belongs to
 JTAG_FLASH_KEYS = ("flash_jedec", "flash", "flash_uid", "flash_uid_bits",
-                   "flash_uid_state", "flash_uid_note")
+                   "flash_uid_state", "flash_uid_note", "flash_error")
 
 
 def merge_soc(boards, soc):
@@ -2083,7 +2083,7 @@ def fpga_summary(boards):
                   "gateware_id", "hw_rev", "mode", "trace_id",
                   "dna_sources", "dna_agree", "dna_conflict", "soc_model",
                   "flash_uid", "flash_uid_bits", "flash_uid_state",
-                  "flash_uid_note"):
+                  "flash_uid_note", "flash_error"):
             # not plain truthiness: FPGA id 0 is a real class (SP605_FT601)
             if b.get(k) is not None and b.get(k) != "":
                 entry[k] = b[k]

@@ -1242,6 +1242,7 @@ class FpgaLabel:
     flash_uid: str | None = None      # the flash's own unique id, where read
     flash_uid_state: str | None = None   # read | blank | none
     flash_uid_note: str | None = None    # why, where the part itself says so
+    flash_error: str | None = None       # what stopped a read that was tried
     gateware: str | None = None      # "gateware v4.14  ·  FPGA id 9" (pcileech)
     # The ECP5's die identifier, masked to its factory 56 bits. Shown, never
     # keyed on: reaching it costs the board's capture, so a name derived from
@@ -1390,6 +1391,7 @@ def fpga_records(docs, pinned_names=None):
                                  "read" if b.kind == "cynthion" and b.serial
                                  else None),
                              flash_uid_note=b.flash_uid_note,
+                             flash_error=b.flash_error,
                              ident_caption=ident_caption))
     return out
 
@@ -1526,7 +1528,11 @@ def all_labels(docs, only, pinned_names=None, order=None):
                         "that host and collect again -- note that this "
                         "reconfigures the FPGA." % (
                             r.host, r.kind, why, FLASH_READ_WITH.get(
-                                r.kind, "rpi-hwid fpga --jtag --flash")))
+                                r.kind, "rpi-hwid fpga --jtag --flash"))
+                        # a read that was tried and stopped: the command
+                        # above will stop the same way until this is fixed
+                        + (" The last attempt stopped: %s." % r.flash_error
+                           if r.flash_error else ""))
                 # the identifier the sticker is keyed on, as a Pi row carries
                 # its serial and a USB row its MAC
                 ident = r.ident or r.serial or (r.gateware or "").replace("  ·  ", ", ")

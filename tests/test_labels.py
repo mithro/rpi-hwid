@@ -928,6 +928,28 @@ def test_a_board_whose_flash_was_not_fully_read_is_fatal(flash, because, tmp_pat
     assert "pi3" in str(caught.value)
 
 
+def test_a_flash_read_that_was_tried_and_failed_says_what_stopped_it():
+    """pi-sw1-p38's PCILeech card: its DNA is read over the CH347, but its
+    die comes in five packages and nothing says which, so the probe loads no
+    bridge. "Read it with rpi-hwid fpga --jtag --flash" alone would send
+    someone to run a command that cannot succeed."""
+    import conftest
+
+    raw = copy.deepcopy(conftest.PI5_NETV2)
+    raw["verdict"]["summary"]["fpga"] = [{
+        "kind": "pcileech", "dna": "0x006425440bc8985c", "idcode": "0x3632093",
+        "flash_error": "no package is known for idcode 0x3632093 on a ch347 "
+                       "cable, so no bridge was loaded"}]
+    doc = ProbeDocument.from_dict("pi-sw1-p38", raw)
+    with pytest.raises(labels.FlashNotReadError) as caught:
+        list(labels.all_labels({"pi-sw1-p38": doc}, {"fpga"}))
+    assert "no package is known for idcode 0x3632093" in str(caught.value)
+    # the probe's reason survives the trip through the summary as well
+    from rpi_hwid import fpga
+    (summary,) = fpga.fpga_summary([{"kind": "pcileech", "flash_error": "x"}])
+    assert summary["flash_error"] == "x"
+
+
 def test_a_part_that_says_it_has_no_unique_id_still_gets_a_label(tmp_path,
                                                                  monkeypatch):
     """The one silence that prints. A Macronix reports in its security
