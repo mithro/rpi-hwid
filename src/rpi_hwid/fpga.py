@@ -1294,10 +1294,75 @@ def digilent_cables():
             if f["id"] == "0403:6010" and (f["manufacturer"] or "").startswith("Digilent")]
 
 
-def jtag_probe(want_flash=False, pins=None, parts=None):
+# A flash read replaces the running design, so a card whose design is a PCIe
+# endpoint vanishes from under a live link -- which can upset the Pi 5's
+# root port (openfpgaloader-36, 2026-09-22; the Acorn deployment does the
+# same by hand). The endpoint is removed first and the bus rescanned once the
+# FPGA has booted from flash again, which can take a few seconds to show
+# DONE. Only FPGA endpoints: the Pi 5's own RP1 is one too, and removing it
+# would take the header, Ethernet and USB with it.
+PCIE_SLOT = re.compile(r"^[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]$")
+PCIE_SETTLE_S = 5
+
+
+def fpga_endpoints(pcie):
+    """The PCIe slots an FPGA's design answers on."""
+    return [pc["slot"] for pc in pcie or () if pc["id"].startswith(("10ee:", "1e24:"))]
+
+
+def pcie_detach(slots):
+    """Remove each slot from the bus; returns the ones that were there."""
+    removed = []
+    for slot in slots:
+        where = ROOT + "/sys/bus/pci/devices/" + slot
+        if PCIE_SLOT.match(slot) and os.path.exists(where):
+            # a fixed path, the slot checked above: nothing reaches the shell
+            # but "echo 1 >" and a sysfs file
+            sh(["sudo", "sh", "-c", "echo 1 > " + where + "/remove"])
+            removed.append(slot)
+    return removed
+
+
+def pcie_rescan(slots, tries=3):
+    """Rescan until every slot is back; whether they all came back."""
+    import time
+    for _ in range(tries):
+        time.sleep(PCIE_SETTLE_S)
+        sh(["sudo", "sh", "-c", "echo 1 > " + ROOT + "/sys/bus/pci/rescan"])
+        if all(os.path.exists(ROOT + "/sys/bus/pci/devices/" + s) for s in slots):
+            return True
+    return False
+
+
+def read_flash(res, harness, board, part):
+    """The flash's facts onto `res`, or what stopped the read."""
+    info, said = flash_info_probe(harness, board, part)
+    if info:
+        res["flash_jedec"] = info["jedec"]
+        res["flash"] = " ".join(x for x in (info.get("manufacturer"),
+                                            info.get("part")) if x) or None
+        res["flash_uid"] = info["uid"]
+        res["flash_uid_bits"] = info["uid_bits"]
+        res["flash_uid_state"] = info["uid_state"]
+        # only the document carries a note; the printed report has none
+        res["flash_uid_note"] = info.get("uid_note")
+    else:
+        argv = list(harness) + (["-b", board] if board else []) \
+            + (["--fpga-part", part] if part else [])
+        fl = sh(argv + ["--detect", "-f"], timeout=120)
+        m = re.search(r"JEDEC ID: (0x[0-9a-f]+)", fl)
+        res["flash_jedec"] = m.group(1) if m else None
+        m = re.search(r"Detected: (.*)", fl)
+        res["flash"] = m.group(1).strip() if m else None
+        if not res["flash_jedec"]:
+            res["flash_error"] = said or fl.strip()[-200:] or None
+
+
+def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
     """openFPGALoader over whichever cable this host has, else openocd.
     Returns the idcode line when a chain answers. `parts` is {die: part} from
-    what the card's own gateware said, for a cable with no harness to go by."""
+    what the card's own gateware said, for a cable with no harness to go by;
+    `detach` the PCIe slots to take off the bus while the flash is read."""
     cables = digilent_cables()
     # Which openFPGALoader, and whether it can read a flash at all. The
     # static build is only worth fetching when the flash is actually wanted:
@@ -1387,26 +1452,13 @@ def jtag_probe(want_flash=False, pins=None, parts=None):
         # own unique id in one go, and it exits non-zero when the read did not
         # actually happen. Older builds have no such flag, so the JEDEC-only
         # read stays as the fallback rather than the flash going unread.
-        info, said = flash_info_probe(harness, board, part)
-        if info:
-            res["flash_jedec"] = info["jedec"]
-            res["flash"] = " ".join(x for x in (info.get("manufacturer"),
-                                                info.get("part")) if x) or None
-            res["flash_uid"] = info["uid"]
-            res["flash_uid_bits"] = info["uid_bits"]
-            res["flash_uid_state"] = info["uid_state"]
-            # only the document carries a note; the printed report has none
-            res["flash_uid_note"] = info.get("uid_note")
-        else:
-            argv = list(harness) + (["-b", board] if board else []) \
-                + (["--fpga-part", part] if part else [])
-            fl = sh(argv + ["--detect", "-f"], timeout=120)
-            m = re.search(r"JEDEC ID: (0x[0-9a-f]+)", fl)
-            res["flash_jedec"] = m.group(1) if m else None
-            m = re.search(r"Detected: (.*)", fl)
-            res["flash"] = m.group(1).strip() if m else None
-            if not res["flash_jedec"]:
-                res["flash_error"] = said or fl.strip()[-200:] or None
+        detached = pcie_detach(detach or ())
+        try:
+            read_flash(res, harness, board, part)
+        finally:
+            if detached:
+                res["pcie_detached"] = detached
+                res["pcie_back"] = pcie_rescan(detached)
     return res
 
 
@@ -2123,7 +2175,8 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     if jtag and any(is_pcileech_pcie(pc) for pc in f["pcie"]) \
             and any(u["id"] == "0403:601f" for u in f["ftdi"]):
         f["pcileech"] = pcileech_probe()
-    f["jtag"] = jtag_probe(flash, pins, gateware_parts(f["pcileech"])) if jtag else None
+    f["jtag"] = jtag_probe(flash, pins, gateware_parts(f["pcileech"]),
+                           fpga_endpoints(f["pcie"])) if jtag else None
     # The ECP5 TraceID, and only when asked for by name. This ends the
     # board's capture and may drop power to whatever is on its TARGET port,
     # so it is not folded into --jtag, which is harmless everywhere else.

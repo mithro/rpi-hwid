@@ -8,6 +8,7 @@ import errno
 import json
 import os
 import pty
+import shutil
 import struct
 import subprocess
 import termios
@@ -706,6 +707,56 @@ def test_the_gateware_names_the_package_when_the_die_agrees(fake_root, monkeypat
     none, res = _ch347_flash(monkeypatch, "0x3631093", parts)
     assert none == []
     assert "no package is known" in res["flash_error"]
+
+
+def test_a_card_on_pcie_is_taken_off_the_bus_for_its_flash_read(fake_root, monkeypatch):
+    """A flash read replaces the running design, so a PCIe card's endpoint
+    vanishes from under a live link -- which can upset the Pi 5's root port.
+    The endpoint is removed before the bridge is loaded and the bus rescanned
+    after, as the Acorn deployment and openfpgaloader-36 do by hand."""
+    slot = "0001:01:00.0"
+    dev = fake_root / "sys/bus/pci/devices" / slot
+    dev.mkdir(parents=True, exist_ok=True)     # the fake Pi 5 tree has it already
+    ran = []
+
+    def sh(args, timeout=15):
+        ran.append(args)
+        if args[:1] == ["which"]:
+            return "/usr/bin/openFPGALoader"
+        if args[-1].endswith("/remove"):
+            shutil.rmtree(dev)
+        if args[-1].endswith("/rescan"):
+            dev.mkdir()
+        return '{"dna": "0x006425440bc8985c"}'
+    monkeypatch.setattr(fpga, "sh", sh)
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "ch347_cables", lambda: [{"path": "3-2"}])
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "idcode 0x3632093")
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (ran.append(args), (1, ""))[1])
+    monkeypatch.setattr(fpga, "PCIE_SETTLE_S", 0)
+    host_openfpgaloader(monkeypatch)
+    res = fpga.jtag_probe(want_flash=True, parts={0x3632093: "xc7a75tfgg484"},
+                          detach=[slot])
+    order = [" ".join(a) for a in ran]
+    remove = next(i for i, a in enumerate(order) if a.endswith(slot + "/remove"))
+    flash = next(i for i, a in enumerate(order) if "--flash-info-json" in a)
+    rescan = next(i for i, a in enumerate(order) if a.endswith("/rescan"))
+    assert remove < flash < rescan
+    assert res["pcie_detached"] == [slot]
+    assert res["pcie_back"] is True
+    # ...and a read that does not want the flash leaves the bus alone
+    ran.clear()
+    fpga.jtag_probe(want_flash=False, detach=[slot])
+    assert not [a for a in ran if a[-1].endswith(("/remove", "/rescan"))]
+
+
+def test_only_an_fpga_endpoint_is_taken_off_the_bus():
+    """The Pi 5's own RP1 is a PCIe endpoint too, and removing it would take
+    the header, Ethernet and USB with it."""
+    pcie = [{"slot": "0001:01:00.0", "id": "10ee:0666"},
+            {"slot": "0002:01:00.0", "id": "1de4:0001"},
+            {"slot": "0001:02:00.0", "id": "1e24:021f"}]
+    assert fpga.fpga_endpoints(pcie) == ["0001:01:00.0", "0001:02:00.0"]
 
 
 def test_a_chain_neither_tool_can_read_says_why_twice(fake_root, monkeypatch):

@@ -432,7 +432,8 @@ def test_the_gateware_is_only_asked_when_both_signatures_are_there(monkeypatch, 
     calls = []
     monkeypatch.setattr(fpga, "pcie_devices", lambda: pcie)
     monkeypatch.setattr(fpga, "ftdi_devices", lambda: ftdi)
-    monkeypatch.setattr(fpga, "jtag_probe", lambda flash=False, pins=None, parts=None: None)
+    monkeypatch.setattr(fpga, "jtag_probe",
+                        lambda flash=False, pins=None, parts=None, detach=None: None)
     monkeypatch.setattr(fpga, "pcileech_probe", lambda: calls.append(1) or {"version": "4.14",
                                                                              "fpga_id": 9})
     fpga.collect_fpga(jtag=True)
