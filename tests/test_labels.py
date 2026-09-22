@@ -830,3 +830,30 @@ def test_no_shuttle_mark_is_a_wordmark():
         assert path, name
         wide = 1 / labels.mark_aspect(path)          # width / height
         assert 0.6 <= wide <= 1.4, (name, round(wide, 3))
+
+
+@pytest.mark.parametrize(("jedec", "line"), [
+    # A JEDEC id names a part only as far as a database says so, and several
+    # of these ids are shared. Where the part is not pinned down, the id
+    # itself goes on the label -- measured -- rather than one of the parts
+    # that answer to it.
+    ("0x20ba18", "Micron N25Q128  ·  16 MiB"),
+    ("0x010219", "Spansion S25FL256S  ·  32 MiB"),
+    # 0x012018 is answered by two parts, and the part string says so
+    ("0x012018", "Spansion S25FL128S/S25FL127S  ·  16 MiB"),
+    # Macronix 0xc22017 is shared by MX25L6405, MX25L6406E, MX25L6433F and
+    # more (openfpgaloader-36, measured 2026-09-22: the chip advertises quad
+    # reads, so it is not the x1/x2-only 6406E, and the id cannot pin it
+    # further). openFPGALoader's database labels it MX25L6405; printing that
+    # would assert a part number nobody read.
+    ("0xc22017", "Macronix 0xc22017  ·  8 MiB"),
+    # a manufacturer byte nobody here has met: the id is still the fact
+    ("0x5a1018", "0x5a1018  ·  16 MiB"),
+])
+def test_the_flash_line_never_asserts_a_part_number_nobody_read(jedec, line):
+    """Vendor and density come out of the id's own bytes -- the JEP106
+    manufacturer code and a capacity byte that is log2 of the size -- so both
+    are as measured as the id is. The part name does not: it is a database
+    lookup on an id that several parts can share. So the part is printed only
+    where the table holds it as unambiguous, and the id is printed otherwise."""
+    assert labels.flash_text(labels.flash_from_jedec(jedec)) == line

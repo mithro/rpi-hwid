@@ -1043,9 +1043,21 @@ def flash_from_jedec(jedec):
 
 
 def flash_text(info):
-    """The flash block's one line: vendor, part and density, as known."""
-    named = " ".join(x for x in (info.get("vendor"), info.get("part")) if x)
-    parts = [x for x in (named or info.get("jedec"), info.get("size")) if x]
+    """The flash block's one line: vendor, then the part where it is known
+    and the JEDEC id where it is not, then the density.
+
+    The id's own bytes give the vendor and the density -- a JEP106
+    manufacturer code and a capacity byte that is log2 of the size -- so both
+    are as measured as the id. The part name is not: it is a database lookup
+    on a number several parts can answer to. 0xc22017 is MX25L6405,
+    MX25L6406E, MX25L6433F and others; openFPGALoader's database labels it
+    MX25L6405 and says as much with `size_source: database`. Printing that
+    would put a part number on a sticker that nobody read, so an id whose
+    part is not pinned down prints as itself.
+    """
+    part = info.get("part") or info.get("jedec")
+    named = " ".join(x for x in (info.get("vendor"), part) if x)
+    parts = [x for x in (named, info.get("size")) if x]
     return "  ·  ".join(parts) if parts else None
 
 
