@@ -225,24 +225,28 @@ def test_how_a_flash_unique_id_is_read_is_a_property_of_the_part(jedec, how):
     ("acorn", "Spansion S25Fx256S  ·  32 MiB",
      "edcbeececb2b2a88b04f914d2e46af90"),
     # rpi5-netv2's NeTV2: a Macronix whose factory ESN was never programmed.
-    # The uid row is the same row in the same place and carries the fact the
-    # part gave, which is the whole difference between this and a blank.
-    ("netv2", "Macronix MX25L64xx  ·  8 MiB", "no factory ESN"),
+    # No uid row at all: the "no id" square where the code goes says it.
+    ("netv2", "Macronix MX25L64xx  ·  8 MiB", None),
     # the Cynthion: flash type from its revision's published BOM, unique id
     # read off that chip by the gateware and published as the USB serial
     ("cynthion", "Winbond W25Q32JV  ·  4 MiB", "267125df30c460de"),
 ])
 def test_every_fpga_label_renders_its_flash_the_same_way(kind, flash, uid, docs,
                                                          tmp_path, monkeypatch):
-    """The same two rows, in the same place, with the same captions, on every
-    FPGA label -- whatever the flash turned out to be. A part with no unique
-    id says so where a part with one prints it, so the eye finds the flash
-    facts in one place on every board and can still tell the cases apart."""
+    """The flash rows in the same place, with the same captions, on every FPGA
+    label. A part with no unique id has no uid row: the "no id" square where
+    its code would be says so, and a row repeating it was one thing too many
+    on a 38 mm label."""
     seen = _drawn_strings(monkeypatch, docs, {kind}, tmp_path)
     assert "flash" in seen
-    assert "uid" in seen
     assert flash in seen
-    assert uid in seen
+    if uid:
+        assert "uid" in seen
+        assert uid in seen
+    else:
+        assert "uid" not in seen
+        assert "no id" in seen
+        assert not [t for t in seen if "ESN" in t]
     assert not [s for s in seen if "not read" in s]
 
 
@@ -286,16 +290,35 @@ def test_the_identifier_spans_the_foot_with_the_flash_code_above_it(
     assert flash["y"] + flash["size"] < caption["y"]
     # the caption over the QR is gone: its rows sit beside it instead
     assert [t["s"] for t in texts].count("flash") == 1
-    # ...right-aligned against it, both rows ending at the same edge
-    rows = [t for t in texts if t["s"] in (rec.flash, rec.flash_uid, "no factory ESN")]
+    # ...each value right-aligned, all ending at one edge, and each caption
+    # after its value, left-aligned in one column just before the code
+    rows = [t for t in texts if t["s"] in (rec.flash, rec.flash_uid)]
+    caps = [t for t in texts if t["s"] in ("flash", "uid")]
+    assert len(rows) == len(caps) == (2 if rec.flash_uid else 1)
     assert len({round(t["x"], 3) for t in rows}) == 1
-    assert all(t["align"] == "right" and t["x"] < flash["x"] for t in rows)
+    assert all(t["align"] == "right" for t in rows)
+    assert len({round(t["x"], 3) for t in caps}) == 1
+    assert all(t["align"] == "left" and rows[0]["x"] < t["x"] for t in caps)
+    for t in caps:
+        width = labels.Label(None, 0, 0).width(t["s"], labels.SANS, t["size"])
+        assert t["x"] + width < flash["x"]
     # nothing else on the label reaches into the flash code's square
     for t in texts:
         if t["y"] + t["size"] * 0.72 > flash["y"] and t["y"] < flash["y"] + flash["size"]:
             right = t["x"] if t["align"] == "right" else t["x"] + labels.Label(
                 None, 0, 0).width(t["s"], labels.SANS, t["size"])
             assert right < flash["x"] or t["s"] == "no id", t["s"]
+
+
+def test_the_arty_serial_has_room_between_it_and_the_flash(docs, tmp_path, monkeypatch):
+    """An Arty carries the most in its right column. The name is set small
+    enough that the S/N clears the flash row by a visible gap rather than
+    sitting on it."""
+    texts, _codes, _boxes = _drawn(monkeypatch, docs, "arty", tmp_path)
+    (serial,) = [t for t in texts if t["s"] == "210319A43AD3"]
+    (flash,) = [t for t in texts if t["s"].startswith("Micron")]
+    serial_bottom = serial["y"] + serial["size"] * 0.72
+    assert flash["y"] - serial_bottom >= 1.2 * labels.mm
 
 
 def test_a_flash_with_no_unique_id_gets_a_stand_in_for_its_code(docs, tmp_path,
@@ -1018,17 +1041,19 @@ def test_a_flash_read_that_was_tried_and_failed_says_what_stopped_it():
 
 def test_a_part_that_says_it_has_no_unique_id_still_gets_a_label(tmp_path,
                                                                  monkeypatch):
-    """The one silence that prints. A Macronix reports in its security
-    register whether a factory ESN was ever programmed, so "none" with the
-    register reading beside it is the chip's own answer rather than an
-    unasked question -- and the label says it where another board's uid goes."""
+    """A Macronix reports in its security register whether a factory ESN was
+    ever programmed, so "none" with the register reading beside it is the
+    chip's own answer rather than an unasked question. The label says it with
+    the "no id" square where the code would be; the reading itself stays in
+    the document."""
     docs = _arty(flash_jedec="0xc22017", flash_uid_state="none",
                  flash_uid_note="no factory ESN: security register 0x00, "
                                 "bit 0 (factory lock) = 0")
     (rec,) = labels.fpga_records(docs)
     assert labels.flash_not_read(rec) is None
     seen = _drawn_strings(monkeypatch, docs, {"arty"}, tmp_path)
-    assert "no factory ESN" in seen
+    assert "no id" in seen
+    assert not [s for s in seen if "ESN" in s]
     # the evidence stays in the document and off the 48 mm label
     assert not [s for s in seen if "security register" in s]
     assert not [s for s in seen if s.endswith("…")]

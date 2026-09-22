@@ -164,20 +164,20 @@ class Label:
         self.fit(x_val, y, val, val_font, size, max_w, min_size, color=color)
         return size
 
-    def captioned_right(self, x_left, x_right, y, cap, val, val_font, val_size,
+    def captioned_after(self, x_left, x_cap, y, cap, val, val_font, val_size,
                         min_size=5.5, color=black):
-        """`captioned`, set flush right: the value ends at `x_right` and its
-        grey caption sits just before it, the pair shrinking and then eliding
-        the value until it fits after `x_left`."""
-        room = x_right - x_left - self.width(cap, SANS, CAPTION) - self.CAPTION_GAP
+        """A value set flush right with its grey caption after it: the caption
+        starts at `x_cap`, so captions of different lengths still line up in
+        one column, and the value ends just before it -- shrinking and then
+        eliding until it fits after `x_left`. `y` is the value's cap-height
+        top; the two share a baseline."""
+        x_right = x_cap - self.CAPTION_GAP
+        room = x_right - x_left
         size = self.fitted_size(val, val_font, val_size, room, min_size)
         while len(val) > 1 and self.width(val, val_font, size) > room:
             val = val[:-2].rstrip() + "…"
         self.text(x_right, y, val, val_font, size, align="right", color=color)
-        baseline = y + size * 0.72
-        self.text(x_right - self.width(val, val_font, size) - self.CAPTION_GAP,
-                  baseline - CAPTION * 0.72, cap, SANS, CAPTION, align="right",
-                  color=GREY)
+        self.text(x_cap, y + (size - CAPTION) * 0.72, cap, SANS, CAPTION, color=GREY)
         return size
 
     def no_code(self, x, y, size, text="no id"):
@@ -568,8 +568,10 @@ def draw_fpga(lab, board):
         word = board.name.split("-", 1)[1]
     else:
         word = board.part or board.model.split()[0]
-    lab.fit(x, y, word, SANS_BOLD, 24, col_w)
-    y += 8.3 * mm
+    # 20 pt: the largest that leaves an Arty's S/N a clear gap above the flash
+    # rows, an Arty being the board with the most in this column
+    lab.fit(x, y, word, SANS_BOLD, 20, col_w)
+    y += 7.2 * mm
     if board.part and board.part != word:
         lab.fit(x, y, "{}  ·  {}".format(board.model, board.part), SANS, 8, col_w)
     else:
@@ -590,32 +592,28 @@ def draw_fpga(lab, board):
         lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 9, beside - 6 * mm)
 
 
-    # The flash block: the same two rows, in the same place, on every FPGA
-    # label. Every board here has a configuration flash; what differs is only
-    # how much of it could be read. The rows are set flush right against the
-    # flash's code, each caption with its value, so the three read as one
-    # group, and they run left under the board's QR as far as they need:
+    # The flash block: the same rows, in the same place, on every FPGA label.
+    # Every board here has a configuration flash; what differs is only how
+    # much of it could be read. The values are set flush right with their
+    # captions after them, in one column just before the flash's code, so the
+    # three read as one group, and they run left under the board's QR as far
+    # as they need:
     # "Micron N25Q128/MT25QL128  ·  16 MiB" does not fit the right column at
     # any size worth printing. Bottom-aligned with the code, so the rows are
     # at the same height on every label whatever the column above ran to.
-    right = fx - 1.5 * mm
+    cap_x = fx - 1.5 * mm - max(lab.width(c, SANS, CAPTION) for c in ("flash", "uid"))
     row = 7 * 0.72                        # a 7 pt row's cap height, in points
     uid_y = fy + fq - row
     flash_y = uid_y - 2.4 * mm
-    lab.captioned_right(PAD, right, flash_y, "flash", board.flash, SANS, 7, min_size=5)
+    lab.captioned_after(PAD, cap_x, flash_y, "flash", board.flash, SANS, 7, min_size=5)
     if board.flash_uid:
         # mono, like every other identifier here: it is a number someone may
         # have to read off the sticker and type
-        lab.captioned_right(PAD, right, uid_y, "uid", board.flash_uid, MONO_REGULAR, 7,
+        lab.captioned_after(PAD, cap_x, uid_y, "uid", board.flash_uid, MONO_REGULAR, 7,
                             min_size=5)
-    else:
-        # A part with no unique id says so, in the label's own voice rather
-        # than in a monospaced identifier's: the row is in the same place and
-        # carries a measured fact, so the eye finds the flash facts where it
-        # expects them on every board and can tell the two cases apart.
-        lab.captioned_right(PAD, right, uid_y, "uid",
-                            flash_uid_note_text(board.flash_uid_note) or FLASH_UID_NONE,
-                            SANS, 7, min_size=5, color=GREY)
+    # A part with no unique id gets no uid row: the "no id" square where its
+    # code would be says so, and the chip's own reason (a Macronix's security
+    # register) stays in the document, off a 38 mm label.
 
     # The flash's own code: its unique id, the identity of the chip and not of
     # the board, which is why it is a second code and not part of the big one.
@@ -1163,21 +1161,15 @@ def flash_text(info):
 
 
 def flash_uid_note_text(note):
-    """The printable fact out of a reading tool's note about a unique id.
+    """The fact out of a reading tool's note about a unique id, or None.
 
-    openFPGALoader writes the fact and its evidence in one string --
-    "no factory ESN: security register 0x00, bit 0 (factory lock) = 0" -- and
-    a 48 mm label has room for the first of those at a size worth printing.
-    The head before the colon is the fact; the whole note stays in the
-    collected document, so the evidence is never lost, only unprinted.
+    openFPGALoader writes the fact and its evidence in one string -- "no
+    factory ESN: security register 0x00, bit 0 (factory lock) = 0". The head
+    before the colon is the fact. It is not printed -- the label's "no id"
+    square says as much -- but its presence is what separates the chip having
+    answered "none" from the tool knowing no command to ask it.
     """
     return (note or "").split(":", 1)[0].strip() or None
-
-
-# What the uid row says when the part has no unique id to give and said so
-# itself. Not a placeholder: the row is the same row in the same place as on
-# a board that has one, and it carries a measured fact rather than a blank.
-FLASH_UID_NONE = "no unique id"
 
 
 class FlashNotReadError(Exception):
