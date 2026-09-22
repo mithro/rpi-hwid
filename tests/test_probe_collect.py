@@ -752,6 +752,36 @@ def test_a_card_on_pcie_is_taken_off_the_bus_for_its_flash_read(fake_root, monke
     assert not [a for a in ran if a[-1].endswith(("/remove", "/rescan"))]
 
 
+def test_a_card_comes_back_from_the_rescan_decoding_as_it_was(fake_root, monkeypatch):
+    """A rescanned endpoint comes back with memory decoding off, and with no
+    driver bound nothing turns it on again: pi-sw2-p48's Acorn read "Control:
+    I/O- Mem- BusMaster-", BAR0 "[disabled]", after its flash read on
+    2026-09-22, and every SoC read after that answered all ones. So the
+    command register is read before the card is removed and written back
+    once it is on the bus again."""
+    slot = "0001:01:00.0"
+    dev = fake_root / "sys/bus/pci/devices" / slot
+    dev.mkdir(parents=True, exist_ok=True)
+    # Mem+ BusMaster+ in the command register at offset 4, little-endian
+    (dev / "config").write_bytes(b"\xee\x10\x21\x70\x06\x00" + bytes(58))
+    ran = []
+
+    def sh(args, timeout=15):
+        ran.append(args)
+        if args[-1].endswith("/remove"):
+            shutil.rmtree(dev)
+        if args[-1].endswith("/rescan"):
+            dev.mkdir()
+        return ""
+    monkeypatch.setattr(fpga, "sh", sh)
+    monkeypatch.setattr(fpga, "PCIE_SETTLE_S", 0)
+    saved = {}
+    assert fpga.pcie_detach([slot], saved) == [slot]
+    assert saved == {slot: 0x0006}
+    assert fpga.pcie_rescan([slot], restore=saved) is True
+    assert ["sudo", "setpci", "-s", slot, "COMMAND=0006"] in ran
+
+
 def test_only_an_fpga_endpoint_is_taken_off_the_bus():
     """The Pi 5's own RP1 is a PCIe endpoint too, and removing it would take
     the header, Ethernet and USB with it."""

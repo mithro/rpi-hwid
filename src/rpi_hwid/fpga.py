@@ -1339,12 +1339,31 @@ def fpga_endpoints(pcie):
     return [pc["slot"] for pc in pcie or () if pc["id"].startswith(("10ee:", "1e24:"))]
 
 
-def pcie_detach(slots):
-    """Remove each slot from the bus; returns the ones that were there."""
+def pcie_command(slot):
+    """The slot's PCI command register, read from sysfs, or None."""
+    try:
+        with open(ROOT + "/sys/bus/pci/devices/" + slot + "/config", "rb") as f:
+            f.seek(4)
+            data = f.read(2)
+    except OSError:
+        return None
+    return data[0] | data[1] << 8 if len(data) == 2 else None
+
+
+def pcie_detach(slots, saved=None):
+    """Remove each slot from the bus; returns the ones that were there.
+
+    Each one's command register goes into `saved` first: a rescanned endpoint
+    comes back with memory decoding off, and with no driver bound nothing
+    turns it on again (pi-sw2-p48's Acorn, 2026-09-22, whose SoC then read
+    all ones)."""
     removed = []
     for slot in slots:
         where = ROOT + "/sys/bus/pci/devices/" + slot
         if PCIE_SLOT.match(slot) and os.path.exists(where):
+            command = pcie_command(slot)
+            if saved is not None and command is not None:
+                saved[slot] = command
             # a fixed path, the slot checked above: nothing reaches the shell
             # but "echo 1 >" and a sysfs file
             sh(["sudo", "sh", "-c", "echo 1 > " + where + "/remove"])
@@ -1352,13 +1371,17 @@ def pcie_detach(slots):
     return removed
 
 
-def pcie_rescan(slots, tries=3):
-    """Rescan until every slot is back; whether they all came back."""
+def pcie_rescan(slots, tries=3, restore=None):
+    """Rescan until every slot is back, then give each back the command
+    register it was removed with; whether they all came back."""
     import time
     for _ in range(tries):
         time.sleep(PCIE_SETTLE_S)
         sh(["sudo", "sh", "-c", "echo 1 > " + ROOT + "/sys/bus/pci/rescan"])
         if all(os.path.exists(ROOT + "/sys/bus/pci/devices/" + s) for s in slots):
+            for slot in slots:
+                if (restore or {}).get(slot) is not None:
+                    sh(["sudo", "setpci", "-s", slot, "COMMAND=%04x" % restore[slot]])
             return True
     return False
 
@@ -1483,13 +1506,14 @@ def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
         # own unique id in one go, and it exits non-zero when the read did not
         # actually happen. Older builds have no such flag, so the JEDEC-only
         # read stays as the fallback rather than the flash going unread.
-        detached = pcie_detach(detach or ())
+        saved = {}
+        detached = pcie_detach(detach or (), saved)
         try:
             read_flash(res, harness, board, part)
         finally:
             if detached:
                 res["pcie_detached"] = detached
-                res["pcie_back"] = pcie_rescan(detached)
+                res["pcie_back"] = pcie_rescan(detached, restore=saved)
     return res
 
 
