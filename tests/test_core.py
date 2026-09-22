@@ -1406,3 +1406,109 @@ def test_tt_boards_colours_prefer_the_sheet_then_the_palette():
     assert c["chip_silk"] == tt_data.COLOURS.get("teal")
     blank = tt_boards.colours(None, tt_data.COLOURS)
     assert set(blank.values()) == {None}
+
+
+# --- which openFPGALoader, and where an able one comes from --------------------
+
+# Measured on rpi5-netv2, 2026-09-22. The rp1-jtag static build of the
+# flash-info series and an upstream build without it print the *same* version
+# string, so the version cannot be the test.
+OFL_VERSION_WITH_FEATURE = "openFPGALoader v1.1.1\n"
+OFL_HELP_WITH_FEATURE = (
+    "      --flash-info              display detailed SPI flash information\n"
+    "      --flash-info-json arg     as --flash-info, and write the "
+    "information to\n")
+OFL_HELP_WITHOUT = (
+    "      --detect                  detect FPGA\n"
+    "  -f, --write-flash             write bitstream in flash\n")
+
+
+def test_a_build_is_judged_by_the_flag_it_has_not_the_version_it_prints():
+    """Feature detection, because version detection cannot work here. The
+    rp1-jtag build carrying the whole flash-info series prints
+    "openFPGALoader v1.1.1" -- character for character what an upstream build
+    without the series prints (measured on rpi5-netv2, 2026-09-22) -- while
+    the fpgas.online build prints a "+fpgasonline." suffix instead. A version
+    test is therefore a false negative on one build and a false positive on
+    any future build that drops the suffix; the flag's own presence in --help
+    is the only honest question to ask."""
+    assert fpga.ofl_supports_flash_info(OFL_HELP_WITH_FEATURE)
+    assert not fpga.ofl_supports_flash_info(OFL_HELP_WITHOUT)
+    assert not fpga.ofl_supports_flash_info("")
+    assert not fpga.ofl_supports_flash_info(None)
+    # the version string is deliberately no evidence either way
+    assert "1.1.1" in OFL_VERSION_WITH_FEATURE
+    assert not fpga.ofl_supports_flash_info(OFL_VERSION_WITH_FEATURE)
+
+
+@pytest.mark.parametrize(("machine", "arch"), [
+    ("aarch64", "arm64"),      # every 64-bit Pi OS
+    ("armv7l", "armv7"),       # a Pi 3/4 on 32-bit userland, or arm_64bit=0
+    ("armv6l", "armv6"),       # Pi 1, Zero, Zero W
+    ("x86_64", None),          # the workstation: no published binary, and
+    ("", None),                # it does not need one
+])
+def test_the_arch_a_host_reports_picks_the_published_binary(machine, arch):
+    """`uname -m` is what a host answers, and the published assets are named
+    for something else, so the mapping is written down once. Nothing reports
+    "armhf" or "arm64" literally, and a 32-bit userland on a 64-bit kernel
+    answers armv7l -- which is the binary it can actually run."""
+    assert fpga.ofl_arch(machine) == arch
+
+
+# The shape `latest.json` publishes, from the fpgas.online-fpga-tools spec.
+OFL_LATEST = {
+    "series": "v0.0",
+    "latest": {
+        "stable": {"openfpgaloader": {
+            "arm64": {"asset": "openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64",
+                      "version": "1.1.1+fpgasonline.0.0.post12"},
+            "armv7": {"asset": "openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-armv7",
+                      "version": "1.1.1+fpgasonline.0.0.post12"}}},
+        "master": {"openfpgaloader": {
+            "arm64": {"asset": "openFPGALoader-1.1.1+git20260915.24e46d1+"
+                               "fpgasonline.0.0.post12-linux-arm64",
+                      "version": "1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12"}}},
+    },
+}
+
+
+def test_the_binary_for_this_host_is_named_by_the_published_index():
+    """The asset name is not constructed here. It is read out of the index the
+    release publishes, so a change to the naming scheme is one fetch away from
+    being followed rather than a string this package has to be taught."""
+    assert fpga.ofl_asset(OFL_LATEST, "stable", "arm64") == (
+        "openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64",
+        "1.1.1+fpgasonline.0.0.post12")
+    assert fpga.ofl_asset(OFL_LATEST, "master", "arm64")[1].startswith(
+        "1.1.1+git20260915")
+    # An arch or a track the release has not built is not an error to paper
+    # over with a guess at the name: there is no such file to fetch.
+    assert fpga.ofl_asset(OFL_LATEST, "stable", "armv6") is None
+    assert fpga.ofl_asset(OFL_LATEST, "master", "armv7") is None
+    assert fpga.ofl_asset(OFL_LATEST, "nightly", "arm64") is None
+    assert fpga.ofl_asset({}, "stable", "arm64") is None
+    assert fpga.ofl_asset(None, "stable", "arm64") is None
+
+
+def test_a_checksum_is_only_accepted_for_the_file_it_names():
+    """`sha256sum` format, one line per asset. The file name is checked, not
+    skipped: a sum lifted from a neighbouring asset would verify nothing at
+    all, and this sum is the only thing standing between a download and
+    something that gets executed as root on a host full of hardware."""
+    good = ("7a8b12d15e3abdbe90d6637da6eed9af2d4d5aeb705120ffa6dd9e1bc501a7ad"
+            "  openFPGALoader-1.1.1-linux-arm64\n")
+    assert fpga.sha256_expected(good, "openFPGALoader-1.1.1-linux-arm64") == (
+        "7a8b12d15e3abdbe90d6637da6eed9af2d4d5aeb705120ffa6dd9e1bc501a7ad")
+    # the same sum, offered for a different file
+    assert fpga.sha256_expected(good, "openFPGALoader-1.1.1-linux-armv7") is None
+    # a truncated digest, a non-hex digest, an empty document, junk
+    assert fpga.sha256_expected("dead  openFPGALoader-1.1.1-linux-arm64\n",
+                                "openFPGALoader-1.1.1-linux-arm64") is None
+    assert fpga.sha256_expected("z" * 64 + "  f\n", "f") is None
+    assert fpga.sha256_expected("", "f") is None
+    assert fpga.sha256_expected(None, "f") is None
+    # "sha256sum --binary" marks the file with a star; same digest, same file
+    star = ("7a8b12d15e3abdbe90d6637da6eed9af2d4d5aeb705120ffa6dd9e1bc501a7ad"
+            " *openFPGALoader-1.1.1-linux-arm64\n")
+    assert fpga.sha256_expected(star, "openFPGALoader-1.1.1-linux-arm64")

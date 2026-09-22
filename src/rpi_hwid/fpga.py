@@ -724,6 +724,79 @@ def openocd_probe(digilent_serial=None, pins=None):
     return res
 
 
+# --- which openFPGALoader, and where an able one comes from --------------------
+#
+# Reading a flash needs a build carrying the flash-info series, and most hosts
+# here have a distro build from before it existed. The version string cannot
+# be used to tell: the rp1-jtag static build of the whole series prints
+# "openFPGALoader v1.1.1", character for character what an upstream build
+# without it prints (measured on rpi5-netv2, 2026-09-22), while the
+# fpgas.online build prints a "+fpgasonline." suffix. A version test is
+# therefore a false negative on the first and a false positive on any later
+# build that drops the suffix. Ask for the flag instead.
+OFL_FLASH_FLAG = "--flash-info-json"
+
+# Where a build that has it can be fetched from. fpgas.online-fpga-tools
+# publishes one rolling prerelease per series, each asset beside its own
+# `<asset>.sha256` in sha256sum format, and a `latest.json` index naming the
+# current asset per track, tool and architecture. The index is fetched rather
+# than the name constructed, so a change to their naming scheme is followed
+# instead of having to be taught here.
+OFL_RELEASE_URL = ("https://github.com/fpgas-online/fpgas.online-fpga-tools"
+                   "/releases/download/%s/%s")
+OFL_SERIES = "v0.0"
+OFL_LATEST_JSON = "latest.json"
+# `uname -m` on the left, the published asset's arch on the right. Nothing
+# reports "armhf" or "arm64" literally; a Pi 3/4 on a 32-bit userland answers
+# armv7l even under a 64-bit kernel, and that is the binary it can run.
+OFL_ARCH = {"aarch64": "arm64", "armv7l": "armv7", "armv6l": "armv6"}
+
+
+def ofl_supports_flash_info(help_text):
+    """Whether this build can read a flash, asked of its own --help."""
+    return OFL_FLASH_FLAG in (help_text or "")
+
+
+def ofl_arch(machine):
+    """The published arch for a host's `uname -m`, or None if none is built."""
+    return OFL_ARCH.get((machine or "").strip())
+
+
+def ofl_asset(latest, track, arch):
+    """(asset, version) from a latest.json document, or None.
+
+    A track or an arch the release has not built is not an error to paper over
+    with a constructed name: there is no such file to fetch.
+    """
+    try:
+        entry = latest["latest"][track]["openfpgaloader"][arch]
+        return entry["asset"], entry["version"]
+    except (KeyError, TypeError):
+        return None
+
+
+def sha256_expected(sums, name):
+    """The digest `sums` gives for `name`, or None.
+
+    The name is checked, not skipped. A digest lifted from a neighbouring
+    asset would verify nothing, and this is the only thing between a download
+    and a binary run as root on a host full of hardware.
+    """
+    for line in (sums or "").splitlines():
+        fields = line.split()
+        if len(fields) != 2:
+            continue
+        digest, named = fields[0].lower(), fields[1].lstrip("*")
+        if named != name or len(digest) != 64:
+            continue
+        try:
+            int(digest, 16)
+        except ValueError:
+            continue
+        return digest
+    return None
+
+
 # openFPGALoader's --flash-info report: JEDEC id, the part, its density, and
 # the flash's own unique id, all in one invocation. Fields are padded to
 # column 18 as "Label<spaces>: value" under a header line that is exactly
