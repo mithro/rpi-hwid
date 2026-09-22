@@ -1041,6 +1041,80 @@ SPI_ECHO = {"trace_id": "0x1b808604604e0e", "flash_uid": "267125df30c460de",
             "flash_uid_agree": False, "restored": True}
 
 
+def _apollo_wire(flip=False, reply=None):
+    """The reader's helpers, run against a fake firmware that records every
+    vendor request -- the same harness that recorded apollo's own bytes."""
+    log = []
+    ns = {}
+    exec(fpga.APOLLO_HELPERS, ns)
+
+    def ctrl(fd, rtype, req, value=0, index=0, data=None, length=0, timeout=2000):
+        log.append((req, value, index, bytes(data or b"").hex()))
+        return bytes(reply[:length]) if reply else bytes(length)
+    ns["ctrl"] = ctrl
+    return ns, log
+
+
+def test_background_spi_goes_out_exactly_as_apollo_sends_it():
+    """apollo 1.1.1's own _enter_background_spi and _background_spi_transfer,
+    run against a recording firmware (2026-09-22), hand SET_OUT the unlock as
+    fe 68 and each SPI byte bit-reversed in its own place: 9F 00 00 00 goes
+    out f9 00 00 00. The first reader bit-reversed the unlock too (7f 16) and
+    sent the transaction back to front (00 00 00 f9), and on rpi5-netv2 got
+    its own commands echoed back."""
+    ns, log = _apollo_wire()
+    ns["enter_background_spi"](None, False)
+    set_out = [d for req, _v, _i, d in log if req == 0xB1]
+    assert set_out == ["3a", "fe68", "ffffffffffffffff", "66", "99"]
+    log.clear()
+    ns["spi"](None, (0x9F, 0, 0, 0), False)
+    assert [d for req, _v, _i, d in log if req == 0xB1] == ["f9000000"]
+    log.clear()
+    ns["spi"](None, (0x4B,) + (0,) * 12, False)
+    assert [d for req, _v, _i, d in log if req == 0xB1] == ["d2" + "00" * 12]
+
+
+def test_a_background_spi_reply_comes_back_in_the_order_it_was_clocked():
+    """apollo decodes a GET_IN of 80 01 c0 03 as 01 80 03 c0: each byte
+    bit-reversed, none moved, so reply[i] is what the flash sent while it
+    received byte i."""
+    ns, _log = _apollo_wire(reply=[0x80, 0x01, 0xC0, 0x03])
+    assert bytes(ns["spi"](None, (0x9F, 0, 0, 0), False)).hex() == "018003c0"
+
+
+def test_firmware_that_flips_bits_itself_gets_them_unflipped():
+    """QUIRK_FLIP_BITS_IN_WHOLE_BYTES: apollo's chain reverses every whole byte
+    on the way out and back, undoing the SPI layer's reversal -- so the SPI
+    bytes go raw and the unlock, a plain DR value, goes reversed."""
+    ns, log = _apollo_wire(reply=[0x01, 0x80])
+    ns["enter_background_spi"](None, True)
+    assert [d for req, _v, _i, d in log if req == 0xB1][:2] == ["5c", "7f16"]
+    log.clear()
+    assert bytes(ns["spi"](None, (0x9F, 0), True)).hex() == "0180"
+    assert [d for req, _v, _i, d in log if req == 0xB1] == ["9f00"]
+
+
+def test_the_gateware_publishes_the_flash_uid_with_its_bytes_reversed():
+    """rpi5-netv2's Cynthion, read over background SPI on 2026-09-22 once the
+    reader sent what apollo sends: the chip clocked out de 60 c4 30 df 25 71
+    26, and the gateware publishes 267125df30c460de -- the same eight bytes
+    folded up little-endian, which is how apollo's read_flash_uid prints it
+    too. The two readings agree; the first comparison, byte for byte, said
+    they did not."""
+    got = fpga.cynthion_offline_parse(
+        "FLASHUID=267125df30c460de\n"
+        "FLASHIDRAW=ffef4016\nFLASHUIDRAW=ffffffffffde60c430df257126\n"
+        "RESTORED=267125df30c460de\n")
+    assert got["flash_jedec"] == "0xef4016"
+    assert got["flash_uid_read"] == "de60c430df257126"     # as clocked out
+    assert got["flash_uid"] == "267125df30c460de"          # as published
+    assert got["flash_uid_agree"] is True
+    # ...and a different chip still disagrees, in either order
+    other = fpga.cynthion_offline_parse(
+        "FLASHUID=267125df30c460de\nFLASHUIDRAW=ffffffffff0102030405060708\n")
+    assert other["flash_uid_agree"] is False
+
+
 def test_a_jedec_id_with_no_manufacturer_is_not_an_id():
     """JEP106 has no manufacturer 0x00, so a reply whose first byte is 0x00
     is not an id, however plausible the two bytes after it."""

@@ -340,13 +340,19 @@ def cynthion_offline_parse(out):
         # flash over JTAG. They are independent enough that agreement is
         # real evidence -- a framing error in one cannot agree with the
         # other -- so the disagreement is recorded rather than resolved.
+        # The gateware publishes the eight bytes folded up little-endian, as
+        # apollo's read_flash_uid prints them: measured on rpi5-netv2
+        # (2026-09-22), the chip clocked out de60c430df257126 and the serial
+        # is 267125df30c460de. `read` stays as clocked; the comparison, and
+        # the value recorded, are in the published order.
+        published = "".join(reversed([read[i:i + 2] for i in range(0, len(read), 2)]))
         res["flash_uid_read"] = read
         res["flash_uid_bits"] = 64
         res["flash_uid_state"] = "read"
         if res["flash_uid"]:
-            res["flash_uid_agree"] = read == res["flash_uid"]
+            res["flash_uid_agree"] = published == res["flash_uid"]
         else:
-            res["flash_uid"] = read
+            res["flash_uid"] = published
     # Whether the analyzer came back, which apollo's own --force-offline never
     # checks: it reads and leaves the FPGA held offline.
     m = re.search(r"RESTORED=(\S+)", out)
@@ -1547,7 +1553,9 @@ finally:
 # re-enumerate, so the caller learns whether the rig came back. With
 # "restore-only" it does the handoff and the restore and no JTAG at all,
 # which is how the dangerous half gets proven before a read is attempted.
-APOLLO_READER = r'''
+# The reader's helpers apart from its script, so a test can run them against a
+# recording firmware and hold them to the bytes apollo itself sends.
+APOLLO_HELPERS = r'''
 import ctypes, fcntl, glob, os, sys, time
 class Ctrl(ctypes.Structure):
     _fields_ = [("bRequestType", ctypes.c_uint8), ("bRequest", ctypes.c_uint8),
@@ -1656,22 +1664,45 @@ def rev(b):
 def spi(fd, data, flip):
     """One SPI transaction with the configuration flash, over background SPI.
 
-    JTAG shifts bits and SPI moves bytes, so a transaction goes out with its
-    byte order reversed and each byte bit-reversed, and comes back the same
-    way: apollo's _background_spi_transfer does both in software, and its
-    `bits` type undoes the byte order again on the way in because bytes() of
-    one is little-endian. The two reversals commute, so the net effect is
-    that response[i] is the byte the flash sent while receiving data[i].
-    Where the firmware reports that it flips bits in whole bytes itself, the
-    software half is dropped rather than done twice.
+    The firmware shifts each byte LSB first and SPI wants MSB first, so every
+    byte is bit-reversed on the way out and on the way back, and none of them
+    moves: reply[i] is what the flash sent while it received data[i]. That
+    is what apollo 1.1.1 hands its firmware, recorded rather than reasoned
+    out -- its _background_spi_transfer reverses the byte order and its
+    _scan_data reverses it again. The first version of this reversed it once,
+    sent 9F 00 00 00 as 00 00 00 f9, and read back its own commands. Firmware
+    that flips whole bytes itself gets them raw, as apollo's chain undoes the
+    reversal in that case.
     """
     def turn(seq):
-        out = list(seq)[::-1]
-        return out if flip else [rev(b) for b in out]
+        return [b if flip else rev(b) for b in seq]
     ctrl(fd, OUT_DEV, GO_TO, value=DRSHIFT)
     got = scan(fd, len(data) * 8, bytearray(turn(data)))
     return bytearray(turn(bytearray(got)))
 
+
+def enter_background_spi(fd, flip):
+    """Hand the configuration flash's pins to JTAG: the instruction, then the
+    unlock into the DR, then the flash's own reset.
+
+    The unlock is a JTAG value and not an SPI byte, so it is not reversed:
+    fe 68 on the wire, as apollo sends b"\x68\xFE" and openFPGALoader
+    {0xFE, 0x68}. The first version reversed it like SPI payload, and the
+    part never entered background SPI at all.
+    """
+    ctrl(fd, OUT_DEV, GO_TO, value=IRSHIFT)
+    scan(fd, 8, bytearray([rev(ENTER_BACKGROUND_SPI) if flip else ENTER_BACKGROUND_SPI]))
+    ctrl(fd, OUT_DEV, GO_TO, value=IRPAUSE)
+    ctrl(fd, OUT_DEV, GO_TO, value=DRSHIFT)
+    unlock = list(SPI_UNLOCK)[::-1]
+    scan(fd, 16, bytearray([rev(b) for b in unlock] if flip else unlock))
+    ctrl(fd, OUT_DEV, GO_TO, value=IDLE)
+    ctrl(fd, OUT_DEV, RUN_CLOCK, value=1)
+    for wake in SPI_WAKE:
+        spi(fd, wake, flip)
+'''
+
+APOLLO_READER = APOLLO_HELPERS + r'''
 restore_only = "restore-only" in sys.argv
 if "recover" in sys.argv:
     # A board left in Apollo mode -- because a restore failed, or because
@@ -1756,17 +1787,7 @@ try:
         # expensive part, so one visit takes both. Background SPI is entered
         # from RESET, because the TAP has just been left in DRPAUSE.
         ctrl(fd, OUT_DEV, GO_TO, value=RESET)
-        ctrl(fd, OUT_DEV, GO_TO, value=IRSHIFT)
-        scan(fd, 8, bytearray([rev(ENTER_BACKGROUND_SPI) if flip
-                               else ENTER_BACKGROUND_SPI]))
-        ctrl(fd, OUT_DEV, GO_TO, value=IRPAUSE)
-        ctrl(fd, OUT_DEV, GO_TO, value=DRSHIFT)
-        scan(fd, 16, bytearray(list(SPI_UNLOCK)[::-1] if flip
-                               else [rev(b) for b in list(SPI_UNLOCK)[::-1]]))
-        ctrl(fd, OUT_DEV, GO_TO, value=IDLE)
-        ctrl(fd, OUT_DEV, RUN_CLOCK, value=1)
-        for wake in SPI_WAKE:
-            spi(fd, wake, flip)
+        enter_background_spi(fd, flip)
         time.sleep(0.1)
         # 0x9F: one turnaround byte, then manufacturer, type, capacity.
         print("FLASHIDRAW=" + "".join(
