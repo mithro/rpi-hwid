@@ -91,9 +91,26 @@ PI5_NETV2 = _doc(
     "Raspberry Pi 5 Model B Rev 1.0", "d88100008543dc30", "c04170", [], "usbc-supply",
     # The rig carries two FPGA boards: the NeTV2 on the GPIO harness, and the
     # Cynthion wired in line on its USB, read from sysfs alone 2026-09-21.
-    [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "idcode": "0x3631093"},
+    # Flash read by openfpgaloader-36 2026-09-22 with openFPGALoader 7fd0028:
+    # a Macronix 0xc22017, 8 MiB, whose factory ESN was never programmed --
+    # the part says so itself in its security register, which is what makes
+    # "no factory ESN" a measured fact rather than the absence of a reading.
+    # The note was cross-checked against raw reads: the register is actively
+    # driven 0x00 where an idle line reads 0xFF, and the secured OTP is all
+    # 0xFF and distinct from the main array.
+    [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "idcode": "0x3631093",
+      "flash_jedec": "0xc22017", "flash_uid_state": "none",
+      "flash_uid_note": "no factory ESN: security register 0x00, "
+                        "bit 0 (factory lock) = 0"},
      {"kind": "cynthion", "serial": "267125df30c460de", "hw_rev": "1.4",
-      "mode": "analyzer", "trace_id": "0x1b808604604e0e"}],
+      "mode": "analyzer", "trace_id": "0x1b808604604e0e",
+      # The uid is read off the flash by the gateware and published as the
+      # USB serial; the JEDEC id is not in any descriptor, so it is absent
+      # here until something asks the chip for it. No id is guessed in: the
+      # 64-bit width says the gateware used 0x4B, which is a Winbond-style
+      # Read Unique ID, but "probably a Winbond" is not a JEDEC id.
+      "flash_uid": "267125df30c460de",
+      "flash_uid_bits": 64, "flash_uid_state": "read"}],
     [{"kind": "eth", "mac": "2c:cf:67:16:bd:98"}, {"kind": "wlan", "mac": "2c:cf:67:16:bd:99"}],
     [{"iface": "eth-netv2", "mac": "00:0e:c6:82:b5:e1", "driver": "ax88179_178a",
       "vidpid": "0b95:1790", "manufacturer": "ASIX Elec. Corp.", "product": "AX88179",
@@ -107,6 +124,12 @@ POOL_3BPLUS = _doc(
     [], [{"kind": "eth", "mac": "b8:27:eb:e3:e7:e4"}], [], None, None, None,
 )
 
+# pi-sw2-p16. Its Arty's flash was read before unique ids were, so the
+# document has a JEDEC id and no unique-id state at all -- which is exactly
+# the shape a label may not be printed from, and the reason this fixture is
+# kept as it was found rather than topped up with another board's numbers.
+# openfpgaloader-36 has never met Digilent 210319B301DE, so there is nothing
+# to top it up with honestly.
 ARTY_HOST = _doc(
     "Raspberry Pi 4 Model B Rev 1.5", "10000000ce8e3593", "b03115",
     ["Pmod HAT Adaptor"], "undetermined",
@@ -117,6 +140,24 @@ ARTY_HOST = _doc(
     [], None, None, None,
 )
 ARTY_HOST["verdict"]["summary"]["hat_uuid"] = "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a"
+
+# pi3 (10.21.0.103) on ps1.fpgas.online: the one Arty where every fact comes
+# off the same board. Host identity and the Digilent serial read by
+# openfpgaloader-36 2026-09-22, its flash document the same day (Micron
+# 0x20BA18, 16 MiB, 112 bits of factory id in the extended 0x9F reply), and
+# the DNA read here over that board's own FT2232 on 2026-09-21. pi7 and pi9
+# have flash and serials but no DNA, and an Arty's label is keyed on its DNA.
+ARTY_PI3 = _doc(
+    "Raspberry Pi 4 Model B Rev 1.1", "10000000f1b7bb5a", "a03111",
+    [], "undetermined",
+    [{"kind": "arty", "serial": "210319A43AD3", "dna": "0x0064f5483229085c",
+      "idcode": "0x362d093", "flash_jedec": "0x20ba18",
+      "flash_uid": "235351451900080037091015126b",
+      "flash_uid_bits": 112, "flash_uid_state": "read"}],
+    [{"kind": "eth", "mac": "dc:a6:32:05:32:45"},
+     {"kind": "wlan", "mac": "dc:a6:32:05:32:46"}],
+    [], None, None, None,
+)
 
 ZERO_BONNET = _doc(
     "Raspberry Pi Zero W Rev 1.1", "000000005157f671", "9000c1",
@@ -144,7 +185,12 @@ PI5_POE_HAT = _doc(
 ACORN_HOST = _doc(
     "Raspberry Pi 5 Model B Rev 1.1", "0cd35697db04a4ab", "b04171",
     ["Waveshare PoE M.2 HAT+ (B)"], "gpio-poe-hat",
-    [{"kind": "acorn", "dna": "0x0054b48664b04854", "idcode": "0x13636093"}],
+    # Flash read by openfpgaloader-36 2026-09-22: a Spansion S25FL256S,
+    # 32 MiB, whose 128-bit factory number came out of OTP via 0x4B.
+    [{"kind": "acorn", "dna": "0x0054b48664b04854", "idcode": "0x13636093",
+      "flash_jedec": "0x010219",
+      "flash_uid": "edcbeececb2b2a88b04f914d2e46af90",
+      "flash_uid_bits": 128, "flash_uid_state": "read"}],
     [{"kind": "eth", "mac": "88:a2:9e:45:85:77"}], [], False, True, 3000,
 )
 ACORN_HOST["verdict"]["summary"]["hat_uuid"] = "9729525c-eeee-98e9-f348-a0720f4c16eb"
@@ -342,7 +388,7 @@ RAW = {
     "rpib-serial": MODEL_B,
     "rpicm1-serial": COMPUTE_MODULE_1,
     "pi-sw1-p10": POOL_3BPLUS,
-    "pi-sw2-p16": ARTY_HOST,
+    "pi3": ARTY_PI3,
     "rpiz-serial": ZERO_BONNET,
     "pi-sw2-p47": PI5_POE_HAT,
     "pi-sw2-p48": ACORN_HOST,

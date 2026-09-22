@@ -79,7 +79,7 @@ def test_listing_titles_carry_the_identifier_on_the_label(docs):
     names alone read as though the DNA had never been read."""
     rows = {k: t for _h, k, t, _d, _r in labels.all_labels(docs, {"fpga"})}
     assert rows["netv2"] == "netv2-grove 0x00742c4e63b9085c"
-    assert rows["arty"].startswith("arty-hawk ")
+    assert rows["arty"].startswith("arty-hoopoe ")
     # pi-sw2-p48's Acorn, keyed on the DNA its chain gave up. Its PCIe id is
     # its gateware's, so the model comes out "FPGA" and the die names the part.
     assert rows["acorn"].endswith(" 0x0054b48664b04854")
@@ -217,21 +217,32 @@ def test_how_a_flash_unique_id_is_read_is_a_property_of_the_part(jedec, how):
     assert labels.flash_from_jedec(jedec)["uid_read_with"] == how
 
 
-def test_every_fpga_label_renders_its_flash_the_same_way(docs, tmp_path, monkeypatch):
-    """One flash block, in one place, on every FPGA label that has flash
-    facts -- and absent, not placeholdered, on the ones that do not."""
-    seen = _drawn_strings(monkeypatch, docs, {"arty"}, tmp_path)
-    assert "Spansion S25FL128S/S25FL127S  ·  16 MiB" in seen
+@pytest.mark.parametrize(("kind", "flash", "uid"), [
+    # pi3's Arty: Micron 0x20BA18, 112 bits out of the extended 0x9F reply
+    ("arty", "Micron N25Q128  ·  16 MiB", "235351451900080037091015126b"),
+    # pi-sw2-p48's Acorn: Spansion S25FL256S, 128 bits out of OTP via 0x4B
+    ("acorn", "Spansion S25FL256S  ·  32 MiB",
+     "edcbeececb2b2a88b04f914d2e46af90"),
+    # rpi5-netv2's NeTV2: a Macronix whose factory ESN was never programmed.
+    # The uid row is the same row in the same place and carries the fact the
+    # part gave, which is the whole difference between this and a blank.
+    ("netv2", "Macronix 0xc22017  ·  8 MiB", "no factory ESN"),
+    # the Cynthion: flash type from its revision's published BOM, unique id
+    # read off that chip by the gateware and published as the USB serial
+    ("cynthion", "Winbond W25Q32JV  ·  4 MiB", "267125df30c460de"),
+])
+def test_every_fpga_label_renders_its_flash_the_same_way(kind, flash, uid, docs,
+                                                         tmp_path, monkeypatch):
+    """The same two rows, in the same place, with the same captions, on every
+    FPGA label -- whatever the flash turned out to be. A part with no unique
+    id says so where a part with one prints it, so the eye finds the flash
+    facts in one place on every board and can still tell the cases apart."""
+    seen = _drawn_strings(monkeypatch, docs, {kind}, tmp_path)
     assert "flash" in seen
-    # a Cynthion's configuration flash: its uid is free over USB, its JEDEC
-    # id is not read at all, so the block carries the row it has and no other
-    cyn = _drawn_strings(monkeypatch, docs, {"cynthion"}, tmp_path)
-    assert "267125df30c460de" in cyn
-    assert "uid" in cyn
-    # nothing read, nothing claimed
-    netv2 = _drawn_strings(monkeypatch, docs, {"netv2"}, tmp_path)
-    assert not [s for s in netv2 if "flash" in s.lower()]
-    assert not [s for s in netv2 + cyn + seen if "not read" in s]
+    assert "uid" in seen
+    assert flash in seen
+    assert uid in seen
+    assert not [s for s in seen if "not read" in s]
 
 
 def test_the_other_boards_still_say_device_dna(docs):
@@ -249,18 +260,25 @@ def test_nothing_on_any_fpga_label_says_it_was_not_read(docs, tmp_path, monkeypa
     avoid. A fact that was not read is left off the label rather than
     announced on it -- the Arty's flash row said "flash not read" on a board
     whose flash simply had not been asked for."""
-    # pi3 on ps1, read 2026-09-21 with --jtag and not --flash, so its flash
-    # part is simply not among the things that were read.
+    for kind in ("cynthion", "netv2", "acorn", "arty"):
+        seen = _drawn_strings(monkeypatch, docs, {kind}, tmp_path)
+        assert not [s for s in seen if "not read" in s], kind
+        assert not [s for s in seen if s.endswith("…")], kind
+    # ...and the board whose flash was never asked for does not get a label
+    # saying so. It gets no label: pi3 as it was read on 2026-09-21, with
+    # --jtag and not --flash, so its flash was simply not among the things
+    # that were read.
     bare_arty = ProbeDocument.from_dict("pi3", {"verdict": {"summary": {
         "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
         "power_class": "usbc-supply",
         "fpga": [{"kind": "arty", "serial": "210319A43AD3",
                   "dna": "0x0064f5483229085c", "idcode": "0x362d093"}]}}})
-    for kind, where in (("cynthion", docs), ("netv2", docs), ("acorn", docs),
-                        ("arty", docs), ("arty", {"pi3": bare_arty})):
-        seen = _drawn_strings(monkeypatch, where, {kind}, tmp_path)
-        assert not [s for s in seen if "not read" in s], kind
-        assert not [s for s in seen if s.endswith("…")], kind
+    with pytest.raises(labels.FlashNotReadError) as caught:
+        _drawn_strings(monkeypatch, {"pi3": bare_arty}, {"arty"}, tmp_path)
+    # the host, the board and the command that reads it, so the message is
+    # something to act on rather than something to work around
+    assert "pi3" in str(caught.value)
+    assert "--flash" in str(caught.value)
 
 
 def test_a_board_named_only_by_its_die_does_not_say_it_twice(tmp_path, monkeypatch):
@@ -270,8 +288,12 @@ def test_a_board_named_only_by_its_die_does_not_say_it_twice(tmp_path, monkeypat
     doc = ProbeDocument.from_dict("h", {"verdict": {"summary": {
         "model": "Raspberry Pi 5 Model B Rev 1.0", "serial": "s", "revision": "c04170",
         "power_class": "usbc-supply",
+        # pi-sw2-p48's Acorn as a bare chain: the same DNA, idcode and flash,
+        # but on a harness nothing has described, so nothing names the board.
         "fpga": [{"kind": "jtag", "dna": "0x0054b48664b04854",
-                  "idcode": "0x13636093"}]}}})
+                  "idcode": "0x13636093", "flash_jedec": "0x010219",
+                  "flash_uid": "edcbeececb2b2a88b04f914d2e46af90",
+                  "flash_uid_bits": 128, "flash_uid_state": "read"}]}}})
     seen = _drawn_strings(monkeypatch, {"h": doc}, {"jtag"}, tmp_path)
     assert "XC7A200T" in seen            # the die is the headline
     assert "FPGA  ·  XC7A200T" not in seen
@@ -380,9 +402,9 @@ def test_fpga_records_named_and_typed(docs):
     recs = {r.kind: r for r in labels.fpga_records(docs)}
     assert recs["netv2"].name == "netv2-grove"
     assert recs["netv2"].part == "XC7A100T"
-    assert recs["arty"].name == "arty-hawk"
+    assert recs["arty"].name == "arty-hoopoe"
     assert recs["arty"].model == "Arty A7-35T"
-    assert recs["arty"].flash == "Spansion S25FL128S/S25FL127S  ·  16 MiB"
+    assert recs["arty"].flash == "Micron N25Q128  ·  16 MiB"
     assert recs["acorn"].maker == "SQRL"
 
 
@@ -516,12 +538,13 @@ def test_all_labels_order_and_count(docs):
     # what is attached to it: FPGA, Tiny Tapeout, then the USB adapters.
     assert rows == [
         ("pi-sw1-p10", "rpi"),
-        ("pi-sw2-p16", "rpi"), ("pi-sw2-p16", "arty"),
         ("pi-sw2-p22", "opi"),
         ("pi-sw2-p33", "rpi"), ("pi-sw2-p33", "tt"),
         ("pi-sw2-p37", "rpi"), ("pi-sw2-p37", "usb"),
         ("pi-sw2-p47", "rpi"),
         ("pi-sw2-p48", "rpi"), ("pi-sw2-p48", "acorn"),
+        # "pi3" sorts after every "pi-sw..." host: '-' is below '3'
+        ("pi3", "rpi"), ("pi3", "arty"),
         ("rpi4-tt", "rpi"), ("rpi4-tt", "tt"), ("rpi4-tt", "tt"),
         ("rpi5-433mhz", "rpi"), ("rpi5-433mhz", "usb"),
         # this rig carries two FPGA boards, and both come out with it
@@ -541,14 +564,14 @@ def test_all_labels_order_and_count(docs):
 def test_order_puts_named_hosts_first_and_keeps_groups_whole(docs):
     # A caller that knows which switch port each host is on can ask for that
     # sequence; rpi-hwid has no idea what a switch is, so it only obeys.
-    wanted = ["rpiz-serial", "rpi5-netv2", "pi-sw2-p16"]
+    wanted = ["rpiz-serial", "rpi5-netv2", "pi3"]
     rows = [(h, k) for h, k, _t, _d, _r in
             labels.all_labels(docs, labels.KINDS, order=wanted)]
     hosts = [h for h, _k in rows]
     assert hosts[:1] == ["rpiz-serial"]
     # its Pi, NeTV2, Cynthion and dongle
     assert hosts[1:5] == ["rpi5-netv2"] * 4
-    assert hosts[5:7] == ["pi-sw2-p16"] * 2
+    assert hosts[5:7] == ["pi3"] * 2
     # anything unnamed still follows in host-name order
     rest = hosts[7:]
     assert rest == sorted(rest)
@@ -636,15 +659,19 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
     for png in sorted(glob.glob(str(tmp_path / "page-*.png"))):
         got |= {b.text for b in zxingcpp.read_barcodes(Image.open(png))}
     want = {
-        "0x00742c4e63b9085c", "0x00628502251ea85c",       # netv2 DNA, arty DNA
-        "0x012018",                                      # the arty's flash, small QR
+        "0x00742c4e63b9085c", "0x0064f5483229085c",       # netv2 DNA, arty DNA
+        # every flash's own id in its own small QR: the unique id where the
+        # part gave one up, and the JEDEC id where it has none to give
+        "235351451900080037091015126b",                   # pi3's Arty, Micron
+        "edcbeececb2b2a88b04f914d2e46af90",               # p48's Acorn, Spansion
+        "0xc22017",                                       # the NeTV2's Macronix
         # The Cynthion keys on its ECP5 TraceID, the number in the die, which
         # is where a Xilinx part carries its Device DNA. Its configuration
         # flash's uid is the flash chip's own id and gets the small flash QR.
         "0x1b808604604e0e", "267125df30c460de",
         "2c:cf:67:16:bd:98", "2c:cf:67:16:bd:99",         # rpi5-netv2
         "b8:27:eb:e3:e7:e4", "b8:27:eb:b6:b2:b1",         # 3B+, radio derived
-        "e4:5f:01:96:f8:a5", "e4:5f:01:96:f8:a7",         # arty host
+        "dc:a6:32:05:32:45", "dc:a6:32:05:32:46",         # pi3, the arty host
         "00:e0:4c:36:0b:0a", "b8:27:eb:02:a3:24",         # zero with bonnet
         "98:fe:54:13:f5:75",                              # acorn host
         "02:81:2e:b7:a3:4e",                              # the Orange Pi PC
@@ -663,7 +690,7 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "E6614C311B7A7A37", "E66360B8A3C1D5F2",           # the demo boards' RP2 ids
         "4df39a7a6856f86f",
         # the board serials, as a small QR at the top of each board label's spine
-        "d88100008543dc30", "000000004fe3e7e4", "10000000ce8e3593",
+        "d88100008543dc30", "000000004fe3e7e4", "10000000f1b7bb5a",
         "000000005157f671", "c36b093f773d46b8", "100000003a7e1c9b",
         "02c000812eb7a34e", "1000000085948b10", "10000000613a4524",
         "7070c78090a6d6d8", "00000000110aeed6", "0000000067bdbf54",
@@ -681,7 +708,7 @@ def test_list_and_names_cli(data_dir, capsys):
     assert cli_main(["labels", "--data", str(data_dir), "--list"]) == 0
     out = capsys.readouterr().out
     assert "netv2-grove" in out
-    assert "arty-hawk" in out
+    assert "arty-hoopoe" in out
     assert "opi    Orange Pi PC 1 GB 02c000812eb7a34e" in out
     assert "rpi    Pi 5 4 GB d88100008543dc30" in out
     assert "tt     TT06 E6614C311B7A7A37" in out
@@ -691,6 +718,7 @@ def test_list_and_names_cli(data_dir, capsys):
                      "--cynthion", "267125df30c460de"]) == 0
     out = capsys.readouterr().out
     assert "netv2-grove" in out
+    # the serial asked about on the command line, not the one in the fixtures
     assert "arty-hawk" in out
     assert "cynthion-alidade  267125df30c460de" in out
     assert cli_main(["revision", "c04170"]) == 0
@@ -857,3 +885,63 @@ def test_the_flash_line_never_asserts_a_part_number_nobody_read(jedec, line):
     lookup on an id that several parts can share. So the part is printed only
     where the table holds it as unambiguous, and the id is printed otherwise."""
     assert labels.flash_text(labels.flash_from_jedec(jedec)) == line
+
+
+def _arty(**flash):
+    """pi3's Arty with its flash facts replaced, for the refusal rules."""
+    board = {"kind": "arty", "serial": "210319A43AD3",
+             "dna": "0x0064f5483229085c", "idcode": "0x362d093"}
+    board.update(flash)
+    return {"pi3": ProbeDocument.from_dict("pi3", {"verdict": {"summary": {
+        "model": "Raspberry Pi 4 Model B Rev 1.1", "serial": "10000000f1b7bb5a",
+        "revision": "a03111", "power_class": "undetermined",
+        "fpga": [board]}}})}
+
+
+@pytest.mark.parametrize(("flash", "because"), [
+    # nothing asked the flash anything
+    ({}, "never read"),
+    # the id was read, the unique id was not: the shape every document
+    # collected before unique-id reading existed has
+    ({"flash_jedec": "0x20ba18"}, "never read"),
+    # the read happened and came back all ones or all zeroes, which is a
+    # failed read wearing a value's clothes
+    ({"flash_jedec": "0x20ba18", "flash_uid_state": "blank"},
+     "all ones or all zeroes"),
+    # the reading tool knows no unique-id command for this part. That is a
+    # fact about the tool, not about the silicon, so it may not be printed as
+    # "no unique id" -- the part was never actually asked.
+    ({"flash_jedec": "0x20ba18", "flash_uid_state": "none"},
+     "not evidence that the part has none"),
+    # ...and a state of "read" with nothing read
+    ({"flash_jedec": "0x20ba18", "flash_uid_state": "read"},
+     "read as nothing at all"),
+])
+def test_a_board_whose_flash_was_not_fully_read_is_fatal(flash, because, tmp_path):
+    """Every FPGA label has a place for the flash, so a board that cannot
+    fill it does not get a label at all. Printing the rows blank would put
+    the checking back on whoever holds the board, which is the work this
+    package exists to remove -- and a sticker with a gap on it still gets
+    peeled off and stuck to real hardware."""
+    with pytest.raises(labels.FlashNotReadError) as caught:
+        list(labels.all_labels(_arty(**flash), {"fpga"}))
+    assert because in str(caught.value)
+    assert "pi3" in str(caught.value)
+
+
+def test_a_part_that_says_it_has_no_unique_id_still_gets_a_label(tmp_path,
+                                                                 monkeypatch):
+    """The one silence that prints. A Macronix reports in its security
+    register whether a factory ESN was ever programmed, so "none" with the
+    register reading beside it is the chip's own answer rather than an
+    unasked question -- and the label says it where another board's uid goes."""
+    docs = _arty(flash_jedec="0xc22017", flash_uid_state="none",
+                 flash_uid_note="no factory ESN: security register 0x00, "
+                                "bit 0 (factory lock) = 0")
+    (rec,) = labels.fpga_records(docs)
+    assert labels.flash_not_read(rec) is None
+    seen = _drawn_strings(monkeypatch, docs, {"arty"}, tmp_path)
+    assert "no factory ESN" in seen
+    # the evidence stays in the document and off the 48 mm label
+    assert not [s for s in seen if "security register" in s]
+    assert not [s for s in seen if s.endswith("…")]

@@ -556,23 +556,26 @@ def draw_fpga(lab, board):
     # 18 mm from at any size worth printing, and elided it loses the density
     # -- the one part of the line not guessable from the part number. Below
     # the QR there is a band the full width of the label doing nothing.
-    if board.flash or board.flash_uid:
-        y = max(y + 2.8 * mm, qr_inset + qr_size + 1.2 * mm)
-        full = LABEL_W - 2 * PAD
-        # keep clear of the flash QR's column at the foot's right end
-        if board.flash_uid or board.flash_jedec:
-            full -= 8.5 * mm
-        cap_w = lab.width("flash", SANS, CAPTION) + 1 * mm
-        if board.flash:
-            lab.text(PAD, y + 0.2 * mm, "flash", SANS, CAPTION, color=GREY)
-            lab.fit(PAD + cap_w, y, board.flash, SANS, 7, full - cap_w, min_size=5)
-            y += 2.4 * mm
-        if board.flash_uid:
-            # mono, like every other identifier here: it is a number someone
-            # may have to read off the sticker and type
-            lab.text(PAD, y + 0.2 * mm, "uid", SANS, CAPTION, color=GREY)
-            lab.fit(PAD + cap_w, y, board.flash_uid, MONO_REGULAR, 7,
-                    full - cap_w, min_size=5)
+    y = max(y + 2.8 * mm, qr_inset + qr_size + 1.2 * mm)
+    full = LABEL_W - 2 * PAD - 8.5 * mm   # clear of the flash QR's column
+    cap_w = lab.width("flash", SANS, CAPTION) + 1 * mm
+    lab.text(PAD, y + 0.2 * mm, "flash", SANS, CAPTION, color=GREY)
+    lab.fit(PAD + cap_w, y, board.flash, SANS, 7, full - cap_w, min_size=5)
+    y += 2.4 * mm
+    lab.text(PAD, y + 0.2 * mm, "uid", SANS, CAPTION, color=GREY)
+    if board.flash_uid:
+        # mono, like every other identifier here: it is a number someone may
+        # have to read off the sticker and type
+        lab.fit(PAD + cap_w, y, board.flash_uid, MONO_REGULAR, 7,
+                full - cap_w, min_size=5)
+    else:
+        # A part with no unique id says so, in the label's own voice rather
+        # than in a monospaced identifier's: the row is in the same place and
+        # carries a measured fact, so the eye finds the flash facts where it
+        # expects them on every board and can tell the two cases apart.
+        lab.fit(PAD + cap_w, y,
+                flash_uid_note_text(board.flash_uid_note) or FLASH_UID_NONE,
+                SANS, 7, full - cap_w, min_size=5, color=GREY)
 
     # The foot always carries a value: a board with none never reaches here,
     # because all_labels refuses it. There used to be a rule to write the
@@ -586,14 +589,16 @@ def draw_fpga(lab, board):
     # label puts its board id. It carries the flash's uid when one was read
     # and its JEDEC id otherwise: the identity of the chip, not of the board,
     # which is why it is a second code and not part of the big one.
-    flash_code = board.flash_uid or (board.flash_jedec if board.flash else None)
+    # Its room is reserved whether or not there is a code to put in it, so the
+    # foot is the same width on every label and the labels stay comparable.
+    fq = 6.5 * mm                      # 21 modules at 0.31 mm, as the Pi serial's
+    ident_w -= fq + 2 * mm
+    flash_code = board.flash_uid or board.flash_jedec
     if flash_code:
-        fq = 6.5 * mm                  # 21 modules at 0.31 mm, as the Pi serial's
         qx, qy = LABEL_W - PAD - fq, LABEL_H - PAD - fq
         lab.qr(qx, qy, fq, flash_code, error="l")
         lab.text(qx + fq / 2, qy - 0.4 * mm - CAPTION * 0.72, "flash", SANS, CAPTION,
                  align="centre", color=GREY)
-        ident_w -= fq + 2 * mm
     lab.text(PAD, cap_y, board.ident_caption, SANS, CAPTION, color=GREY)
     lab.fit(PAD, y + 0.5 * mm, board.ident, MONO, dna_size, ident_w)
 
@@ -930,6 +935,25 @@ CYNTHION_PART = {
     "1.1": "LFE5U-12F", "1.2": "LFE5U-12F", "1.3": "LFE5U-12F", "1.4": "LFE5U-12F",
 }
 
+# The configuration flash each Cynthion revision carries, from that
+# revision's own published bill of materials. A Cynthion's flash cannot be
+# identified the way a Xilinx board's is -- openFPGALoader has no path to it,
+# and the chip's pins belong to the ECP5's configuration bank -- but the
+# board is open hardware and says what is on it. This is the same standing as
+# CYNTHION_PART, which prints the die from the revision rather than from a
+# read, and it is only the flash's *type*: its unique id is read off the chip
+# itself by the gateware and published as the USB serial.
+#
+# r1.4: U7, "W25Q32JVSS ... IC FLASH 32M SPI 133MHZ 8SOIC, Winbond,
+# W25Q32JVSSIQ" in cynthion-bom.csv of the r1.4.0 hardware release
+# (github.com/greatscottgadgets/cynthion-hardware, fetched 2026-09-22).
+# 32 Mbit is 4 MiB. Listing revisions rather than defaulting means an
+# unrecognised one prints nothing -- and so is refused a label -- instead of
+# a plausible wrong part.
+CYNTHION_FLASH = {
+    "1.4": "Winbond W25Q32JV  ·  4 MiB",
+}
+
 # The foot of an FPGA label prints the identifier the sticker is keyed on. For
 # the Xilinx boards that is the Device DNA; an ECP5 has no such thing, and
 # printing "Device DNA" over a configuration flash's id would be a plain lie
@@ -949,6 +973,19 @@ IDENT_READ_WITH = {
     "acorn": "rpi-hwid fpga --jtag",
     "jtag": "rpi-hwid fpga --jtag",
     "unknown-fpga": "rpi-hwid fpga --jtag",
+    "cynthion": "rpi-hwid fpga --force-offline",
+}
+
+# ...and what reads its configuration flash. Every one of these reconfigures
+# the FPGA: on a Xilinx part the flash hangs off the configuration bank, so
+# the only way to drive those pins over JTAG is a design in the fabric, and
+# openFPGALoader loads its spiOverJtag bridge and then resets the device to
+# boot from flash again. There is no cheaper path, not even for the bare
+# three-byte id (openfpgaloader-36, from the source, 2026-09-22).
+FLASH_READ_WITH = {
+    "netv2": "rpi-hwid fpga --jtag --flash",
+    "arty": "rpi-hwid fpga --jtag --flash",
+    "acorn": "rpi-hwid fpga --jtag --flash --pins=10:9:11:8",
     "cynthion": "rpi-hwid fpga --force-offline",
 }
 
@@ -1061,6 +1098,67 @@ def flash_text(info):
     return "  ·  ".join(parts) if parts else None
 
 
+def flash_uid_note_text(note):
+    """The printable fact out of a reading tool's note about a unique id.
+
+    openFPGALoader writes the fact and its evidence in one string --
+    "no factory ESN: security register 0x00, bit 0 (factory lock) = 0" -- and
+    a 48 mm label has room for the first of those at a size worth printing.
+    The head before the colon is the fact; the whole note stays in the
+    collected document, so the evidence is never lost, only unprinted.
+    """
+    return (note or "").split(":", 1)[0].strip() or None
+
+
+# What the uid row says when the part has no unique id to give and said so
+# itself. Not a placeholder: the row is the same row in the same place as on
+# a board that has one, and it carries a measured fact rather than a blank.
+FLASH_UID_NONE = "no unique id"
+
+
+class FlashNotReadError(Exception):
+    """A board reached the label generator without its flash facts.
+
+    The same rule as IdentifierNotReadError and for the same reason. Every
+    board here has a configuration flash, every label has a place for it, and
+    a label whose flash rows are blank is one that has to be checked against
+    the hardware by hand -- which is the work this package exists to remove.
+    A part that has no unique id is not this error: that is a fact, and it
+    prints.
+    """
+
+
+def flash_not_read(r):
+    """Why this record's flash rows cannot be printed, or None.
+
+    Four different silences, one of which is printable:
+      no JEDEC id           the flash was never read at all
+      no uid state          it was read before unique ids were, or by a tool
+                            that does not report them
+      state "blank"         the read happened and returned all ones or all
+                            zeroes, which is a failed read wearing a value's
+                            clothes
+      state "none", no note only the reading tool saying it knows no unique-id
+                            command for this part -- not evidence the silicon
+                            has none, so not a fact to print
+    """
+    if not r.flash:
+        return "its configuration flash was never read"
+    if not r.flash_uid_state:
+        return ("its configuration flash's unique id was never read (the flash "
+                "id was, so this document predates unique-id reading)")
+    if r.flash_uid_state == "blank":
+        return ("its configuration flash's unique id read back all ones or all "
+                "zeroes, which is a failed read and not a value")
+    if r.flash_uid_state == "none" and not flash_uid_note_text(r.flash_uid_note):
+        return ("nothing asked its configuration flash whether it has a unique "
+                "id: the reading tool knows no such command for this part, "
+                "which is not evidence that the part has none")
+    if r.flash_uid_state == "read" and not r.flash_uid:
+        return "its configuration flash's unique id was read as nothing at all"
+    return None
+
+
 def idcode_part(idcode):
     """The Artix-7 die an idcode names, whichever tool read it, or None."""
     try:
@@ -1108,6 +1206,8 @@ class FpgaLabel:
     flash: str | None = None          # one line: vendor, part, density
     flash_jedec: str | None = None
     flash_uid: str | None = None      # the flash's own unique id, where read
+    flash_uid_state: str | None = None   # read | blank | none
+    flash_uid_note: str | None = None    # why, where the part itself says so
     gateware: str | None = None      # "gateware v4.14  ·  FPGA id 9" (pcileech)
     # The ECP5's die identifier, masked to its factory 56 bits. Shown, never
     # keyed on: reaching it costs the board's capture, so a name derived from
@@ -1228,7 +1328,13 @@ def fpga_records(docs, pinned_names=None):
                 name = naming.cynthion_name(b.trace_id)
         if b.kind == "arty" and part:
             model = "Arty A7-" + part[len("XC7A"):]
+        # The id the chip gave, where anything asked it; failing that, and
+        # only on a Cynthion, what that revision's published BOM says is
+        # soldered to it. The read wins where both exist, so a board that
+        # has been asked is described by its own answer.
         flash = flash_text(flash_from_jedec(b.flash_jedec))
+        if not flash and b.kind == "cynthion":
+            flash = CYNTHION_FLASH.get(b.hw_rev or "")
         gateware = None
         if b.gateware:
             # the number, never a board name: a class is shared by boards
@@ -1241,6 +1347,14 @@ def fpga_records(docs, pinned_names=None):
                              flash_uid=b.flash_uid or (
                                  b.serial if b.kind == "cynthion" else None),
                              flash_jedec=b.flash_jedec,
+                             # A Cynthion's serial is its configuration flash's
+                             # unique id, read off that chip by the gateware
+                             # and published as a descriptor -- so where the
+                             # probe found one, the id was read.
+                             flash_uid_state=b.flash_uid_state or (
+                                 "read" if b.kind == "cynthion" and b.serial
+                                 else None),
+                             flash_uid_note=b.flash_uid_note,
                              ident_caption=ident_caption))
     return out
 
@@ -1369,6 +1483,15 @@ def all_labels(docs, only, pinned_names=None, order=None):
                         "host and collect again." % (
                             r.host, r.kind, r.ident_caption,
                             IDENT_READ_WITH.get(r.kind, "rpi-hwid fpga --jtag")))
+                why = flash_not_read(r)
+                if why:
+                    raise FlashNotReadError(
+                        "%s: the %s board's label has a place for its "
+                        "configuration flash and %s. Read it with `%s` on "
+                        "that host and collect again -- note that this "
+                        "reconfigures the FPGA." % (
+                            r.host, r.kind, why, FLASH_READ_WITH.get(
+                                r.kind, "rpi-hwid fpga --jtag --flash")))
                 # the identifier the sticker is keyed on, as a Pi row carries
                 # its serial and a USB row its MAC
                 ident = r.ident or r.serial or (r.gateware or "").replace("  ·  ", ", ")
