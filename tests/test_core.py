@@ -73,6 +73,17 @@ def test_acorn_names_are_pure_and_decorrelated():
     assert len(cluster) >= 10
 
 
+def test_pcileech_names_are_pure_and_decorrelated():
+    """A PCILeech card is keyed on its Device DNA like a NeTV2 or an Acorn, so
+    it is named the same way, from the DNA alone: the name claims nothing
+    about who made the card. pi-sw1-p38's, read over its CH347 2026-09-22."""
+    p38 = "0x006425440bc8985c"
+    assert names.pcileech_name(p38).startswith("pcileech-")
+    assert names.pcileech_name(p38) == names.pcileech_name(p38.upper()[2:])
+    cluster = {names.pcileech_name(p38[:-1] + c) for c in "0123456789abcdef"}
+    assert len(cluster) >= 10
+
+
 def test_cynthion_name_rejects_junk():
     with pytest.raises(ValueError, match="not a hex"):
         names.cynthion_name("not-hex")

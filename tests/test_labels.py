@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from rpi_hwid import labels
+from rpi_hwid import labels, names
 from rpi_hwid.cli import main as cli_main
 from rpi_hwid.model import ProbeDocument
 
@@ -95,20 +95,17 @@ def test_a_pcileech_board_gets_a_model_but_no_invented_maker_or_name():
     (rec,) = labels.fpga_records({"pi-sw1-p38": doc})
     assert rec.model == "PCILeech FPGA"
     assert rec.maker == ""                  # the board under the gateware is unknown
-    assert rec.name is None
+    assert rec.name is None                 # no DNA read, so nothing to name it from
     assert rec.dna is None
-    assert rec.gateware is None             # nothing was read from it
 
 
-def test_a_pcileech_board_shows_its_gateware_as_numbers_not_a_board_name(tmp_path):
+def test_a_pcileech_board_with_no_identifier_is_not_labelled(tmp_path):
     doc = ProbeDocument.from_dict("pi-sw1-p38", {"verdict": {"summary": {
         "model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "e8387e35dbce7843",
         "revision": "b04171", "power_class": "undetermined",
         "fpga": [{"kind": "pcileech", "gateware": "4.14", "gateware_id": 9}]}}})
     docs = {"pi-sw1-p38": doc}
-    (rec,) = labels.fpga_records(docs)
-    assert rec.gateware == "gateware v4.14  ·  FPGA id 9"
-    # ...but a board with no identifier still may not be labelled. pcileech
+    # A board with no identifier may not be labelled. pcileech
     # gateware carries none -- its FT601 answers the part's default serial,
     # shared by every unit -- so the sticker would say nothing about which
     # board it is stuck to.
@@ -127,17 +124,21 @@ P38_CARD = {"kind": "pcileech", "dna": "0x006425440bc8985c", "idcode": "0x363209
 
 def test_a_pcileech_card_with_its_die_and_flash_read_gets_a_label(tmp_path, monkeypatch):
     """Everything a label needs, read off the card itself: the Device DNA over
-    the CH347 and the flash over the bridge. Its gateware is still printed as
-    numbers and never as a board name."""
+    the CH347 and the flash over the bridge. It is laid out like every other
+    board: a name from its DNA as the headline, the model and die beneath,
+    and nothing a reflash would change -- so no gateware row."""
     docs = {"pi-sw1-p38": ProbeDocument.from_dict("pi-sw1-p38", {"verdict": {"summary": {
         "model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "e8387e35dbce7843",
         "revision": "b04171", "power_class": "undetermined", "fpga": [P38_CARD]}}})}
+    name = names.pcileech_name("0x006425440bc8985c")
     (row,) = labels.all_labels(docs, {"fpga"})
-    assert row[2] == "PCILeech FPGA 0x006425440bc8985c"
+    assert row[2] == name + " 0x006425440bc8985c"
     seen = _drawn_strings(monkeypatch, docs, {"pcileech"}, tmp_path)
+    assert name.split("-", 1)[1] in seen
+    assert "PCILeech FPGA  ·  XC7A75T" in seen
     assert "Winbond W25Q64xx  ·  8 MiB" in seen
     assert "df64ac431b4b202f" in seen
-    assert "gateware v4.14  ·  FPGA id 9" in seen
+    assert not [s for s in seen if "gateware" in s or "FPGA id" in s]
     assert not [s for s in seen if s.endswith("…")]
 
 

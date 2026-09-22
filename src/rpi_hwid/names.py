@@ -54,6 +54,16 @@ ACORN_WORDS = [
     "walnut", "sycamore", "laurel", "myrtle", "olive", "plane", "teak", "ebony",
 ]
 
+# A PCILeech card is keyed on its Device DNA too. Nothing read off one says
+# who made it, so the name is from the DNA alone and claims nothing more;
+# pond and stream invertebrates, for the leech.
+PCILEECH_WORDS = [
+    "mayfly", "caddis", "stonefly", "damsel", "skater", "boatman", "mussel", "limpet",
+    "snail", "shrimp", "crayfish", "hydra", "planarian", "rotifer", "tardigrade", "daphnia",
+    "cyclops", "copepod", "isopod", "amphipod", "midge", "gnat", "whirligig", "diver",
+    "scorpion", "strider", "spinner", "dun", "nymph", "larva", "bristleworm", "lugworm",
+]
+
 ARTY_WORDS = [
     "otter", "heron", "finch", "raven", "wren", "stork", "swift", "kite",
     "robin", "egret", "crane", "gull", "lark", "owl", "hawk", "dove",
@@ -99,6 +109,12 @@ def acorn_name(dna: str) -> str:
     """The name for an Acorn's Device DNA. Pure, like a NeTV2's."""
     digest = hashlib.sha256(normalise_dna(dna).encode()).hexdigest()
     return "acorn-" + ACORN_WORDS[int(digest, 16) % len(ACORN_WORDS)]
+
+
+def pcileech_name(dna: str) -> str:
+    """The name for a PCILeech card's Device DNA. Pure, like a NeTV2's."""
+    digest = hashlib.sha256(normalise_dna(dna).encode()).hexdigest()
+    return "pcileech-" + PCILEECH_WORDS[int(digest, 16) % len(PCILEECH_WORDS)]
 
 
 def arty_candidates(serial: str) -> Iterator[str]:

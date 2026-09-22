@@ -580,13 +580,6 @@ def draw_fpga(lab, board):
         lab.fit(x, y, "{}  ·  {}".format(board.model, board.part), SANS, 8, col_w)
     else:
         lab.fit(x, y, board.model, SANS, 8, col_w)
-        if board.gateware:
-            # what the board's own gateware said, where it said anything. A
-            # die that was not read is simply left off: "die not read" is the
-            # placeholder this package exists to make unnecessary, and a label
-            # announcing what it does not know is worse than one that is quiet.
-            y += 3 * mm
-            lab.fit(x, y, board.gateware, SANS, CAPTION, beside, color=GREY)
     if board.kind == "arty":
         # the serial is a board-printed identifier: its own row, larger
         # 8 pt on a tighter pitch than it used to have: an Arty is the only
@@ -1323,7 +1316,6 @@ class FpgaLabel:
     flash_uid_state: str | None = None   # read | blank | none
     flash_uid_note: str | None = None    # why, where the part itself says so
     flash_error: str | None = None       # what stopped a read that was tried
-    gateware: str | None = None      # "gateware v4.14  ·  FPGA id 9" (pcileech)
     # The ECP5's die identifier, masked to its factory 56 bits. Shown, never
     # keyed on: reaching it costs the board's capture, so a name derived from
     # it could not be recovered without taking the board offline again.
@@ -1422,6 +1414,8 @@ def fpga_records(docs, pinned_names=None):
             name = naming.netv2_name(b.dna)
         elif b.kind == "arty" and b.serial:
             name = arty_names[b.serial]
+        elif b.kind == "pcileech" and b.dna:
+            name = naming.pcileech_name(b.dna)
         elif b.kind == "acorn":
             # named from the DNA like a NeTV2, and the die picks the variant
             model = ACORN_SOC_MODEL.get(b.soc_model or "") or ACORN_MODEL.get(
@@ -1452,13 +1446,9 @@ def fpga_records(docs, pinned_names=None):
         else:
             flash = flash_text(flash_from_jedec(b.flash_jedec, b.flash_extended_id,
                                                 b.flash_sfdp))
-        gateware = None
-        if b.gateware:
-            # the number, never a board name: a class is shared by boards
-            gateware = "gateware v%s  ·  FPGA id %s" % (b.gateware, b.gateware_id)
         out.append(FpgaLabel(kind=b.kind, maker=maker, model=model, host=host, part=part,
                              name=name, dna=b.dna, serial=b.serial, flash=flash,
-                             gateware=gateware, ident=ident, trace_id=b.trace_id,
+                             ident=ident, trace_id=b.trace_id,
                              # a Cynthion's USB serial *is* its flash uid, and
                              # any board can also have it read from the flash
                              flash_uid=b.flash_uid or (
@@ -1616,7 +1606,7 @@ def all_labels(docs, only, pinned_names=None, order=None):
                            if r.flash_error else ""))
                 # the identifier the sticker is keyed on, as a Pi row carries
                 # its serial and a USB row its MAC
-                ident = r.ident or r.serial or (r.gateware or "").replace("  ·  ", ", ")
+                ident = r.ident or r.serial or ""
                 row = (r.kind, f"{r.name or r.model} {ident}".strip(),
                        draw_fpga, r)
             elif record_kind == "tt":
