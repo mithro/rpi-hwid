@@ -181,11 +181,11 @@ def test_the_smaller_acorn_is_the_cle_101(docs):
 
 
 @pytest.mark.parametrize(("jedec", "vendor", "part", "size"), [
-    # the Arty's, measured; one JEDEC id, two parts with the same density
-    ("0x012018", "Spansion", "S25FL128S/S25FL127S", "16 MiB"),
+    # the Arty's, measured; one JEDEC id, four parts with the same density
+    ("0x012018", "Spansion", "S25FL12x", "16 MiB"),
     # pi-sw2-p48's Acorn, RDID 01 02 19 read by the Acorn deployment
-    ("0x010219", "Spansion", "S25FL256S", "32 MiB"),
-    ("0xef4018", "Winbond", "W25Q128", "16 MiB"),
+    ("0x010219", "Spansion", "S25Fx256S", "32 MiB"),
+    ("0xef4018", "Winbond", "W25Q128xx", "16 MiB"),
     ("0xc22019", "Macronix", None, "32 MiB"),     # vendor and density, no part
     ("0x000000", None, None, None),
     (None, None, None, None), ("junk", None, None, None),
@@ -200,8 +200,8 @@ def test_a_jedec_id_gives_the_vendor_the_part_and_the_density(jedec, vendor, par
 @pytest.mark.parametrize(("jedec", "how"), [
     # measured on the fleet 2026-09-21, each read twice and identical
     ("0x20ba18", "read-uid"),    # Micron N25Q128, 112 bits in the extended 0x9F
-    ("0x010219", "otp"),         # Spansion S25FL256S, 128-bit factory number in OTP
-    ("0x012018", "otp"),         # S25FL128S/S25FL127S, the same mechanism
+    ("0x010219", "otp"),         # Spansion S25Fx256S, 128-bit factory number in OTP
+    ("0x012018", "otp"),         # S25FL12x, the same mechanism
     ("0xef4018", "read-uid"),    # Winbond W25Q, 64 bits via 0x4B
     # Macronix: a factory ESN exists only on a factory-locked part, and both
     # NeTV2s read security register 0x00, so theirs have none
@@ -219,14 +219,14 @@ def test_how_a_flash_unique_id_is_read_is_a_property_of_the_part(jedec, how):
 
 @pytest.mark.parametrize(("kind", "flash", "uid"), [
     # pi3's Arty: Micron 0x20BA18, 112 bits out of the extended 0x9F reply
-    ("arty", "Micron N25Q128  ·  16 MiB", "235351451900080037091015126b"),
-    # pi-sw2-p48's Acorn: Spansion S25FL256S, 128 bits out of OTP via 0x4B
-    ("acorn", "Spansion S25FL256S  ·  32 MiB",
+    ("arty", "Micron N25Q128/MT25QL128  ·  16 MiB", "235351451900080037091015126b"),
+    # pi-sw2-p48's Acorn: Spansion S25Fx256S, 128 bits out of OTP via 0x4B
+    ("acorn", "Spansion S25Fx256S  ·  32 MiB",
      "edcbeececb2b2a88b04f914d2e46af90"),
     # rpi5-netv2's NeTV2: a Macronix whose factory ESN was never programmed.
     # The uid row is the same row in the same place and carries the fact the
     # part gave, which is the whole difference between this and a blank.
-    ("netv2", "Macronix 0xc22017  ·  8 MiB", "no factory ESN"),
+    ("netv2", "Macronix MX25L64xx  ·  8 MiB", "no factory ESN"),
     # the Cynthion: flash type from its revision's published BOM, unique id
     # read off that chip by the gateware and published as the USB serial
     ("cynthion", "Winbond W25Q32JV  ·  4 MiB", "267125df30c460de"),
@@ -404,7 +404,7 @@ def test_fpga_records_named_and_typed(docs):
     assert recs["netv2"].part == "XC7A100T"
     assert recs["arty"].name == "arty-hoopoe"
     assert recs["arty"].model == "Arty A7-35T"
-    assert recs["arty"].flash == "Micron N25Q128  ·  16 MiB"
+    assert recs["arty"].flash == "Micron N25Q128/MT25QL128  ·  16 MiB"
     assert recs["acorn"].maker == "SQRL"
 
 
@@ -660,11 +660,10 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         got |= {b.text for b in zxingcpp.read_barcodes(Image.open(png))}
     want = {
         "0x00742c4e63b9085c", "0x0064f5483229085c",       # netv2 DNA, arty DNA
-        # every flash's own id in its own small QR: the unique id where the
-        # part gave one up, and the JEDEC id where it has none to give
+        # every flash's unique id in its own small QR. The NeTV2's Macronix
+        # has none, and gets no code: its JEDEC id is every MX25L64xx's.
         "235351451900080037091015126b",                   # pi3's Arty, Micron
         "edcbeececb2b2a88b04f914d2e46af90",               # p48's Acorn, Spansion
-        "0xc22017",                                       # the NeTV2's Macronix
         # The Cynthion keys on its ECP5 TraceID, the number in the die, which
         # is where a Xilinx part carries its Device DNA. Its configuration
         # flash's uid is the flash chip's own id and gets the small flash QR.
@@ -861,29 +860,28 @@ def test_no_shuttle_mark_is_a_wordmark():
 
 
 @pytest.mark.parametrize(("jedec", "line"), [
-    # A JEDEC id names a part only as far as a database says so, and several
-    # of these ids are shared. Where the part is not pinned down, the id
-    # itself goes on the label -- measured -- rather than one of the parts
-    # that answer to it.
-    ("0x20ba18", "Micron N25Q128  ·  16 MiB"),
-    ("0x010219", "Spansion S25FL256S  ·  32 MiB"),
-    # 0x012018 is answered by two parts, and the part string says so
-    ("0x012018", "Spansion S25FL128S/S25FL127S  ·  16 MiB"),
-    # Macronix 0xc22017 is shared by MX25L6405, MX25L6406E, MX25L6433F and
-    # more (openfpgaloader-36, measured 2026-09-22: the chip advertises quad
-    # reads, so it is not the x1/x2-only 6406E, and the id cannot pin it
-    # further). openFPGALoader's database labels it MX25L6405; printing that
-    # would assert a part number nobody read.
-    ("0xc22017", "Macronix 0xc22017  ·  8 MiB"),
-    # a manufacturer byte nobody here has met: the id is still the fact
+    # A JEDEC id names a family, not a part: every one of these is answered by
+    # several parts (flashrom's include/flashchips.h lists which, beside each
+    # id). The label prints the family with the unknown letters as x, which
+    # someone can read and search for, rather than one of the parts -- a part
+    # number nobody read -- or the id's hex, which nobody can read at all.
+    ("0xc22017", "Macronix MX25L64xx  ·  8 MiB"),    # 6405 6406E 6436E 6445E ...
+    ("0x012018", "Spansion S25FL12x  ·  16 MiB"),    # 127S 128P 128S 129P
+    ("0x010219", "Spansion S25Fx256S  ·  32 MiB"),   # S25FL256S and S25FS256S
+    ("0x20ba18", "Micron N25Q128/MT25QL128  ·  16 MiB"),   # one die, renamed
+    ("0xef4016", "Winbond W25Q32xx  ·  4 MiB"),      # BV FV JV
+    ("0xef4018", "Winbond W25Q128xx  ·  16 MiB"),
+    ("0xef4019", "Winbond W25Q256xx  ·  32 MiB"),
+    # a manufacturer byte nobody here has met: there is no family to name,
+    # and the id is still the one fact in hand
     ("0x5a1018", "0x5a1018  ·  16 MiB"),
 ])
 def test_the_flash_line_never_asserts_a_part_number_nobody_read(jedec, line):
     """Vendor and density come out of the id's own bytes -- the JEP106
     manufacturer code and a capacity byte that is log2 of the size -- so both
     are as measured as the id is. The part name does not: it is a database
-    lookup on an id that several parts can share. So the part is printed only
-    where the table holds it as unambiguous, and the id is printed otherwise."""
+    lookup on an id that several parts share, so what prints is the family
+    every one of those parts belongs to."""
     assert labels.flash_text(labels.flash_from_jedec(jedec)) == line
 
 
@@ -947,14 +945,49 @@ def test_a_part_that_says_it_has_no_unique_id_still_gets_a_label(tmp_path,
     assert not [s for s in seen if s.endswith("…")]
 
 
-def test_the_cynthions_flash_reads_the_same_whichever_way_it_is_learned():
-    """Its type comes from the revision's bill of materials today, and from
-    the chip itself once something asks it over background SPI. The two must
-    not describe the same part in two different ways, or a board would
-    change its label by being read."""
-    from_bom = labels.CYNTHION_FLASH["1.4"]
-    from_chip = labels.flash_text(labels.flash_from_jedec("0xef4016"))
-    assert from_bom == from_chip == "Winbond W25Q32JV  ·  4 MiB"
+def _cynthion(**flash):
+    """rpi5-netv2's Cynthion with its flash facts replaced."""
+    import conftest
+
+    raw = copy.deepcopy(conftest.PI5_NETV2)
+    (board,) = [b for b in raw["verdict"]["summary"]["fpga"] if b["kind"] == "cynthion"]
+    board.update(flash)
+    return {"rpi5-netv2": ProbeDocument.from_dict("rpi5-netv2", raw)}
+
+
+@pytest.mark.parametrize(("jedec", "line"), [
+    # not asked: the revision's bill of materials names the part
+    (None, "Winbond W25Q32JV  ·  4 MiB"),
+    # asked, and it answered the id the BOM's part answers. The id alone says
+    # only W25Q32xx; the BOM says which of those, and the reading agrees with
+    # it, so the board does not change its label by being read.
+    ("0xef4016", "Winbond W25Q32JV  ·  4 MiB"),
+    # asked, and it answered something else -- a reworked board. The chip is
+    # the better witness to its own identity than a document about the design.
+    ("0xc84016", "GigaDevice 0xc84016  ·  4 MiB"),
+])
+def test_the_cynthions_flash_reads_the_same_whichever_way_it_is_learned(jedec, line):
+    """Its type comes from the revision's bill of materials, and from the chip
+    itself once something asks it over background SPI. Where the two agree
+    the BOM's more specific name prints; where they differ, the chip's."""
+    (rec,) = [r for r in labels.fpga_records(_cynthion(flash_jedec=jedec))
+              if r.kind == "cynthion"]
+    assert rec.flash == line
     # ...and the part gives its unique id up to 0x4B, which is what the
     # gateware used: the published serial is 64 bits, Read Unique ID's width.
     assert labels.flash_from_jedec("0xef4016")["uid_read_with"] == "read-uid"
+
+
+def test_a_flash_with_no_unique_id_gets_no_flash_qr(docs, tmp_path, monkeypatch):
+    """The small QR is for the flash's own serial. A JEDEC id is the same on
+    every chip of the family, so a code holding one identifies nothing about
+    the board it is stuck to -- the NeTV2's Macronix has no factory ESN, and
+    its only QR is the Device DNA. The room stays reserved either way."""
+    coded = []
+    real = labels.Label.qr
+    monkeypatch.setattr(labels.Label, "qr",
+                        lambda self, x, y, size, content, **kw:
+                        (coded.append(content), real(self, x, y, size, content, **kw)))
+    labels.render({"rpi5-netv2": docs["rpi5-netv2"]}, tmp_path / "netv2.pdf",
+                  only={"netv2"})
+    assert coded == ["0x00742c4e63b9085c"]

@@ -586,17 +586,21 @@ def draw_fpga(lab, board):
     cap_y = y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm    # the caption sits over the value
     ident_w = LABEL_W - 2 * PAD
     # The flash's own small QR, at the foot's right end, where a Tiny Tapeout
-    # label puts its board id. It carries the flash's uid when one was read
-    # and its JEDEC id otherwise: the identity of the chip, not of the board,
-    # which is why it is a second code and not part of the big one.
-    # Its room is reserved whether or not there is a code to put in it, so the
+    # label puts its board id. It carries the flash's unique id: the identity
+    # of the chip, not of the board, which is why it is a second code and not
+    # part of the big one. A flash with no unique id gets no code. Its JEDEC
+    # id used to go here instead, and that is the same on every chip of the
+    # family -- a code that looks like an identifier and identifies nothing.
+    # The room is reserved whether or not there is a code to put in it, so the
     # foot is the same width on every label and the labels stay comparable.
-    fq = 6.5 * mm                      # 21 modules at 0.31 mm, as the Pi serial's
+    # 6.5 mm is 21 modules at 0.31 mm for a 64-bit uid (16 hex digits, QR
+    # version 1), but 25 at 0.26 mm for the 112- and 128-bit ones, which need
+    # version 2.
+    fq = 6.5 * mm
     ident_w -= fq + 2 * mm
-    flash_code = board.flash_uid or board.flash_jedec
-    if flash_code:
+    if board.flash_uid:
         qx, qy = LABEL_W - PAD - fq, LABEL_H - PAD - fq
-        lab.qr(qx, qy, fq, flash_code, error="l")
+        lab.qr(qx, qy, fq, board.flash_uid, error="l")
         lab.text(qx + fq / 2, qy - 0.4 * mm - CAPTION * 0.72, "flash", SANS, CAPTION,
                  align="centre", color=GREY)
     lab.text(PAD, cap_y, board.ident_caption, SANS, CAPTION, color=GREY)
@@ -950,9 +954,31 @@ CYNTHION_PART = {
 # 32 Mbit is 4 MiB. Listing revisions rather than defaulting means an
 # unrecognised one prints nothing -- and so is refused a label -- instead of
 # a plausible wrong part.
+#
+# Each entry also carries the JEDEC id its part answers, so a board whose
+# flash has been asked over background SPI can be checked against its BOM.
+# The id alone says only W25Q32xx; the BOM says which. Where the two agree the
+# BOM's name prints, so a board does not change its label by being read; where
+# they differ the board has been reworked, and the chip's answer prints. The
+# id is from Winbond's W25Q32JV datasheet (rev G, table 8.1.1:
+# "W25Q32JV-IQ/JQ 15h 4016h"; the -IM/JM parts answer 7016h instead).
 CYNTHION_FLASH = {
-    "1.4": "Winbond W25Q32JV  ·  4 MiB",
+    "1.4": ("0xef4016", "Winbond W25Q32JV  ·  4 MiB"),
 }
+
+
+def cynthion_flash(hw_rev, jedec):
+    """The flash line for a Cynthion of revision `hw_rev` whose flash
+    answered `jedec`, or None for a revision whose BOM is not listed and
+    whose flash nobody asked."""
+    read = flash_text(flash_from_jedec(jedec))
+    bom = CYNTHION_FLASH.get(hw_rev or "")
+    if not bom:
+        return read
+    bom_jedec, bom_text = bom
+    if read and flash_from_jedec(jedec)["jedec"] != bom_jedec:
+        return read
+    return bom_text
 
 # The foot of an FPGA label prints the identifier the sticker is keyed on. For
 # the Xilinx boards that is the Device DNA; an ECP5 has no such thing, and
@@ -1019,24 +1045,25 @@ JEDEC_VENDOR = {
     0x01: "Spansion", 0x1F: "Atmel", 0x20: "Micron", 0x9D: "ISSI",
     0xBF: "SST", 0xC2: "Macronix", 0xC8: "GigaDevice", 0xEF: "Winbond",
 }
+#
+# Every id here is answered by more than one part, so each names the family
+# they share, with the letters the id cannot settle written as x. That is a
+# name a person can read and search for; the id's hex is not, and one of the
+# parts would be a part number nobody read. Which parts share an id is taken
+# from flashrom's include/flashchips.h, which lists them beside each id.
 JEDEC_PART = {
-    # S25FL128S and S25FL127S answer the same id: one density, two parts
-    # one id, two parts: pi9's Arty proved it, answering SFDP 1.6 which the
-    # S25FL128S datasheet has not got and the S25FL127S has. Spelled as
-    # openFPGALoader's own database spells it, so the JEDEC-only path and the
-    # --flash-info path cannot disagree about the same chip.
-    0x012018: "S25FL128S/S25FL127S",
-    0x010219: "S25FL256S",
-    0xEF4018: "W25Q128",
-    # The Cynthion's configuration flash, which its revision's bill of
-    # materials names (U7, W25Q32JVSS, 32 Mbit). The id is this table's usual
-    # standing -- a datasheet fact, not a reading -- and it is here so that
-    # the BOM's answer and the chip's own answer describe the part the same
-    # way, rather than a board changing its label by being read.
-    0xEF4016: "W25Q32JV",
-    # pi3's Arty, measured 2026-09-21; openFPGALoader calls it N25Q128_3V
-    0x20BA18: "N25Q128",
-    0xEF4019: "W25Q256",
+    # MX25L6405, 6405D, 6406E, 6408E, 6436E, 6445E, 6465E, 6473E: the NeTV2's
+    0xC22017: "MX25L64xx",
+    # S25FL127S, 128P, 128S and 129P. pi9's Arty is a 127S -- it answers SFDP
+    # 1.6, which the 128S has not got -- but the id alone cannot say so.
+    0x012018: "S25FL12x",
+    # S25FL256S, and the 1.8 V S25FS256S: p48's Acorn
+    0x010219: "S25Fx256S",
+    # Micron's N25Q128 and the same die renamed MT25QL128: pi3's Arty
+    0x20BA18: "N25Q128/MT25QL128",
+    0xEF4016: "W25Q32xx",      # BV, FV and JV-IQ; the Cynthion's
+    0xEF4018: "W25Q128xx",     # BV, FV and JV-IQ
+    0xEF4019: "W25Q256xx",     # FV and JV-IQ
 }
 
 
@@ -1338,9 +1365,10 @@ def fpga_records(docs, pinned_names=None):
         # only on a Cynthion, what that revision's published BOM says is
         # soldered to it. The read wins where both exist, so a board that
         # has been asked is described by its own answer.
-        flash = flash_text(flash_from_jedec(b.flash_jedec))
-        if not flash and b.kind == "cynthion":
-            flash = CYNTHION_FLASH.get(b.hw_rev or "")
+        if b.kind == "cynthion":
+            flash = cynthion_flash(b.hw_rev, b.flash_jedec)
+        else:
+            flash = flash_text(flash_from_jedec(b.flash_jedec))
         gateware = None
         if b.gateware:
             # the number, never a board name: a class is shared by boards
