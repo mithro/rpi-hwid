@@ -589,11 +589,11 @@ def draw_fpga(lab, board):
             lab.fit(x, y, board.gateware, SANS, CAPTION, beside, color=GREY)
     if board.kind == "arty":
         # the serial is a board-printed identifier: its own row, larger
-        # 9 pt on a tighter pitch than it used to have: an Arty is the only
+        # 8 pt on a tighter pitch than it used to have: an Arty is the only
         # board carrying a serial, a flash line and a flash uid at once, and
         # that stack is what decides how much room the foot has left.
         y += 2.7 * mm
-        lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 9, beside - 6 * mm)
+        lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 8, beside - 6 * mm)
 
 
     # The flash block: the same rows, in the same place, on every FPGA label.
@@ -608,7 +608,9 @@ def draw_fpga(lab, board):
     cap_x = fx - 1.5 * mm - max(lab.width(c, SANS, CAPTION) for c in ("flash", "uid"))
     row = 7 * 0.72                        # a 7 pt row's cap height, in points
     pitch = 2.3 * mm
-    flash_y = fy + (fq - pitch - row) / 2   # the two rows' middle is the code's
+    # the rows' middle is the code's: both rows where there is a uid, and the
+    # flash row alone beside a "no id" square
+    flash_y = fy + (fq - (pitch if board.flash_uid else 0) - row) / 2
     uid_y = flash_y + pitch
     lab.captioned_after(PAD, cap_x, flash_y, "flash", board.flash, SANS, 7, min_size=5)
     if board.flash_uid:

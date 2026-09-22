@@ -335,15 +335,17 @@ def test_the_identifier_spans_the_foot_with_the_flash_code_above_it(
             assert right < flash["x"] or t["s"] == "no id", t["s"]
 
 
-@pytest.mark.parametrize("kind", ["cynthion", "acorn", "arty"])
+@pytest.mark.parametrize("kind", ["cynthion", "acorn", "arty", "netv2"])
 def test_the_flash_rows_are_centred_on_the_flash_code(kind, docs, tmp_path, monkeypatch):
-    """The two rows sit at the flash code's vertical middle, and clear of the
-    board's QR above them."""
-    texts, codes, _boxes = _drawn(monkeypatch, docs, kind, tmp_path)
+    """The rows sit at the flash code's vertical middle, and clear of the
+    board's QR above them. A flash with no unique id has one row, and that
+    row is centred on the "no id" square by itself."""
+    texts, codes, boxes = _drawn(monkeypatch, docs, kind, tmp_path)
     rec = {r.kind: r for r in labels.fpga_records(docs)}[kind]
     (big,) = [c for c in codes if c["content"] == rec.ident]
-    (small,) = [c for c in codes if c["content"] == rec.flash_uid]
+    (small,) = [c for c in codes if c["content"] == rec.flash_uid] if rec.flash_uid else boxes
     rows = [t for t in texts if t["s"] in (rec.flash, rec.flash_uid)]
+    assert len(rows) == (2 if rec.flash_uid else 1)
     top = min(t["y"] for t in rows)
     bottom = max(t["y"] + t["size"] * 0.72 for t in rows)
     assert (top + bottom) / 2 == pytest.approx(small["y"] + small["size"] / 2,
@@ -357,6 +359,7 @@ def test_the_arty_serial_has_room_between_it_and_the_flash(docs, tmp_path, monke
     sitting on it."""
     texts, _codes, _boxes = _drawn(monkeypatch, docs, "arty", tmp_path)
     (serial,) = [t for t in texts if t["s"] == "210319A43AD3"]
+    assert serial["size"] == 8
     (flash,) = [t for t in texts if t["s"].startswith("Micron")]
     serial_bottom = serial["y"] + serial["size"] * 0.72
     assert flash["y"] - serial_bottom >= 1.2 * labels.mm
