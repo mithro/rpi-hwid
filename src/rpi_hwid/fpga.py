@@ -1168,7 +1168,22 @@ def flash_info_parse(returncode, out):
 # status-register noise to step around. It also promises to bump `version`
 # when a field changes meaning, which the printed report cannot.
 FLASH_JSON_FORMAT = "openFPGALoader-flash-info"
-FLASH_JSON_VERSION = 1
+# 1, and 2 (openFPGALoader 5d0ae2e), which changed what "sfdp": null means:
+# in 2 it is only the part answering RSFDP with no SFDP signature, a failed
+# read being an error that writes no document; in 1 it could also follow a
+# failed read.
+FLASH_JSON_VERSIONS = (1, 2)
+
+
+def sfdp_answer(version, flash):
+    """What a flash document says of the part's SFDP: a revision, "none", or
+    None when it says nothing that can be relied on."""
+    sfdp = flash.get("sfdp")
+    if isinstance(sfdp, dict) and sfdp.get("revision"):
+        return sfdp["revision"]
+    if version >= 2 and "sfdp" in flash and sfdp is None:
+        return "none"
+    return None
 
 
 def flash_info_from_json(doc):
@@ -1180,7 +1195,8 @@ def flash_info_from_json(doc):
     """
     if not isinstance(doc, dict) or doc.get("format") != FLASH_JSON_FORMAT:
         return {}
-    if doc.get("version") != FLASH_JSON_VERSION:
+    version = doc.get("version")
+    if version not in FLASH_JSON_VERSIONS:
         return {}
     flashes = doc.get("flashes") or []
     if not flashes or not isinstance(flashes[0], dict):
@@ -1212,11 +1228,11 @@ def flash_info_from_json(doc):
             # absent from documents written before the field existed. They name
             # the part where the three-byte id cannot.
             "extended_id": f.get("extended_id"),
-            # the SFDP revision the part answered RSFDP with, or None. Since
-            # openFPGALoader 9b682b6 None means only "no SFDP signature"; before
-            # it a failed read also came out None, and a document does not say
-            # which build wrote it, so only a revision is evidence of anything.
-            "sfdp": (f.get("sfdp") or {}).get("revision")}
+            # The SFDP revision the part answered RSFDP with; "none" where a
+            # version-2 document says it answered without one, which is the
+            # part's own answer; None where nothing can be said -- a version-1
+            # null could also follow a failed read.
+            "sfdp": sfdp_answer(version, f)}
 
 
 # The package each die comes in, on the boards found on a GPIO harness. The

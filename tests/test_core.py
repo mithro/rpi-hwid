@@ -577,7 +577,7 @@ def test_the_flash_document_is_preferred_to_the_printed_report():
     {"format": "something-else", "version": 1, "flashes": [{}]},
     # a version this code has not been taught: the schema says a bump means a
     # field changed meaning, so guessing at it is worse than reading nothing
-    {"format": "openFPGALoader-flash-info", "version": 2, "flashes": [{}]},
+    {"format": "openFPGALoader-flash-info", "version": 3, "flashes": [{}]},
     {"format": "openFPGALoader-flash-info", "version": 1, "flashes": []},
 ])
 def test_a_flash_document_this_code_does_not_understand_is_not_guessed_at(doc):
@@ -641,6 +641,22 @@ def test_the_sfdp_revision_travels_from_the_document_to_the_board():
     (board,) = fpga.fpga_verdict({"pcie": [], "jtag": j, "ftdi": [
         {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319B58379"}]})
     assert fpga.fpga_summary([board])[0]["flash_sfdp"] == "1.6"
+
+
+@pytest.mark.parametrize(("version", "sfdp", "kept"), [
+    (1, {"revision": "1.6"}, "1.6"),
+    (2, {"revision": "1.6"}, "1.6"),
+    # version 2 (openFPGALoader 5d0ae2e): null means the part answered RSFDP
+    # with no SFDP signature -- a failed read is an error and writes nothing
+    (2, None, "none"),
+    # version 1: null could also follow a failed read, so it says nothing
+    (1, None, None),
+])
+def test_what_a_missing_sfdp_means_depends_on_the_document_version(version, sfdp, kept):
+    doc = json.loads(json.dumps(PI9_FLASH_JSON))
+    doc["version"] = version
+    doc["flashes"][0]["sfdp"] = sfdp
+    assert fpga.flash_info_from_json(doc)["sfdp"] == kept
 
 
 def test_the_three_unique_id_states_in_the_document():

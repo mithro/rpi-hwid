@@ -95,8 +95,9 @@ class FpgaBoard:
     # RDID bytes 4-6 where the flash's family defines them: what tells an
     # N25Q128 from an MT25QL128, or an S25FL256S from an S25FS256S.
     flash_extended_id: str | None = None
-    # The SFDP revision the flash answered with, if it answered: what tells an
-    # S25FL127S (which has RSFDP) from an S25FL128S (which has not).
+    # The SFDP revision the flash answered with, "none" where it answered
+    # without one, None where that is unknown: what tells an S25FL127S (which
+    # has RSFDP) from an S25FL128S (which has not).
     flash_sfdp: str | None = None
 
     @property

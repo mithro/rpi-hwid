@@ -1048,8 +1048,11 @@ def test_the_extended_id_names_the_part_the_jedec_id_cannot(jedec, extended, lin
     # (revision 1.6). The S25FL127S datasheet documents RSFDP 5Ah; the
     # S25FL128S/256S datasheet has no such command. So it is the 127S.
     ("1.6", "Spansion S25FL127S  ·  16 MiB"),
-    # No SFDP is not taken as a 128S: before openFPGALoader 9b682b6 a failed
-    # read also came out null, and a document does not say which build wrote it.
+    # A version-2 document's "no SFDP" is the part's own answer: not a 127S,
+    # so the 128S.
+    ("none", "Spansion S25FL128S  ·  16 MiB"),
+    # A version-1 document's null could also be a failed read, so it settles
+    # nothing.
     (None, "Spansion S25FL12xS  ·  16 MiB"),
 ])
 def test_sfdp_tells_an_s25fl127s_from_an_s25fl128s(sfdp, line):

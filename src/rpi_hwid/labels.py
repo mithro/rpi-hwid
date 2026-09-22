@@ -1092,7 +1092,7 @@ JEDEC_PART = {
     # 127S or the 128S, and SFDP separates those two: the S25FL127S datasheet
     # (Infineon 001-98282 Rev. *K, 10.2.4) documents RSFDP 5Ah, and the
     # S25FL128S/256S datasheet (002-19099 Rev. *D) has no such command and
-    # never mentions SFDP. See S25FL127S_WITH_SFDP.
+    # never mentions SFDP. See S25FL12X_BY_SFDP.
     0x012018: "S25FL12x",
     # S25FL256S, and the 1.8 V S25FS256S: p48's Acorn
     0x010219: "S25Fx256S",
@@ -1139,14 +1139,15 @@ MICRON_GENERATION = {0x20BA18: ("N25Q128", "MT25QL128")}
 # FL-S, 81h FS-S -- as Linux's drivers/mtd/spi-nor/spansion.c keys them
 # (s25fl256s0/1, s25fs256s0/1, s25fl128s0/1, s25fs128s1). An FL-S at 0x012018
 # is an S25FL127S or an S25FL128S, which these bytes do not separate -- SFDP
-# does (S25FL127S_WITH_SFDP below).
+# does (S25FL12X_BY_SFDP below).
 SPANSION_FAMILY = {0x010219: {0x80: "S25FL256S", 0x81: "S25FS256S"},
                    0x012018: {0x80: "S25FL12xS", 0x81: "S25FS128S"}}
 # Of the two FL-S parts at 0x012018 only the S25FL127S answers RSFDP: its
 # datasheet (Infineon 001-98282 Rev. *K, 10.2.4) documents 5Ah, and the
 # S25FL128S/256S datasheet (002-19099 Rev. *D) has no such command. pi9's
-# Arty answers with SFDP 1.6. No answer is not read as a 128S: see the probe.
-S25FL127S_WITH_SFDP = (0x012018, "S25FL12xS", "S25FL127S")
+# Arty answers with SFDP 1.6. "none" -- a version-2 flash document's own "no
+# SFDP" -- makes it the 128S; an unknown (None) settles nothing.
+S25FL12X_BY_SFDP = (0x012018, "S25FL12xS", "S25FL127S", "S25FL128S")
 
 
 def extended_part(value, extended, sfdp=None):
@@ -1164,8 +1165,8 @@ def extended_part(value, extended, sfdp=None):
         return MICRON_GENERATION[value][1 if data[1] & 0x40 else 0]
     if value in SPANSION_FAMILY and data[0] == 0x4D:
         part = SPANSION_FAMILY[value].get(data[2])
-        if sfdp and (value, part) == S25FL127S_WITH_SFDP[:2]:
-            return S25FL127S_WITH_SFDP[2]
+        if sfdp and (value, part) == S25FL12X_BY_SFDP[:2]:
+            return S25FL12X_BY_SFDP[3 if sfdp == "none" else 2]
         return part
     return None
 
