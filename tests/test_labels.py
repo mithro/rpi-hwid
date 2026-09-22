@@ -1043,6 +1043,21 @@ def test_the_extended_id_names_the_part_the_jedec_id_cannot(jedec, extended, lin
     assert labels.flash_text(labels.flash_from_jedec(jedec, extended)) == line
 
 
+@pytest.mark.parametrize(("sfdp", "line"), [
+    # pi9's Arty: 0x012018, extended id 4d 01 80 (FL-S), and an SFDP table
+    # (revision 1.6). The S25FL127S datasheet documents RSFDP 5Ah; the
+    # S25FL128S/256S datasheet has no such command. So it is the 127S.
+    ("1.6", "Spansion S25FL127S  ·  16 MiB"),
+    # No SFDP is not taken as a 128S: before openFPGALoader 9b682b6 a failed
+    # read also came out null, and a document does not say which build wrote it.
+    (None, "Spansion S25FL12xS  ·  16 MiB"),
+])
+def test_sfdp_tells_an_s25fl127s_from_an_s25fl128s(sfdp, line):
+    assert labels.flash_text(labels.flash_from_jedec("0x012018", "0x4d0180", sfdp)) == line
+    # ...and changes nothing where the family byte already said it all
+    assert labels.flash_from_jedec("0x010219", "0x4d0180", sfdp)["part"] == "S25FL256S"
+
+
 def _arty(**flash):
     """pi3's Arty with its flash facts replaced, for the refusal rules."""
     board = {"kind": "arty", "serial": "210319A43AD3",

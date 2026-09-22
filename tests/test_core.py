@@ -617,6 +617,32 @@ def test_the_extended_id_travels_from_the_document_to_the_board():
     assert fpga.fpga_summary([board])[0]["flash_extended_id"] == "0x100000"
 
 
+# pi9's Arty (Digilent 210319B58379), read by openfpgaloader-36 on 2026-09-22
+# with the build that reports extended_id and treats a failed SFDP read as an
+# error. Trimmed to the identity fields and the SFDP revision.
+PI9_FLASH_JSON = {"format": "openFPGALoader-flash-info", "version": 1, "flashes": [{
+    "jedec_id": "0x012018", "manufacturer": "Spansion", "part": "S25FL128S/S25FL127S",
+    "extended_id": "0x4d0180", "size_bytes": 16777216,
+    "unique_id": {"state": "read", "value": "a614111b8aaeba7443d95aa761a37f24",
+                  "bits": 128, "opcode": "0x4b", "note": None},
+    "sfdp": {"revision": "1.6"}}]}
+
+
+def test_the_sfdp_revision_travels_from_the_document_to_the_board():
+    """Whether a part answers RSFDP is what separates an S25FL127S from an
+    S25FL128S, so the revision it answered with is kept on the board."""
+    got = fpga.flash_info_from_json(PI9_FLASH_JSON)
+    assert got["sfdp"] == "1.6"
+    no_sfdp = json.loads(json.dumps(PI9_FLASH_JSON))
+    no_sfdp["flashes"][0]["sfdp"] = None
+    assert fpga.flash_info_from_json(no_sfdp)["sfdp"] is None
+    j = dict(NETV2_FLASH, idcode="0x362d093", dna="0x0064f5483229085c",
+             cable="digilent", flash_sfdp="1.6")
+    (board,) = fpga.fpga_verdict({"pcie": [], "jtag": j, "ftdi": [
+        {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319B58379"}]})
+    assert fpga.fpga_summary([board])[0]["flash_sfdp"] == "1.6"
+
+
 def test_the_three_unique_id_states_in_the_document():
     """`none` means the part has no known UID command, and only that: since
     openFPGALoader 9754753 a transfer that actually failed exits non-zero and
@@ -1400,7 +1426,8 @@ def test_probe_document_from_json_skips_banner():
                                               "flash_uid_state": None,
                                               "flash_uid_note": None,
                                               "flash_error": None,
-                                              "flash_extended_id": None}]
+                                              "flash_extended_id": None,
+                                              "flash_sfdp": None}]
     with pytest.raises(ValueError, match="no JSON"):
         ProbeDocument.from_json("h", "no json")
     with pytest.raises(ValueError, match=r"verdict\.summary"):

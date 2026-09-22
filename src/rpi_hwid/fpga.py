@@ -1211,7 +1211,12 @@ def flash_info_from_json(doc):
             # N25Q/MT25Q, Spansion S-family); null for every other part and
             # absent from documents written before the field existed. They name
             # the part where the three-byte id cannot.
-            "extended_id": f.get("extended_id")}
+            "extended_id": f.get("extended_id"),
+            # the SFDP revision the part answered RSFDP with, or None. Since
+            # openFPGALoader 9b682b6 None means only "no SFDP signature"; before
+            # it a failed read also came out None, and a document does not say
+            # which build wrote it, so only a revision is evidence of anything.
+            "sfdp": (f.get("sfdp") or {}).get("revision")}
 
 
 # The package each die comes in, on the boards found on a GPIO harness. The
@@ -1352,6 +1357,7 @@ def read_flash(res, harness, board, part):
         # only the document carries a note or an extended id
         res["flash_uid_note"] = info.get("uid_note")
         res["flash_extended_id"] = info.get("extended_id")
+        res["flash_sfdp"] = info.get("sfdp")
     else:
         argv = list(harness) + (["-b", board] if board else []) \
             + (["--fpga-part", part] if part else [])
@@ -2119,7 +2125,7 @@ def fpga_verdict(d):
 # What a chain's flash read leaves on the board it belongs to
 JTAG_FLASH_KEYS = ("flash_jedec", "flash", "flash_uid", "flash_uid_bits",
                    "flash_uid_state", "flash_uid_note", "flash_error",
-                   "flash_extended_id")
+                   "flash_extended_id", "flash_sfdp")
 
 
 def merge_soc(boards, soc):
@@ -2160,7 +2166,8 @@ def fpga_summary(boards):
                   "gateware_id", "hw_rev", "mode", "trace_id",
                   "dna_sources", "dna_agree", "dna_conflict", "soc_model",
                   "flash_uid", "flash_uid_bits", "flash_uid_state",
-                  "flash_uid_note", "flash_error", "flash_extended_id"):
+                  "flash_uid_note", "flash_error", "flash_extended_id",
+                  "flash_sfdp"):
             # not plain truthiness: FPGA id 0 is a real class (SP605_FT601)
             if b.get(k) is not None and b.get(k) != "":
                 entry[k] = b[k]
