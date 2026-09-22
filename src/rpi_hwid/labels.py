@@ -1034,7 +1034,8 @@ class IdentifierNotReadError(Exception):
 # every board read by openocd was labelled "die not read" with its idcode in
 # hand, and each revision met in the wild needed its own entry added.
 IDCODE_REVISION_MASK = 0x0FFFFFFF
-IDCODE_PART = {0x362D093: "XC7A35T", 0x3631093: "XC7A100T", 0x3636093: "XC7A200T"}
+IDCODE_PART = {0x362D093: "XC7A35T", 0x3632093: "XC7A75T", 0x3631093: "XC7A100T",
+               0x3636093: "XC7A200T"}
 
 
 # SPI flash, the one component every FPGA board here has and none of them

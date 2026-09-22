@@ -63,6 +63,7 @@ def test_board_record_orange_pi_pc(docs):
     ("0x13631093", "XC7A100T"),    # the top nibble is the silicon revision
     ("0x23631093", "XC7A100T"),    # ...so a revision nobody has met yet is fine too
     ("0x03636093", "XC7A200T"),
+    ("0x3632093", "XC7A75T"),      # pi-sw1-p38's PCILeech card, over its CH347
     ("0x0bad0093", None),          # not an Artix-7 this table knows
     ("", None), (None, None), ("junk", None),
 ])

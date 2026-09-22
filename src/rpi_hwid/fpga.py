@@ -131,6 +131,26 @@ def ftdi_devices():
     return out
 
 
+# A WCH CH347 in its UART+JTAG mode, which is how pi-sw1-p38 reaches its
+# PCILeech card (openfpgaloader-36, 2026-09-22: `--scan-usb` lists it as
+# ch347_jtag). Only the id that has been met is listed: the same vendor makes
+# CH340 serial adapters, and a scan that took one for a JTAG cable would
+# drive whatever it is wired to. Its serial is 0123456789 on every unit, so it
+# says nothing about which cable this is and is never keyed on.
+CH347_JTAG_IDS = ("1a86:55dd",)
+
+
+def ch347_cables():
+    """The CH347 JTAG cables on this host."""
+    out = []
+    for p in sorted(glob.glob(ROOT + "/sys/bus/usb/devices/*")):
+        vidpid = "%s:%s" % (read(p + "/idVendor"), read(p + "/idProduct"))
+        if vidpid in CH347_JTAG_IDS:
+            out.append({"path": os.path.basename(p), "id": vidpid,
+                        "product": read(p + "/product")})
+    return out
+
+
 # --- Cynthion, from its descriptors alone ---------------------------------------
 #
 # A Great Scott Gadgets Cynthion answers 1d50:615b whatever gateware is loaded
@@ -1275,8 +1295,14 @@ def jtag_probe(want_flash=False, pins=None):
             return ocd
         return {"error": "openFPGALoader not installed"}
     digilent = bool(cables)
+    # A CH347 on the host's USB is the card's own JTAG cable, as a Digilent
+    # FT2232 is an Arty's: no GPIO harness is involved at all.
+    ch347 = not digilent and bool(ch347_cables())
+    cable = "digilent" if digilent else "ch347" if ch347 else "gpio"
     if digilent:
         harness = tool["argv"] + ["-c", "digilent"]
+    elif ch347:
+        harness = tool["argv"] + ["-c", "ch347_jtag"]
     else:
         harness = tool["argv"] + ["-c", "libgpiod",
                                   "--pins=" + (pins or HARNESS_PINS)]
@@ -1293,6 +1319,10 @@ def jtag_probe(want_flash=False, pins=None):
     det = sh_all(harness + ["--detect"], timeout=60)
     m = re.search(r"idcode\s+(0x[0-9a-f]+)", det)
     if not m:
+        if ch347:
+            # openocd is only ever set up here for the Digilent cable and the
+            # GPIO harness, and the harness is not what this card is wired to
+            return {"idcode": None, "cable": cable, "raw": det[-200:]}
         # Installed is not the same as able. Try openocd before giving up, and
         # keep both tools' last words, so a chain neither can read says why.
         ocd = openocd_probe(cables[0]["serial"] if cables else None, pins)
@@ -1309,12 +1339,12 @@ def jtag_probe(want_flash=False, pins=None):
     dna = sh(harness + ["--read-dna"], timeout=60)
     m = re.search(r'"dna":\s*"(0x[0-9a-f]+)"', dna)
     res["dna"] = m.group(1) if m else None
-    res["cable"] = "digilent" if digilent else "gpio"
+    res["cable"] = cable
     # Which build read this, so a value can be traced to the thing that read
     # it -- and so a host whose copy cannot read a flash says why rather than
     # simply having no flash in its document.
     res["openfpgaloader"] = tool
-    if not digilent:
+    if cable == "gpio":
         res["pins"] = pins or HARNESS_PINS
     if want_flash:
         # The bridge replaces the running design either way, which is what
@@ -1327,11 +1357,13 @@ def jtag_probe(want_flash=False, pins=None):
         if digilent:
             board = "arty_a7_100t" if die == 0x3631093 else "arty_a7_35t"
         else:
-            part = GPIO_HARNESS_PART.get(die)
+            # Nothing is known of a CH347's card but its die, so it gets no part
+            part = GPIO_HARNESS_PART.get(die) if cable == "gpio" else None
             if part is None:
                 res["flash_jedec"] = res["flash"] = None
-                res["flash_error"] = ("no package is known for idcode %s on a GPIO "
-                                      "harness, so no bridge was loaded" % res["idcode"])
+                res["flash_error"] = ("no package is known for idcode %s on a %s "
+                                      "cable, so no bridge was loaded"
+                                      % (res["idcode"], cable))
                 return res
         # --flash-info first: it reports the part, the density and the flash's
         # own unique id in one go, and it exits non-zero when the read did not
@@ -1950,8 +1982,10 @@ def fpga_verdict(d):
                            "serial": f["serial"]})
     j = d.get("jtag")
     if j and j.get("idcode"):
+        # documents from before the cable was recorded were all GPIO harnesses
+        cable = j.get("cable") or "gpio"
         entry = {"kind": "jtag", "how": "%s JTAG idcode %s%s" % (
-            "FT2232" if j.get("cable") == "digilent" else "GPIO",
+            {"digilent": "FT2232", "ch347": "CH347"}.get(cable, "GPIO"),
             j["idcode"], (" " + j["family"]) if j.get("family") else ""), "idcode": j["idcode"],
             "dna": j.get("dna")}
         # A chain on the GPIO harness is how a NeTV2 is reached, and it is
@@ -1962,9 +1996,12 @@ def fpga_verdict(d):
         # idcode and DNA join that entry. An Arty is on its own FTDI, never
         # the harness, so a chain beside an Arty stays "jtag".
         arty = [b for b in boards if b["kind"] == "arty"]
-        # What the harness says this card is. On a Digilent cable the board is
-        # already named by its own FTDI, so the harness has nothing to add.
-        named = None if j.get("cable") == "digilent" else harness_board(j.get("pins"))
+        # What the harness says this card is. Only a GPIO harness says
+        # anything: on a Digilent cable the board is already named by its own
+        # FTDI, and a CH347 is a cable, not wiring to a known card. Asking
+        # the harness table about a chain with no pins used to answer with
+        # the NeTV2's, the default.
+        named = harness_board(j.get("pins")) if cable == "gpio" else None
         # One card, one label: a chain read beside a PCIe endpoint that has no
         # idcode yet is that endpoint's, not a second board. When the harness
         # names the card, a generic PCIe entry is upgraded to it -- an Acorn
@@ -1987,6 +2024,13 @@ def fpga_verdict(d):
                            how=arty[0]["how"] + "; " + entry["how"])
         elif named and unclaimed:
             unclaimed[0].update(flash, kind=named, idcode=j["idcode"], dna=j.get("dna"),
+                                how=unclaimed[0]["how"] + "; " + entry["how"])
+        elif cable == "ch347" and len(unclaimed) == 1:
+            # One FPGA on PCIe and one chain on the host's own JTAG cable are
+            # one card (pi-sw1-p38's PCILeech board). The chain says nothing
+            # of what the card is, so it keeps the kind PCIe gave it -- it
+            # only gains the Device DNA its gateware could not give.
+            unclaimed[0].update(flash, idcode=j["idcode"], dna=j.get("dna"),
                                 how=unclaimed[0]["how"] + "; " + entry["how"])
         else:
             if named and not arty:

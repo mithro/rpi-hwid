@@ -442,6 +442,33 @@ def test_the_gateware_is_only_asked_when_both_signatures_are_there(monkeypatch, 
     assert not calls, "and never without --jtag"
 
 
+# pi-sw1-p38's chain, read by openfpgaloader-36 on 2026-09-22 over the WCH
+# CH347 on the Pi's USB (`-c ch347_jtag --detect`, then `--read-dna` twice,
+# identical both times). The FT601 beside it is PCILeech's data path, not
+# its JTAG.
+P38_CHAIN = {"idcode": "0x3632093", "family": "artix a7 75t",
+             "dna": "0x006425440bc8985c", "cable": "ch347"}
+
+
+def test_a_chain_on_a_usb_jtag_cable_is_the_card_on_pcie():
+    """One FPGA on PCIe and one chain on the host's USB JTAG: they are one
+    card, and the chain gives it the Device DNA its gateware cannot."""
+    (board,) = fpga.fpga_verdict(dict(PCILEECH_HOST, jtag=P38_CHAIN))
+    assert board["kind"] == "pcileech"
+    assert board["dna"] == "0x006425440bc8985c"
+    assert board["idcode"] == "0x3632093"
+    assert "CH347" in board["how"]
+
+
+def test_a_chain_on_a_usb_jtag_cable_is_not_called_a_netv2():
+    """The NeTV2 is named by its GPIO harness. A chain with no pins at all
+    used to fall back to that harness's name, which would have minted a
+    netv2- name for a board that is not one."""
+    (board,) = fpga.fpga_verdict({"pcie": [], "ftdi": [], "jtag": P38_CHAIN})
+    assert board["kind"] == "jtag"
+    assert board["dna"] == "0x006425440bc8985c"
+
+
 def test_a_pcileech_board_does_not_need_its_usb_bridge_to_be_named():
     host = dict(PCILEECH_HOST, ftdi=[])
     (board,) = fpga.fpga_verdict(host)

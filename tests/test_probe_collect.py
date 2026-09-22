@@ -643,6 +643,43 @@ def test_a_failed_flash_read_keeps_openfpgaloaders_reason(fake_root, monkeypatch
     assert "missing device-package information" in res["flash_error"]
 
 
+def test_a_ch347_is_found_among_the_usb_devices(fake_root):
+    """pi-sw1-p38's JTAG: a WCH CH347, 1a86:55dd, "USB To UART+JTAG". Its
+    serial is 0123456789 on every unit, so it is recorded and never keyed on."""
+    for name, value in (("idVendor", "1a86"), ("idProduct", "55dd"),
+                        ("manufacturer", "wch.cn"), ("product", "USB To UART+JTAG"),
+                        ("serial", "0123456789")):
+        _w(fake_root, f"/sys/bus/usb/devices/3-2/{name}", value + "\n")
+    # a CH340 serial adapter from the same vendor is not a JTAG cable
+    for name, value in (("idVendor", "1a86"), ("idProduct", "7523")):
+        _w(fake_root, f"/sys/bus/usb/devices/3-3/{name}", value + "\n")
+    assert [c["path"] for c in fpga.ch347_cables()] == ["3-2"]
+
+
+def test_a_ch347_chain_is_driven_as_one_and_its_flash_left_alone(fake_root,
+                                                                  monkeypatch):
+    """The chain is read over the CH347. Its die comes in five packages
+    openFPGALoader has bridges for and nothing here says which, so --flash
+    loads no bridge and says why."""
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "ch347_cables", lambda: [{"path": "3-2"}])
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
+                        "/usr/bin/openFPGALoader" if args[:1] == ["which"]
+                        else '{"dna": "0x006425440bc8985c"}')
+    ran = []
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: (
+        ran.append(args), "idcode 0x3632093\nfamily artix a7 75t")[1])
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (ran.append(args), (1, ""))[1])
+    host_openfpgaloader(monkeypatch)
+    res = fpga.jtag_probe(want_flash=True)
+    assert ran[0][ran[0].index("-c") + 1] == "ch347_jtag"
+    assert res["cable"] == "ch347"
+    assert res["dna"] == "0x006425440bc8985c"
+    assert "pins" not in res
+    assert not [a for a in ran if "--flash-info-json" in a]
+    assert "no package is known" in res["flash_error"]
+
+
 def test_a_chain_neither_tool_can_read_says_why_twice(fake_root, monkeypatch):
     monkeypatch.setattr(fpga, "digilent_cables", list)
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
