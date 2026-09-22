@@ -281,7 +281,11 @@ def flash_id_from_raw(raw):
     if len(data) < 4:
         return None
     ident = data[1] << 16 | data[2] << 8 | data[3]
-    if ident in (0, 0xFFFFFF):
+    # JEP106 has no manufacturer 0x00, and 0xFF is a line nothing drove. A
+    # first byte of either is not an id, however plausible the rest: the
+    # first background-SPI read (rpi5-netv2, 2026-09-22) came back
+    # 0x009966, which is its own reset commands echoed.
+    if data[1] in (0x00, 0xFF):
         return None
     return "0x%06x" % ident
 
@@ -1900,14 +1904,18 @@ def fpga_verdict(d):
         rev = cynthion_revision(c.get("bcd_device"))
         mine = bool(uid) and read.get("flash_uid") == uid
         trace = read.get("trace_id") if mine else None
+        # The flash's own answers, from the same offline window -- but only
+        # when that read found the unique id the gateware publishes. That
+        # match is the one evidence the transport works; without it the JEDEC
+        # id that came over the same transport is no better than the uid.
+        spi = mine and read.get("flash_uid_agree") is True
         boards.append({
             "kind": "cynthion", "path": c["path"], "serial": uid,
             "hw_rev": rev, "mode": mode, "trace_id": trace,
-            # the flash's own answers, from the same offline window
-            "flash_jedec": read.get("flash_jedec") if mine else None,
+            "flash_jedec": read.get("flash_jedec") if spi else None,
             "flash_uid": uid,
-            "flash_uid_bits": read.get("flash_uid_bits") if mine else None,
-            "flash_uid_state": read.get("flash_uid_state") if mine else None,
+            "flash_uid_bits": read.get("flash_uid_bits") if spi else None,
+            "flash_uid_state": read.get("flash_uid_state") if spi else None,
             "how": "USB %s%s%s%s" % (
                 c["id"],
                 (", Cynthion r%s" % rev) if rev else "",

@@ -1032,6 +1032,42 @@ def test_fpga_verdict_carries_a_trace_id_that_was_read():
     assert fpga.fpga_summary([board])[0]["trace_id"] == "0x11223344556677"
 
 
+# What rpi5-netv2's Cynthion gave the background-SPI reader on 2026-09-22.
+# The TraceID is right; the flash half is the reader's own earlier commands
+# coming back -- 0x99 0x66 are the reset it sent, 0x9f the opcode after.
+SPI_ECHO = {"trace_id": "0x1b808604604e0e", "flash_uid": "267125df30c460de",
+            "flash_jedec": "0x009966", "flash_uid_read": "0000000000009f00",
+            "flash_uid_bits": 64, "flash_uid_state": "read",
+            "flash_uid_agree": False, "restored": True}
+
+
+def test_a_jedec_id_with_no_manufacturer_is_not_an_id():
+    """JEP106 has no manufacturer 0x00, so a reply whose first byte is 0x00
+    is not an id, however plausible the two bytes after it."""
+    assert fpga.flash_id_from_raw("ff009966") is None
+    assert fpga.flash_id_from_raw("ffef4016") == "0xef4016"
+
+
+def test_a_spi_read_that_fails_its_own_check_leaves_no_flash_on_the_board():
+    """The read's unique id is compared with the one the gateware publishes,
+    and that comparison is the only evidence the transport works. When it
+    fails, the JEDEC id that came over the same transport is no better, so
+    none of the read goes on the board -- the TraceID, which has its own
+    check, still does."""
+    f = {"pcie": [], "ftdi": [], "jtag": None, "cynthion": [CYNTHION_ANALYZER],
+         "cynthion_jtag": dict(SPI_ECHO, flash_jedec="0xef4016")}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["trace_id"] == "0x1b808604604e0e"
+    assert board["flash_jedec"] is None
+    assert board["flash_uid_bits"] is None
+    # ...and a read that passed carries the id through
+    ok = dict(SPI_ECHO, flash_jedec="0xef4016", flash_uid_read="267125df30c460de",
+              flash_uid_agree=True)
+    (board,) = fpga.fpga_verdict(dict(f, cynthion_jtag=ok))
+    assert board["flash_jedec"] == "0xef4016"
+    assert board["flash_uid_bits"] == 64
+
+
 def test_a_trace_id_is_not_attached_to_the_wrong_board():
     """Two Cynthions, one read. The uid the offline read returned is what
     says which board the TraceID belongs to."""
