@@ -164,6 +164,34 @@ class Label:
         self.fit(x_val, y, val, val_font, size, max_w, min_size, color=color)
         return size
 
+    def captioned_right(self, x_left, x_right, y, cap, val, val_font, val_size,
+                        min_size=5.5, color=black):
+        """`captioned`, set flush right: the value ends at `x_right` and its
+        grey caption sits just before it, the pair shrinking and then eliding
+        the value until it fits after `x_left`."""
+        room = x_right - x_left - self.width(cap, SANS, CAPTION) - self.CAPTION_GAP
+        size = self.fitted_size(val, val_font, val_size, room, min_size)
+        while len(val) > 1 and self.width(val, val_font, size) > room:
+            val = val[:-2].rstrip() + "…"
+        self.text(x_right, y, val, val_font, size, align="right", color=color)
+        baseline = y + size * 0.72
+        self.text(x_right - self.width(val, val_font, size) - self.CAPTION_GAP,
+                  baseline - CAPTION * 0.72, cap, SANS, CAPTION, align="right",
+                  color=GREY)
+        return size
+
+    def no_code(self, x, y, size, text="no id"):
+        """What stands where a code would go when there is nothing to encode:
+        a grey square the code's size, saying so."""
+        c = self.c
+        px, py = self.pt(x, y + size)
+        c.setStrokeColor(GREY)
+        c.setLineWidth(0.5)
+        c.rect(px, py, size, size, stroke=1, fill=0)
+        c.setStrokeColor(black)
+        self.text(x + size / 2, y + (size - CAPTION * 0.72) / 2, text, SANS, CAPTION,
+                  align="centre", color=GREY)
+
     def rule(self, x, y, w):
         """A thin grey line, for something to be written in by hand."""
         c = self.c
@@ -494,8 +522,10 @@ def draw_fpga(lab, board):
     inset from the die-cut edge by its own quiet zone (the sticker goes on a
     dark board, so the label's edge is where the white stops). Right: the
     maker's mark above the board's word, then model and die, and for an Arty
-    its Digilent serial and flash part. Bottom, full width: the DNA, or a
-    rule to write it on when nobody has read it yet."""
+    its Digilent serial. Below, the flash: its part and its unique id, set
+    flush right against the flash's own small code in the right-hand corner
+    -- or a square saying "no id" where the part has none. Bottom, the whole
+    width: the board's identifier, the Device DNA or the ECP5 TraceID."""
     dna_size = 15
     dna_h = 5.5 * mm
     # 18 mm rather than 20: the flash block needs the two millimetres more
@@ -508,6 +538,20 @@ def draw_fpga(lab, board):
 
     x = qr_inset + qr_size + 3 * mm
     col_w = LABEL_W - PAD - x
+    # The foot, and the flash's own code in the right-hand corner above it.
+    # The foot is the identifier alone, across the whole width at full size;
+    # the code sits clear of the foot's caption, and the flash rows end
+    # against it. Its room is taken whatever goes in it -- a code, or the
+    # stand-in for a flash with no unique id -- so every label is the same.
+    # 6.5 mm is 21 modules at 0.31 mm for a 64-bit uid (16 hex digits, QR
+    # version 1), and 25 at 0.26 mm for the 112- and 128-bit ones.
+    foot_y = LABEL_H - PAD - dna_h
+    cap_y = foot_y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm   # the caption over the value
+    fq = 6.5 * mm
+    fx, fy = LABEL_W - PAD - fq, cap_y - 0.8 * mm - fq
+    # a row of the right column low enough to reach the code's square stops
+    # short of it
+    beside = min(col_w, fx - 1.5 * mm - x)
     y = PAD
     # A wide wordmark (Alphamax) already carries its weight at 5 mm; a compact
     # mark scaled to the same height reads as half the size beside it, so the
@@ -536,75 +580,61 @@ def draw_fpga(lab, board):
             # placeholder this package exists to make unnecessary, and a label
             # announcing what it does not know is worse than one that is quiet.
             y += 3 * mm
-            lab.fit(x, y, board.gateware, SANS, CAPTION, col_w, color=GREY)
+            lab.fit(x, y, board.gateware, SANS, CAPTION, beside, color=GREY)
     if board.kind == "arty":
         # the serial is a board-printed identifier: its own row, larger
         # 9 pt on a tighter pitch than it used to have: an Arty is the only
         # board carrying a serial, a flash line and a flash uid at once, and
         # that stack is what decides how much room the foot has left.
         y += 3.0 * mm
-        lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 9, col_w - 6 * mm)
+        lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 9, beside - 6 * mm)
 
 
     # The flash block: the same two rows, in the same place, on every FPGA
-    # label that has them. Every board here has a configuration flash; what
-    # differs is only how much of it could be read, and a fact that was not
-    # read is left off rather than announced.
-    # The flash block sits below both columns and spans the whole label,
-    # rather than being squeezed into the right one. "Spansion
-    # S25FL128S/S25FL127S  ·  16 MiB" does not fit a column the QR has taken
-    # 18 mm from at any size worth printing, and elided it loses the density
-    # -- the one part of the line not guessable from the part number. Below
-    # the QR there is a band the full width of the label doing nothing.
-    y = max(y + 2.8 * mm, qr_inset + qr_size + 1.2 * mm)
-    full = LABEL_W - 2 * PAD - 8.5 * mm   # clear of the flash QR's column
-    cap_w = lab.width("flash", SANS, CAPTION) + 1 * mm
-    lab.text(PAD, y + 0.2 * mm, "flash", SANS, CAPTION, color=GREY)
-    lab.fit(PAD + cap_w, y, board.flash, SANS, 7, full - cap_w, min_size=5)
-    y += 2.4 * mm
-    lab.text(PAD, y + 0.2 * mm, "uid", SANS, CAPTION, color=GREY)
+    # label. Every board here has a configuration flash; what differs is only
+    # how much of it could be read. The rows are set flush right against the
+    # flash's code, each caption with its value, so the three read as one
+    # group, and they run left under the board's QR as far as they need:
+    # "Micron N25Q128/MT25QL128  ·  16 MiB" does not fit the right column at
+    # any size worth printing. Bottom-aligned with the code, so the rows are
+    # at the same height on every label whatever the column above ran to.
+    right = fx - 1.5 * mm
+    row = 7 * 0.72                        # a 7 pt row's cap height, in points
+    uid_y = fy + fq - row
+    flash_y = uid_y - 2.4 * mm
+    lab.captioned_right(PAD, right, flash_y, "flash", board.flash, SANS, 7, min_size=5)
     if board.flash_uid:
         # mono, like every other identifier here: it is a number someone may
         # have to read off the sticker and type
-        lab.fit(PAD + cap_w, y, board.flash_uid, MONO_REGULAR, 7,
-                full - cap_w, min_size=5)
+        lab.captioned_right(PAD, right, uid_y, "uid", board.flash_uid, MONO_REGULAR, 7,
+                            min_size=5)
     else:
         # A part with no unique id says so, in the label's own voice rather
         # than in a monospaced identifier's: the row is in the same place and
         # carries a measured fact, so the eye finds the flash facts where it
         # expects them on every board and can tell the two cases apart.
-        lab.fit(PAD + cap_w, y,
-                flash_uid_note_text(board.flash_uid_note) or FLASH_UID_NONE,
-                SANS, 7, full - cap_w, min_size=5, color=GREY)
+        lab.captioned_right(PAD, right, uid_y, "uid",
+                            flash_uid_note_text(board.flash_uid_note) or FLASH_UID_NONE,
+                            SANS, 7, min_size=5, color=GREY)
+
+    # The flash's own code: its unique id, the identity of the chip and not of
+    # the board, which is why it is a second code and not part of the big one.
+    # A flash with no unique id gets a marked square saying so rather than a
+    # code: its JEDEC id once went here, and that is the same on every chip of
+    # the family -- a code that looks like an identifier and identifies nothing
+    # -- while an empty corner would read as something missing.
+    if board.flash_uid:
+        lab.qr(fx, fy, fq, board.flash_uid, error="l")
+    elif board.flash:
+        lab.no_code(fx, fy, fq)
 
     # The foot always carries a value: a board with none never reaches here,
     # because all_labels refuses it. There used to be a rule to write the
     # digits on by hand, which defeated the point of the package -- a
     # hand-copied Device DNA is exactly the error-prone step it exists to
     # remove, and a sticker with a blank on it still gets stuck to a board.
-    y = LABEL_H - PAD - dna_h
-    cap_y = y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm    # the caption sits over the value
-    ident_w = LABEL_W - 2 * PAD
-    # The flash's own small QR, at the foot's right end, where a Tiny Tapeout
-    # label puts its board id. It carries the flash's unique id: the identity
-    # of the chip, not of the board, which is why it is a second code and not
-    # part of the big one. A flash with no unique id gets no code. Its JEDEC
-    # id used to go here instead, and that is the same on every chip of the
-    # family -- a code that looks like an identifier and identifies nothing.
-    # The room is reserved whether or not there is a code to put in it, so the
-    # foot is the same width on every label and the labels stay comparable.
-    # 6.5 mm is 21 modules at 0.31 mm for a 64-bit uid (16 hex digits, QR
-    # version 1), but 25 at 0.26 mm for the 112- and 128-bit ones, which need
-    # version 2.
-    fq = 6.5 * mm
-    ident_w -= fq + 2 * mm
-    if board.flash_uid:
-        qx, qy = LABEL_W - PAD - fq, LABEL_H - PAD - fq
-        lab.qr(qx, qy, fq, board.flash_uid, error="l")
-        lab.text(qx + fq / 2, qy - 0.4 * mm - CAPTION * 0.72, "flash", SANS, CAPTION,
-                 align="centre", color=GREY)
     lab.text(PAD, cap_y, board.ident_caption, SANS, CAPTION, color=GREY)
-    lab.fit(PAD, y + 0.5 * mm, board.ident, MONO, dna_size, ident_w)
+    lab.fit(PAD, foot_y + 0.5 * mm, board.ident, MONO, dna_size, LABEL_W - 2 * PAD)
 
 
 # The header band is the raspberry's height at the QR width that the rest

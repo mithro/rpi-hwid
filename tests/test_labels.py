@@ -246,6 +246,72 @@ def test_every_fpga_label_renders_its_flash_the_same_way(kind, flash, uid, docs,
     assert not [s for s in seen if "not read" in s]
 
 
+def _drawn(monkeypatch, docs, kind, tmp_path):
+    """Every string and every code a label draws, with where and how big."""
+    texts, codes, boxes = [], [], []
+    real_text, real_qr = labels.Label.text, labels.Label.qr
+
+    def text(self, x, y, s, font=labels.SANS, size=8, align="left", color=None, **kw):
+        texts.append({"s": s, "x": x, "y": y, "size": size, "align": align})
+        return real_text(self, x, y, s, font, size, align,
+                         **({"color": color} if color is not None else {}))
+
+    def qr(self, x, y, size, content, **kw):
+        codes.append({"content": content, "x": x, "y": y, "size": size})
+        return real_qr(self, x, y, size, content, **kw)
+
+    monkeypatch.setattr(labels.Label, "text", text)
+    monkeypatch.setattr(labels.Label, "qr", qr)
+    real_box = labels.Label.no_code
+    monkeypatch.setattr(labels.Label, "no_code", lambda self, x, y, size, *a: (
+        boxes.append({"x": x, "y": y, "size": size}), real_box(self, x, y, size, *a))[1])
+    labels.render(docs, tmp_path / f"{kind}.pdf", only={kind})
+    return texts, codes, boxes
+
+
+@pytest.mark.parametrize("kind", ["cynthion", "netv2", "acorn", "arty"])
+def test_the_identifier_spans_the_foot_with_the_flash_code_above_it(
+        kind, docs, tmp_path, monkeypatch):
+    """The Device DNA or TraceID runs the whole width of the foot at full
+    size; the flash's code -- or its stand-in -- sits at the right edge above
+    it, clear of its caption, in the same place on every label."""
+    texts, codes, boxes = _drawn(monkeypatch, docs, kind, tmp_path)
+    rec = {r.kind: r for r in labels.fpga_records(docs)}[kind]
+    (ident,) = [t for t in texts if t["s"] == rec.ident]
+    assert ident["size"] == 15                      # never shrunk to make room
+    (caption,) = [t for t in texts if t["s"] == rec.ident_caption]
+    slot = [c for c in codes if c["content"] != rec.ident] + boxes
+    (flash,) = slot
+    assert flash["x"] + flash["size"] == pytest.approx(labels.LABEL_W - labels.PAD)
+    assert flash["y"] + flash["size"] < caption["y"]
+    # the caption over the QR is gone: its rows sit beside it instead
+    assert [t["s"] for t in texts].count("flash") == 1
+    # ...right-aligned against it, both rows ending at the same edge
+    rows = [t for t in texts if t["s"] in (rec.flash, rec.flash_uid, "no factory ESN")]
+    assert len({round(t["x"], 3) for t in rows}) == 1
+    assert all(t["align"] == "right" and t["x"] < flash["x"] for t in rows)
+    # nothing else on the label reaches into the flash code's square
+    for t in texts:
+        if t["y"] + t["size"] * 0.72 > flash["y"] and t["y"] < flash["y"] + flash["size"]:
+            right = t["x"] if t["align"] == "right" else t["x"] + labels.Label(
+                None, 0, 0).width(t["s"], labels.SANS, t["size"])
+            assert right < flash["x"] or t["s"] == "no id", t["s"]
+
+
+def test_a_flash_with_no_unique_id_gets_a_stand_in_for_its_code(docs, tmp_path,
+                                                                monkeypatch):
+    """The NeTV2's Macronix has no unique id, so there is no code to print --
+    but an empty corner reads as something missing. A marked square that says
+    "no id" reads as what it is: the flash was asked, and has none."""
+    texts, codes, boxes = _drawn(monkeypatch, docs, "netv2", tmp_path)
+    assert [c["content"] for c in codes] == ["0x00742c4e63b9085c"]
+    assert len(boxes) == 1
+    assert "no id" in [t["s"] for t in texts]
+    # ...and a board whose flash has one gets the code, not the stand-in
+    _texts, _codes, boxes = _drawn(monkeypatch, docs, "arty", tmp_path)
+    assert boxes == []
+
+
 def test_the_other_boards_still_say_device_dna(docs):
     """The four existing kinds must be untouched: same foot, same caption."""
     recs = {r.kind: r for r in labels.fpga_records(docs)}
