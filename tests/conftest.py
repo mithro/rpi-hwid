@@ -105,10 +105,11 @@ PI5_NETV2 = _doc(
      {"kind": "cynthion", "serial": "267125df30c460de", "hw_rev": "1.4",
       "mode": "analyzer", "trace_id": "0x1b808604604e0e",
       # The uid is read off the flash by the gateware and published as the
-      # USB serial; the JEDEC id is not in any descriptor, so it is absent
-      # here until something asks the chip for it. No id is guessed in: the
-      # 64-bit width says the gateware used 0x4B, which is a Winbond-style
-      # Read Unique ID, but "probably a Winbond" is not a JEDEC id.
+      # USB serial. The JEDEC id is in no descriptor: it was asked of the
+      # chip itself over the ECP5's background SPI (2026-09-22), in the same
+      # offline window as the TraceID, and that read's unique id matched the
+      # published serial -- which is what lets its JEDEC id be believed.
+      "flash_jedec": "0xef4016",
       "flash_uid": "267125df30c460de",
       "flash_uid_bits": 64, "flash_uid_state": "read"}],
     [{"kind": "eth", "mac": "2c:cf:67:16:bd:98"}, {"kind": "wlan", "mac": "2c:cf:67:16:bd:99"}],
