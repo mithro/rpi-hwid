@@ -589,6 +589,60 @@ def test_the_arty_flash_profile_follows_the_die_not_the_spelling(fake_root, monk
     assert flash[0][flash[0].index("-b") + 1] == profile
 
 
+def _gpio_flash(monkeypatch, idcode, answer=(1, "Fail")):
+    """A GPIO-harness host whose chain answers `idcode`; returns every argv
+    the flash read ran and the probe's result."""
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "gpiochips", list)
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
+                        "/usr/bin/openFPGALoader" if args[:1] == ["which"] else "")
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15:
+                        f"idcode {idcode}\nfamily artix a7")
+    ran = []
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (ran.append(args), answer)[1])
+    host_openfpgaloader(monkeypatch)
+    return ran, fpga.jtag_probe(want_flash=True)
+
+
+@pytest.mark.parametrize(("idcode", "part"), [
+    # the NeTV2 a7-100 and the Acorn CLE-101 alike (litex-boards)
+    ("0x3631093", "xc7a100tfgg484"),
+    ("0x13631093", "xc7a100tfgg484"),
+    ("0x13636093", "xc7a200tfbg484"),     # the Acorn CLE-215 and CLE-215+
+])
+def test_a_gpio_harness_flash_read_names_the_package(fake_root, monkeypatch, idcode, part):
+    """The bridge is built per die *and package*, and an idcode gives only the
+    die. With neither a board profile nor a part, openFPGALoader stops with
+    "Can't program SPI flash: missing device-package information" -- measured
+    on rpi5-netv2's NeTV2, 2026-09-22, and the reason its flash was never read
+    by this probe."""
+    ran, _res = _gpio_flash(monkeypatch, idcode)
+    (first, *_rest) = [a for a in ran if "--flash-info-json" in a]
+    assert first[first.index("--fpga-part") + 1] == part
+
+
+def test_a_die_with_no_known_package_is_not_flash_read_and_says_why(fake_root,
+                                                                   monkeypatch):
+    """pi-sw1-p38's Screamer is an XC7A75T, which openFPGALoader ships bridges
+    for in five packages. Nothing here says which one, and a bridge for the
+    wrong package drives the wrong pins, so no bridge is loaded at all."""
+    ran, res = _gpio_flash(monkeypatch, "0x3632093")
+    assert not [a for a in ran if "--flash-info-json" in a or "--flash-info" in a]
+    assert res["flash_jedec"] is None
+    assert "no package is known" in res["flash_error"]
+
+
+def test_a_failed_flash_read_keeps_openfpgaloaders_reason(fake_root, monkeypatch):
+    """A flash that was asked and did not answer used to leave nothing but
+    `flash: null` in the document, so the refusal downstream could say only
+    that it was never read."""
+    _ran, res = _gpio_flash(monkeypatch, "0x3631093", answer=(
+        1, "Detect flash:\nCan't program SPI flash: missing device-package "
+           "information\nFail\n"))
+    assert res["flash_jedec"] is None
+    assert "missing device-package information" in res["flash_error"]
+
+
 def test_a_chain_neither_tool_can_read_says_why_twice(fake_root, monkeypatch):
     monkeypatch.setattr(fpga, "digilent_cables", list)
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
@@ -1323,10 +1377,45 @@ def _serve(monkeypatch, tmp_path, tarball, digest=None):
 
     monkeypatch.setattr(fpga, "ofl_get", get)
     monkeypatch.setattr(fpga, "OFL_CACHE", str(tmp_path / "cache"))
+    # the host has one copy, too old; anything run out of the cache is new
+    monkeypatch.setattr(fpga, "ofl_installed", lambda: ["/usr/bin/openFPGALoader"])
     monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (
-        (0, "      --flash-info-json arg") if args[0] != "openFPGALoader"
+        (0, "      --flash-info-json arg") if args[0].startswith(str(tmp_path))
         else (0, "      --detect   detect FPGA")))
     monkeypatch.setattr(os, "uname", lambda: ("Linux", "h", "6", "#1", "aarch64"))
+
+
+def test_every_openfpgaloader_on_the_path_is_found_once_in_path_order(monkeypatch,
+                                                                      tmp_path):
+    """rpi5-netv2 has three: a hand-installed v1.1.0 in /usr/local/bin, the
+    package's in /usr/bin, and /bin, which is /usr/bin under another name."""
+    local, usr = tmp_path / "local", tmp_path / "usr"
+    for d in (local, usr):
+        d.mkdir()
+        (d / "openFPGALoader").write_text("#!/bin/sh\n")
+        (d / "openFPGALoader").chmod(0o755)
+    (tmp_path / "bin").symlink_to(usr)
+    (tmp_path / "noexec").mkdir()
+    (tmp_path / "noexec" / "openFPGALoader").write_text("not a program\n")
+    monkeypatch.setenv("PATH", os.pathsep.join(
+        str(tmp_path / d) for d in ("noexec", "local", "usr", "bin", "missing")))
+    monkeypatch.setattr(fpga, "OFL_SYSTEM_DIRS", ())
+    assert fpga.ofl_installed() == [str(local / "openFPGALoader"),
+                                    str(usr / "openFPGALoader")]
+
+
+def test_an_old_copy_first_on_the_path_does_not_hide_a_new_one(monkeypatch):
+    """Measured on rpi5-netv2, 2026-09-22: /usr/local/bin/openFPGALoader is a
+    v1.1.0 no package owns, and it shadows the packaged v1.1.1 in /usr/bin,
+    for the collecting user and under sudo alike. Asking only the first copy
+    said the host could not read a flash, when it could."""
+    helps = {"/usr/local/bin/openFPGALoader": "      --detect   detect FPGA",
+             "/usr/bin/openFPGALoader": "      --flash-info-json arg"}
+    monkeypatch.setattr(fpga, "ofl_installed", lambda: list(helps))
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (0, helps[args[0]]))
+    tool = fpga.openfpgaloader_tool()
+    assert tool == {"argv": ["sudo", "/usr/bin/openFPGALoader"], "source": "host",
+                    "flash_info": True}
 
 
 def test_a_host_whose_openfpgaloader_is_too_old_fetches_one_that_is_not(

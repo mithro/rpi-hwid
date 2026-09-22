@@ -792,6 +792,43 @@ def test_the_harness_upgrades_the_pcie_entry_rather_than_doubling_it():
     assert board["idcode"] == "0x13636093"
 
 
+# rpi5-netv2's NeTV2, read by rpi-hwid itself on 2026-09-22
+NETV2_FLASH = {"flash_jedec": "0xc22017", "flash": "Macronix MX25L6405",
+               "flash_uid": None, "flash_uid_bits": None, "flash_uid_state": "none",
+               "flash_uid_note": "no factory ESN: security register 0x00, "
+                                 "bit 0 (factory lock) = 0"}
+
+
+@pytest.mark.parametrize(("pcie", "ftdi", "cable", "pins", "kind"), [
+    # the chain joins the board its PCIe edge already named
+    ([{"slot": "0002:01:00.0", "id": "1de4:0001", "class": "0x020000",
+       "bars": [16384], "subsystem": "0000:0000"}], [], "gpio", "27:22:4:17", "netv2"),
+    # ...or the Arty its own FTDI named
+    ([], [{"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319A43AD3"}],
+     "digilent", None, "arty"),
+    # ...or upgrades a PCIe entry that only knew the gateware
+    ([{"slot": "0001:01:00.0", "id": "10ee:7021", "class": "0x058000",
+       "bars": [1 << 20], "subsystem": "10ee:0007"}], [], "gpio", "10:9:11:8", "acorn"),
+    # ...or is the board, named by its harness alone
+    ([], [], "gpio", "27:22:4:17", "netv2"),
+])
+def test_a_flash_reading_reaches_whichever_board_the_chain_is(pcie, ftdi, cable,
+                                                             pins, kind):
+    """The flash facts used to be copied onto an Arty only, and only its JEDEC
+    id and part string -- so no document this probe wrote ever carried a
+    flash unique id, its state or its note, and every label built from one
+    would have been refused for a flash it had in fact read."""
+    j = dict(NETV2_FLASH, idcode="0x3631093", dna="0x00742c4e63b9085c",
+             cable=cable, pins=pins)
+    (board,) = fpga.fpga_verdict({"pcie": pcie, "ftdi": ftdi, "jtag": j})
+    assert board["kind"] == kind
+    assert {k: board.get(k) for k in NETV2_FLASH} == NETV2_FLASH
+    # and on into the summary a label is made from
+    (summary,) = fpga.fpga_summary([board])
+    assert summary["flash_uid_state"] == "none"
+    assert summary["flash_uid_note"] == NETV2_FLASH["flash_uid_note"]
+
+
 def test_a_chain_on_a_foreign_harness_is_not_called_a_netv2():
     """"The only board on the GPIO harness in this fleet is a NeTV2" stopped
     being true when Acorns went onto harnesses of their own. Measured on

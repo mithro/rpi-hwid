@@ -821,6 +821,33 @@ def ofl_supports_flash_info(help_text):
     return OFL_FLASH_FLAG in (help_text or "")
 
 
+# Searched after the collecting user's PATH, which over a non-interactive ssh
+# can be short: these are where a package or a hand install puts it.
+OFL_SYSTEM_DIRS = ("/usr/local/bin", "/usr/bin", "/bin")
+
+
+def ofl_installed():
+    """Every openFPGALoader this host has, in PATH order, each file once.
+
+    All of them, not the first: a host can carry more than one, and the first
+    is not necessarily the one that can read a flash. rpi5-netv2 (2026-09-22)
+    has a hand-installed v1.1.0 in /usr/local/bin that no package owns, ahead
+    of the packaged v1.1.1 in /usr/bin -- and /bin, which is /usr/bin under
+    another name, so each is kept once by the file it really is.
+    """
+    dirs = (os.environ.get("PATH") or "").split(os.pathsep) + list(OFL_SYSTEM_DIRS)
+    found, seen = [], set()
+    for d in dirs:
+        path = os.path.join(d, "openFPGALoader")
+        if not d or not os.path.isfile(path) or not os.access(path, os.X_OK):
+            continue
+        real = os.path.realpath(path)
+        if real not in seen:
+            seen.add(real)
+            found.append(path)
+    return found
+
+
 def ofl_arch(machine):
     """The published arch for a host's `uname -m`, or None if none is built."""
     return OFL_ARCH.get((machine or "").strip())
@@ -965,12 +992,15 @@ def openfpgaloader_tool(download=True):
     old is the normal case rather than an error: these Pis mostly carry a
     distro build from before the series existed.
     """
-    rc, out = sh_rc(["openFPGALoader", "--help"], timeout=20)
-    if ofl_supports_flash_info(out):
-        return {"argv": ofl_argv(None), "source": "host", "flash_info": True}
+    installed = ofl_installed()
+    for binary in installed:
+        if ofl_supports_flash_info(sh_rc([binary, "--help"], timeout=20)[1]):
+            # by its full path: under sudo a bare name finds sudo's first copy,
+            # which is the one that was just passed over
+            return {"argv": ["sudo", binary], "source": "host", "flash_info": True}
     unable = {"argv": ofl_argv(None), "source": "host", "flash_info": False,
-              "why": "this host's openFPGALoader has no " + OFL_FLASH_FLAG}
-    if rc is None or not out:
+              "why": "no openFPGALoader on this host has " + OFL_FLASH_FLAG}
+    if not installed:
         unable["why"] = "no openFPGALoader on this host"
     if not download:
         return unable
@@ -1149,8 +1179,22 @@ def flash_info_from_json(doc):
             "uid_note": uid.get("note")}
 
 
-def flash_info_probe(harness, board=None):
-    """openFPGALoader's flash report over `harness`, or {}.
+# The package each die comes in, on the boards found on a GPIO harness. The
+# spiOverJtag bridge is built per die *and package* -- it has to know which
+# balls reach the flash -- and an idcode gives only the die: without a board
+# profile or a part, openFPGALoader stops with "Can't program SPI flash:
+# missing device-package information" (rpi5-netv2's NeTV2, 2026-09-22). Every
+# board ever found on a GPIO harness here is a NeTV2 or an Acorn, and in
+# litex-boards (58634aa, 2026-09-17) those settle the package by die alone:
+# kosagi_netv2 "xc7a100t-fgg484-2", sqrl_acorn cle-101 "xc7a100t-fgg484-2",
+# cle-215 and cle-215+ "xc7a200t-fbg484". A die not listed here gets no
+# bridge: loading one for the wrong package drives the wrong pins.
+GPIO_HARNESS_PART = {0x3631093: "xc7a100tfgg484", 0x3636093: "xc7a200tfbg484"}
+
+
+def flash_info_probe(harness, board=None, part=None):
+    """(openFPGALoader's flash report over `harness` or {}, and the tail of
+    what it said when there is no report).
 
     Loads the spiOverJtag bridge, so it drops the running design exactly as
     the JEDEC read already does -- which is why it is only ever reached with
@@ -1159,6 +1203,8 @@ def flash_info_probe(harness, board=None):
     argv = list(harness)
     if board:
         argv += ["-b", board]
+    if part:
+        argv += ["--fpga-part", part]
     # The document first. Its existence after a zero exit is the whole test:
     # the tool removes it at startup and only renames it into place once every
     # flash access has succeeded, so there is nothing to interpret.
@@ -1173,11 +1219,17 @@ def flash_info_probe(harness, board=None):
             except (OSError, ValueError):
                 info = {}
             if info:
-                return info
+                return info, None
         # No document: an older build with no such flag, or a read that did
         # not happen. The printed report is tried next, and it applies the
         # same "exited 0 and printed its header" test.
-        return flash_info_parse(*sh_rc(argv + ["--flash-info"], timeout=180))
+        rc2, out2 = sh_rc(argv + ["--flash-info"], timeout=180)
+        info = flash_info_parse(rc2, out2)
+        if info:
+            return info, None
+        # the first attempt's words: the second is only ever a fallback for a
+        # build without the document, and says the same thing again if not
+        return {}, (out or out2 or "").strip()[-200:] or None
     finally:
         for leftover in glob.glob(os.path.join(workdir, "*")):
             try:
@@ -1260,15 +1312,22 @@ def jtag_probe(want_flash=False, pins=None):
         # cable; on the GPIO harness the part comes from the chain. Matched
         # by number with the revision nibble masked, as labels.idcode_part
         # does: a string list only ever matched the revisions written into it.
-        board = None
+        board = part = None
+        die = int(res["idcode"], 16) & 0x0FFFFFFF
         if digilent:
-            is_100t = (int(res["idcode"], 16) & 0x0FFFFFFF) == 0x3631093
-            board = "arty_a7_100t" if is_100t else "arty_a7_35t"
+            board = "arty_a7_100t" if die == 0x3631093 else "arty_a7_35t"
+        else:
+            part = GPIO_HARNESS_PART.get(die)
+            if part is None:
+                res["flash_jedec"] = res["flash"] = None
+                res["flash_error"] = ("no package is known for idcode %s on a GPIO "
+                                      "harness, so no bridge was loaded" % res["idcode"])
+                return res
         # --flash-info first: it reports the part, the density and the flash's
         # own unique id in one go, and it exits non-zero when the read did not
         # actually happen. Older builds have no such flag, so the JEDEC-only
         # read stays as the fallback rather than the flash going unread.
-        info = flash_info_probe(harness, board)
+        info, said = flash_info_probe(harness, board, part)
         if info:
             res["flash_jedec"] = info["jedec"]
             res["flash"] = " ".join(x for x in (info.get("manufacturer"),
@@ -1279,12 +1338,15 @@ def jtag_probe(want_flash=False, pins=None):
             # only the document carries a note; the printed report has none
             res["flash_uid_note"] = info.get("uid_note")
         else:
-            argv = list(harness) + (["-b", board] if board else [])
+            argv = list(harness) + (["-b", board] if board else []) \
+                + (["--fpga-part", part] if part else [])
             fl = sh(argv + ["--detect", "-f"], timeout=120)
             m = re.search(r"JEDEC ID: (0x[0-9a-f]+)", fl)
             res["flash_jedec"] = m.group(1) if m else None
             m = re.search(r"Detected: (.*)", fl)
             res["flash"] = m.group(1).strip() if m else None
+            if not res["flash_jedec"]:
+                res["flash_error"] = said or fl.strip()[-200:] or None
     return res
 
 
@@ -1883,23 +1945,31 @@ def fpga_verdict(d):
         unclaimed = [b for b in boards
                      if b["kind"] in ("unknown-fpga", "pcileech")
                      and not b.get("idcode")]
+        # The flash on the chain belongs to whichever board the chain turns out
+        # to be. It was once copied onto an Arty alone, and only its id and
+        # part string, so no document ever carried a unique id for any board.
+        flash = {k: j[k] for k in JTAG_FLASH_KEYS if j.get(k) is not None}
         netv2 = same if named else []
         if netv2:
-            netv2[0].update(idcode=j["idcode"], dna=j.get("dna"),
+            netv2[0].update(flash, idcode=j["idcode"], dna=j.get("dna"),
                             how=netv2[0]["how"] + "; " + entry["how"])
         elif arty and j.get("cable") == "digilent":
-            arty[0].update(idcode=j["idcode"], dna=j.get("dna"),
+            arty[0].update(flash, idcode=j["idcode"], dna=j.get("dna"),
                            how=arty[0]["how"] + "; " + entry["how"])
-            if j.get("flash_jedec"):
-                arty[0].update(flash_jedec=j["flash_jedec"], flash=j.get("flash"))
         elif named and unclaimed:
-            unclaimed[0].update(kind=named, idcode=j["idcode"], dna=j.get("dna"),
+            unclaimed[0].update(flash, kind=named, idcode=j["idcode"], dna=j.get("dna"),
                                 how=unclaimed[0]["how"] + "; " + entry["how"])
         else:
             if named and not arty:
                 entry["kind"] = named
+            entry.update(flash)
             boards.append(entry)
     return boards
+
+
+# What a chain's flash read leaves on the board it belongs to
+JTAG_FLASH_KEYS = ("flash_jedec", "flash", "flash_uid", "flash_uid_bits",
+                   "flash_uid_state", "flash_uid_note")
 
 
 def merge_soc(boards, soc):
