@@ -532,9 +532,13 @@ def draw_fpga(lab, board):
     # than the code does, and a 25-module symbol is still 0.72 mm a module.
     qr_size = 18 * mm
     qr_inset = 3.5 * mm
+    # half a millimetre higher than its inset from the side, which is still
+    # four 0.72 mm modules of quiet zone to the die-cut edge, for room between
+    # it and the flash rows below
+    qr_top = 3 * mm
     ident_str = board.ident or board.serial
     if ident_str:
-        lab.qr(qr_inset, qr_inset, qr_size, ident_str)
+        lab.qr(qr_inset, qr_top, qr_size, ident_str)
 
     x = qr_inset + qr_size + 3 * mm
     col_w = LABEL_W - PAD - x
@@ -548,7 +552,7 @@ def draw_fpga(lab, board):
     foot_y = LABEL_H - PAD - dna_h
     cap_y = foot_y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm   # the caption over the value
     fq = 6.5 * mm
-    fx, fy = LABEL_W - PAD - fq, cap_y - 0.8 * mm - fq
+    fx, fy = LABEL_W - PAD - fq, cap_y - 0.5 * mm - fq
     # a row of the right column low enough to reach the code's square stops
     # short of it
     beside = min(col_w, fx - 1.5 * mm - x)
@@ -588,7 +592,7 @@ def draw_fpga(lab, board):
         # 9 pt on a tighter pitch than it used to have: an Arty is the only
         # board carrying a serial, a flash line and a flash uid at once, and
         # that stack is what decides how much room the foot has left.
-        y += 3.0 * mm
+        y += 2.7 * mm
         lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 9, beside - 6 * mm)
 
 
@@ -599,12 +603,13 @@ def draw_fpga(lab, board):
     # three read as one group, and they run left under the board's QR as far
     # as they need:
     # "Micron N25Q128/MT25QL128  ·  16 MiB" does not fit the right column at
-    # any size worth printing. Bottom-aligned with the code, so the rows are
+    # any size worth printing. Centred on the code, so the rows are
     # at the same height on every label whatever the column above ran to.
     cap_x = fx - 1.5 * mm - max(lab.width(c, SANS, CAPTION) for c in ("flash", "uid"))
     row = 7 * 0.72                        # a 7 pt row's cap height, in points
-    uid_y = fy + fq - row
-    flash_y = uid_y - 2.4 * mm
+    pitch = 2.3 * mm
+    flash_y = fy + (fq - pitch - row) / 2   # the two rows' middle is the code's
+    uid_y = flash_y + pitch
     lab.captioned_after(PAD, cap_x, flash_y, "flash", board.flash, SANS, 7, min_size=5)
     if board.flash_uid:
         # mono, like every other identifier here: it is a number someone may

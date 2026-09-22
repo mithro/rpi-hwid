@@ -335,6 +335,22 @@ def test_the_identifier_spans_the_foot_with_the_flash_code_above_it(
             assert right < flash["x"] or t["s"] == "no id", t["s"]
 
 
+@pytest.mark.parametrize("kind", ["cynthion", "acorn", "arty"])
+def test_the_flash_rows_are_centred_on_the_flash_code(kind, docs, tmp_path, monkeypatch):
+    """The two rows sit at the flash code's vertical middle, and clear of the
+    board's QR above them."""
+    texts, codes, _boxes = _drawn(monkeypatch, docs, kind, tmp_path)
+    rec = {r.kind: r for r in labels.fpga_records(docs)}[kind]
+    (big,) = [c for c in codes if c["content"] == rec.ident]
+    (small,) = [c for c in codes if c["content"] == rec.flash_uid]
+    rows = [t for t in texts if t["s"] in (rec.flash, rec.flash_uid)]
+    top = min(t["y"] for t in rows)
+    bottom = max(t["y"] + t["size"] * 0.72 for t in rows)
+    assert (top + bottom) / 2 == pytest.approx(small["y"] + small["size"] / 2,
+                                               abs=0.1 * labels.mm)
+    assert top - (big["y"] + big["size"]) >= 1.2 * labels.mm
+
+
 def test_the_arty_serial_has_room_between_it_and_the_flash(docs, tmp_path, monkeypatch):
     """An Arty carries the most in its right column. The name is set small
     enough that the S/N clears the flash row by a visible gap rather than
