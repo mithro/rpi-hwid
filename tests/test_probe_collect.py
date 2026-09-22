@@ -610,6 +610,8 @@ def _gpio_flash(monkeypatch, idcode, answer=(1, "Fail")):
     ("0x3631093", "xc7a100tfgg484"),
     ("0x13631093", "xc7a100tfgg484"),
     ("0x13636093", "xc7a200tfbg484"),     # the Acorn CLE-215 and CLE-215+
+    # the NeTV2 a7-35 (litex-boards f593330): pi-sw1-p10..p18 and rpi3-netv2
+    ("0x362d093", "xc7a35tfgg484"),
 ])
 def test_a_gpio_harness_flash_read_names_the_package(fake_root, monkeypatch, idcode, part):
     """The bridge is built per die *and package*, and an idcode gives only the

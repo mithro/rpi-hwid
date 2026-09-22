@@ -1243,9 +1243,12 @@ def flash_info_from_json(doc):
 # board ever found on a GPIO harness here is a NeTV2 or an Acorn, and in
 # litex-boards (58634aa, 2026-09-17) those settle the package by die alone:
 # kosagi_netv2 "xc7a100t-fgg484-2", sqrl_acorn cle-101 "xc7a100t-fgg484-2",
-# cle-215 and cle-215+ "xc7a200t-fbg484". A die not listed here gets no
-# bridge: loading one for the wrong package drives the wrong pins.
-GPIO_HARNESS_PART = {0x3631093: "xc7a100tfgg484", 0x3636093: "xc7a200tfbg484"}
+# cle-215 and cle-215+ "xc7a200t-fbg484". The NeTV2's other variant is
+# "xc7a35t-fgg484-2" (f593330, 2026-09-22), and no Acorn is a 35T, so that die
+# settles it too: pi-sw1-p10..p18 and rpi3-netv2. A die not listed here gets
+# no bridge: loading one for the wrong package drives the wrong pins.
+GPIO_HARNESS_PART = {0x3631093: "xc7a100tfgg484", 0x3636093: "xc7a200tfbg484",
+                     0x362D093: "xc7a35tfgg484"}
 
 
 # The package a PCILeech gateware was built for, by the FPGA id it reports
