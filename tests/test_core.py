@@ -800,9 +800,10 @@ NETV2_FLASH = {"flash_jedec": "0xc22017", "flash": "Macronix MX25L6405",
 
 
 @pytest.mark.parametrize(("pcie", "ftdi", "cable", "pins", "kind"), [
-    # the chain joins the board its PCIe edge already named
-    ([{"slot": "0002:01:00.0", "id": "1de4:0001", "class": "0x020000",
-       "bars": [16384], "subsystem": "0000:0000"}], [], "gpio", "27:22:4:17", "netv2"),
+    # the chain joins the board its PCIe edge already named (LitePCIe NeTV2
+    # gateware: 10ee:7024, one 1 MiB BAR)
+    ([{"slot": "0001:01:00.0", "id": "10ee:7024", "class": "0x058000",
+       "bars": [1 << 20], "subsystem": "10ee:0007"}], [], "gpio", "27:22:4:17", "netv2"),
     # ...or the Arty its own FTDI named
     ([], [{"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319A43AD3"}],
      "digilent", None, "arty"),
