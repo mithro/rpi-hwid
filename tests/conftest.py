@@ -153,6 +153,10 @@ ARTY_PI3 = _doc(
     [], "undetermined",
     [{"kind": "arty", "serial": "210319A43AD3", "dna": "0x0064f5483229085c",
       "idcode": "0x362d093", "flash_jedec": "0x20ba18",
+      # RDID bytes 4-6, read by openfpgaloader-36 on 2026-09-22 with the build
+      # that reports them: extended device ID 00h, so an N25Q128 and not an
+      # MT25QL128 (which sets bit 6)
+      "flash_extended_id": "0x100000",
       "flash_uid": "235351451900080037091015126b",
       "flash_uid_bits": 112, "flash_uid_state": "read"}],
     [{"kind": "eth", "mac": "dc:a6:32:05:32:45"},
@@ -190,6 +194,9 @@ ACORN_HOST = _doc(
     # 32 MiB, whose 128-bit factory number came out of OTP via 0x4B.
     [{"kind": "acorn", "dna": "0x0054b48664b04854", "idcode": "0x13636093",
       "flash_jedec": "0x010219",
+      # 4D, 01 (4 KiB + 64 KiB sectors), 80 (FL-S): an S25FL256S, read by
+      # openfpgaloader-36 on 2026-09-22
+      "flash_extended_id": "0x4d0180",
       "flash_uid": "edcbeececb2b2a88b04f914d2e46af90",
       "flash_uid_bits": 128, "flash_uid_state": "read"}],
     [{"kind": "eth", "mac": "88:a2:9e:45:85:77"}], [], False, True, 3000,

@@ -600,6 +600,23 @@ def test_a_reason_is_kept_when_a_flash_says_it_has_no_unique_id():
     assert fpga.flash_info_from_json(FLASH_INFO_JSON)["uid_note"] is None
 
 
+def test_the_extended_id_travels_from_the_document_to_the_board():
+    """openFPGALoader's extended_id (mithro/openFPGALoader 2c7d956): RDID bytes
+    4-6 for the families that define them, null for the rest. pi3's Arty
+    answered 0x100000, which is what makes it an N25Q128 and not an MT25QL128."""
+    doc = json.loads(json.dumps(FLASH_INFO_JSON))
+    doc["flashes"][0]["extended_id"] = "0x100000"
+    assert fpga.flash_info_from_json(doc)["extended_id"] == "0x100000"
+    # a document from before the field existed has nothing to say, not an error
+    assert fpga.flash_info_from_json(FLASH_INFO_JSON)["extended_id"] is None
+    j = dict(NETV2_FLASH, idcode="0x362d093", dna="0x0064f5483229085c",
+             cable="digilent", flash_extended_id="0x100000")
+    (board,) = fpga.fpga_verdict({"pcie": [], "jtag": j, "ftdi": [
+        {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319A43AD3"}]})
+    assert board["flash_extended_id"] == "0x100000"
+    assert fpga.fpga_summary([board])[0]["flash_extended_id"] == "0x100000"
+
+
 def test_the_three_unique_id_states_in_the_document():
     """`none` means the part has no known UID command, and only that: since
     openFPGALoader 9754753 a transfer that actually failed exits non-zero and
@@ -1382,7 +1399,8 @@ def test_probe_document_from_json_skips_banner():
                                               "flash_uid": None, "flash_uid_bits": None,
                                               "flash_uid_state": None,
                                               "flash_uid_note": None,
-                                              "flash_error": None}]
+                                              "flash_error": None,
+                                              "flash_extended_id": None}]
     with pytest.raises(ValueError, match="no JSON"):
         ProbeDocument.from_json("h", "no json")
     with pytest.raises(ValueError, match=r"verdict\.summary"):

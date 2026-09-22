@@ -245,9 +245,9 @@ def test_how_a_flash_unique_id_is_read_is_a_property_of_the_part(jedec, how):
 
 @pytest.mark.parametrize(("kind", "flash", "uid"), [
     # pi3's Arty: Micron 0x20BA18, 112 bits out of the extended 0x9F reply
-    ("arty", "Micron N25Q128/MT25QL128  ·  16 MiB", "235351451900080037091015126b"),
-    # pi-sw2-p48's Acorn: Spansion S25Fx256S, 128 bits out of OTP via 0x4B
-    ("acorn", "Spansion S25Fx256S  ·  32 MiB",
+    ("arty", "Micron N25Q128  ·  16 MiB", "235351451900080037091015126b"),
+    # pi-sw2-p48's Acorn: Spansion S25FL256S, 128 bits out of OTP via 0x4B
+    ("acorn", "Spansion S25FL256S  ·  32 MiB",
      "edcbeececb2b2a88b04f914d2e46af90"),
     # rpi5-netv2's NeTV2: a Macronix whose factory ESN was never programmed.
     # No uid row at all: the "no id" square where the code goes says it.
@@ -535,7 +535,7 @@ def test_fpga_records_named_and_typed(docs):
     assert recs["netv2"].part == "XC7A100T"
     assert recs["arty"].name == "arty-hoopoe"
     assert recs["arty"].model == "Arty A7-35T"
-    assert recs["arty"].flash == "Micron N25Q128/MT25QL128  ·  16 MiB"
+    assert recs["arty"].flash == "Micron N25Q128  ·  16 MiB"
     assert recs["acorn"].maker == "SQRL"
 
 
@@ -999,7 +999,7 @@ def test_no_shuttle_mark_is_a_wordmark():
     ("0xc22017", "Macronix MX25L64xx  ·  8 MiB"),    # 6405 6406E 6436E 6445E ...
     ("0x012018", "Spansion S25FL12x  ·  16 MiB"),    # 127S 128P 128S 129P
     ("0x010219", "Spansion S25Fx256S  ·  32 MiB"),   # S25FL256S and S25FS256S
-    ("0x20ba18", "Micron N25Q128/MT25QL128  ·  16 MiB"),   # one die, renamed
+    ("0x20ba18", "Micron N25Q128/MT25QL128  ·  16 MiB"),   # two generations
     ("0xef4016", "Winbond W25Q32xx  ·  4 MiB"),      # BV FV JV
     ("0xef4017", "Winbond W25Q64xx  ·  8 MiB"),      # BV CV FV: pi-sw1-p38's
     ("0xef4018", "Winbond W25Q128xx  ·  16 MiB"),
@@ -1015,6 +1015,32 @@ def test_the_flash_line_never_asserts_a_part_number_nobody_read(jedec, line):
     lookup on an id that several parts share, so what prints is the family
     every one of those parts belongs to."""
     assert labels.flash_text(labels.flash_from_jedec(jedec)) == line
+
+
+@pytest.mark.parametrize(("jedec", "extended", "line"), [
+    # Micron: the extended device ID's bit 6 is "Device Generation: 1 = 2nd
+    # generation" in the MT25QL128 datasheet (Rev. I, Table 17) and reserved
+    # in the N25Q128's (Rev. M, Table 20). pi3's Arty answers 10 00 00.
+    ("0x20ba18", "0x100000", "Micron N25Q128  ·  16 MiB"),
+    ("0x20ba18", "0x104400", "Micron MT25QL128  ·  16 MiB"),
+    # Spansion: 4D, then the sector architecture, then the family -- 80 FL-S,
+    # 81 FS-S -- as Linux's spansion.c keys them. Both Acorns answer 4d 01 80.
+    ("0x010219", "0x4d0180", "Spansion S25FL256S  ·  32 MiB"),
+    ("0x010219", "0x4d0081", "Spansion S25FS256S  ·  32 MiB"),
+    ("0x012018", "0x4d0181", "Spansion S25FS128S  ·  16 MiB"),
+    # an FL-S at 0x012018 is the 127S or the 128S: the extended id stops there
+    ("0x012018", "0x4d0180", "Spansion S25FL12xS  ·  16 MiB"),
+    # no extended id, or one that is not this family's shape: the family name
+    ("0x20ba18", None, "Micron N25Q128/MT25QL128  ·  16 MiB"),
+    ("0x20ba18", "0x4d0180", "Micron N25Q128/MT25QL128  ·  16 MiB"),
+    ("0x010219", "0x100000", "Spansion S25Fx256S  ·  32 MiB"),
+    ("0x010219", "junk", "Spansion S25Fx256S  ·  32 MiB"),
+])
+def test_the_extended_id_names_the_part_the_jedec_id_cannot(jedec, extended, line):
+    """Where a family defines bytes after the JEDEC id (RDID bytes 4-6, which
+    openFPGALoader reports as extended_id), they name the part exactly, and the
+    label prints the most precise name they support."""
+    assert labels.flash_text(labels.flash_from_jedec(jedec, extended)) == line
 
 
 def _arty(**flash):

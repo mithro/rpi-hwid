@@ -1206,7 +1206,12 @@ def flash_info_from_json(doc):
             # why, where the part says so: a Macronix reports whether a
             # factory ESN was ever programmed, which turns "none" from an
             # assumption about the vendor into a measurement of the chip
-            "uid_note": uid.get("note")}
+            "uid_note": uid.get("note"),
+            # RDID bytes 4-6, for the families that define them (Micron
+            # N25Q/MT25Q, Spansion S-family); null for every other part and
+            # absent from documents written before the field existed. They name
+            # the part where the three-byte id cannot.
+            "extended_id": f.get("extended_id")}
 
 
 # The package each die comes in, on the boards found on a GPIO harness. The
@@ -1344,8 +1349,9 @@ def read_flash(res, harness, board, part):
         res["flash_uid"] = info["uid"]
         res["flash_uid_bits"] = info["uid_bits"]
         res["flash_uid_state"] = info["uid_state"]
-        # only the document carries a note; the printed report has none
+        # only the document carries a note or an extended id
         res["flash_uid_note"] = info.get("uid_note")
+        res["flash_extended_id"] = info.get("extended_id")
     else:
         argv = list(harness) + (["-b", board] if board else []) \
             + (["--fpga-part", part] if part else [])
@@ -2112,7 +2118,8 @@ def fpga_verdict(d):
 
 # What a chain's flash read leaves on the board it belongs to
 JTAG_FLASH_KEYS = ("flash_jedec", "flash", "flash_uid", "flash_uid_bits",
-                   "flash_uid_state", "flash_uid_note", "flash_error")
+                   "flash_uid_state", "flash_uid_note", "flash_error",
+                   "flash_extended_id")
 
 
 def merge_soc(boards, soc):
@@ -2153,7 +2160,7 @@ def fpga_summary(boards):
                   "gateware_id", "hw_rev", "mode", "trace_id",
                   "dna_sources", "dna_agree", "dna_conflict", "soc_model",
                   "flash_uid", "flash_uid_bits", "flash_uid_state",
-                  "flash_uid_note", "flash_error"):
+                  "flash_uid_note", "flash_error", "flash_extended_id"):
             # not plain truthiness: FPGA id 0 is a real class (SP605_FT601)
             if b.get(k) is not None and b.get(k) != "":
                 entry[k] = b[k]

@@ -92,6 +92,9 @@ class FpgaBoard:
     # What stopped a flash read that was attempted, in the reading tool's
     # words, so a refused label can say why the obvious command will not do.
     flash_error: str | None = None
+    # RDID bytes 4-6 where the flash's family defines them: what tells an
+    # N25Q128 from an MT25QL128, or an S25FL256S from an S25FS256S.
+    flash_extended_id: str | None = None
 
     @property
     def identity(self) -> str | None:

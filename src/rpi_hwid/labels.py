@@ -1093,7 +1093,8 @@ JEDEC_PART = {
     0x012018: "S25FL12x",
     # S25FL256S, and the 1.8 V S25FS256S: p48's Acorn
     0x010219: "S25Fx256S",
-    # Micron's N25Q128 and the same die renamed MT25QL128: pi3's Arty
+    # Micron's N25Q128 and its second generation, the MT25QL128: pi3's Arty.
+    # The extended id tells them apart (MICRON_GENERATION below).
     0x20BA18: "N25Q128/MT25QL128",
     0xEF4016: "W25Q32xx",      # BV, FV and JV-IQ; the Cynthion's
     0xEF4017: "W25Q64xx",      # BV, CV and FV; pi-sw1-p38's PCILeech card
@@ -1122,8 +1123,42 @@ FLASH_UID_METHOD = {
 }
 
 
-def flash_from_jedec(jedec):
-    """Vendor, part and density from a JEDEC id, as far as each is known."""
+# Where the three-byte id is shared, the bytes after it can name the part:
+# RDID bytes 4-6, which openFPGALoader's flash document reports as
+# extended_id for the families that define them.
+#
+# Micron: a length byte of 10h, then the extended device ID, whose bit 6 is
+# "Device Generation: 1 = 2nd generation" in the MT25QL128 datasheet (Rev. I
+# 09/16, Table 17) and reserved in the N25Q128's (Rev. M 06/2013, Table 20).
+# (first generation, second generation)
+MICRON_GENERATION = {0x20BA18: ("N25Q128", "MT25QL128")}
+# Spansion S-family: 4Dh, the sector architecture, then the family -- 80h
+# FL-S, 81h FS-S -- as Linux's drivers/mtd/spi-nor/spansion.c keys them
+# (s25fl256s0/1, s25fs256s0/1, s25fl128s0/1, s25fs128s1). An FL-S at 0x012018
+# is an S25FL127S or an S25FL128S, which these bytes do not separate.
+SPANSION_FAMILY = {0x010219: {0x80: "S25FL256S", 0x81: "S25FS256S"},
+                   0x012018: {0x80: "S25FL12xS", 0x81: "S25FS128S"}}
+
+
+def extended_part(value, extended):
+    """The part an extended id names for JEDEC id `value`, or None when there
+    is none, or it is not in the shape this id's family defines."""
+    try:
+        data = bytes.fromhex(extended[2:]) if extended.startswith("0x") else b""
+    except (AttributeError, ValueError):
+        return None
+    if len(data) != 3:
+        return None
+    if value in MICRON_GENERATION and data[0] == 0x10:
+        return MICRON_GENERATION[value][1 if data[1] & 0x40 else 0]
+    if value in SPANSION_FAMILY and data[0] == 0x4D:
+        return SPANSION_FAMILY[value].get(data[2])
+    return None
+
+
+def flash_from_jedec(jedec, extended=None):
+    """Vendor, part and density from a JEDEC id, as far as each is known --
+    the part as precisely as the extended id, where there is one, allows."""
     out = {"vendor": None, "part": None, "size": None, "jedec": None,
            # "unknown" until a part is met: distinct from None, which is this
            # part having no unique id to read at all
@@ -1139,7 +1174,7 @@ def flash_from_jedec(jedec):
         out["uid_read_with"] = FLASH_UID_METHOD[manufacturer]
     out["jedec"] = "0x%06x" % value
     out["vendor"] = JEDEC_VENDOR.get(value >> 16)
-    out["part"] = JEDEC_PART.get(value)
+    out["part"] = extended_part(value, extended) or JEDEC_PART.get(value)
     capacity = value & 0xFF
     # the third byte is log2 of the part's size in bytes on every vendor here
     if 0x10 <= capacity <= 0x1B:
@@ -1398,7 +1433,7 @@ def fpga_records(docs, pinned_names=None):
         if b.kind == "cynthion":
             flash = cynthion_flash(b.hw_rev, b.flash_jedec)
         else:
-            flash = flash_text(flash_from_jedec(b.flash_jedec))
+            flash = flash_text(flash_from_jedec(b.flash_jedec, b.flash_extended_id))
         gateware = None
         if b.gateware:
             # the number, never a board name: a class is shared by boards
