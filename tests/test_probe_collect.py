@@ -804,6 +804,32 @@ def test_a_chain_neither_tool_can_read_says_why_twice(fake_root, monkeypatch):
     assert "all zeroes" in res["openocd"]
 
 
+def test_openocd_reading_a_chain_keeps_openfpgaloaders_reason(fake_root, monkeypatch):
+    """Where openFPGALoader cannot read the chain but openocd can, the reading
+    is openocd's -- and openFPGALoader's last words are what say why the flash
+    is missing from it. rpi3-netv2 (kernel 4.14, Raspbian stretch) answers the
+    static build with "Assertion failed: request (line-request.c: ...)":
+    libgpiod v2 needs the GPIO uAPI v2 added in Linux 5.10. Without this the
+    document said only `tool: openocd` and nothing about the flash."""
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "")
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15:
+                        "empty\nAssertion failed: request (line-request.c: "
+                        "gpiod_line_request_set_values_subset: 199)")
+    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None, pins=None: {
+        "idcode": "0x0362d093", "tool": "openocd", "dna": "0x0058a44663258854",
+        "cable": "gpio"})
+    # the fetched static build, as on a host with no openFPGALoader of its own
+    monkeypatch.setattr(fpga, "openfpgaloader_tool", lambda download=True: {
+        "argv": ["sudo", "/home/pi/.cache/rpi-hwid/openfpgaloader/x/bin/openFPGALoader"],
+        "source": "openFPGALoader-1.1.1-linux-armv7.tar.gz", "flash_info": True})
+    res = fpga.jtag_probe(want_flash=True)
+    assert res["tool"] == "openocd"
+    assert res["dna"] == "0x0058a44663258854"
+    assert "Assertion failed" in res["flash_error"]
+    assert res["flash_jedec"] is None
+
+
 def test_peripheral_base_follows_the_board(fake_root, monkeypatch, tmp_path):
     for model, base in [("Raspberry Pi 4 Model B Rev 1.4", "0xFE000000"),
                         ("Raspberry Pi 3 Model B Plus Rev 1.3", "0x3F000000"),

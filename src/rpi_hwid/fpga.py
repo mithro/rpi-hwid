@@ -1463,6 +1463,14 @@ def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
         # keep both tools' last words, so a chain neither can read says why.
         ocd = openocd_probe(cables[0]["serial"] if cables else None, pins)
         if ocd is not None and ocd.get("idcode"):
+            # openocd reads a chain but no flash, so a reading that comes from
+            # it has no flash in it. Why openFPGALoader could not read the
+            # chain is the whole explanation, and it belongs in the document:
+            # rpi3-netv2 (kernel 4.14) answers the static build with a libgpiod
+            # assertion, and without this the flash was simply absent.
+            if want_flash:
+                ocd["flash_jedec"] = ocd["flash"] = None
+                ocd["flash_error"] = det.strip()[-200:] or None
             return ocd
         res = {"idcode": None, "raw": det[-200:]}
         if ocd is not None:
