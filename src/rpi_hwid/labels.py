@@ -946,6 +946,19 @@ BOARD_MODEL = {"netv2": ("Alphamax", "NeTV2"), "arty": ("Digilent", "Arty A7"),
                "unknown-fpga": ("", "FPGA"),
                "cynthion": ("Great Scott Gadgets", "Cynthion")}
 
+# Which PCILeech card a die and a configuration flash together mean. The
+# gateware says nothing: its "FPGA id" is a performance class, and 9 is set by
+# the EnigmaX1, CaptainDMA 75T and CaptainDMA 100T projects alike
+# (pcileech-fpga c538c41, PARAM_DEVICE_ID in each *_top.sv). The board answers
+# for itself: ufrisk's flashing log for a Captain 75T (pcileech-fpga issue
+# #199) reports tap 0x13632093, a CH347 at chip version 5.44 and flash
+# `win w25q64fv/jv` (0x1740ef, which is 0xef4017 in RDID order) -- pi-sw1-p38
+# to the letter. The only other 75T board, the original Enigma X1, carries a
+# 16 MiB ISSI is25lp128f by its own vivado_flash.tcl. Cards of identical
+# design are resold under other names, so this names the hardware it matches,
+# and a card answering anything else keeps the generic model.
+PCILEECH_BOARD = {("XC7A75T", "0xef4017"): ("CaptainDMA", "CaptainDMA 75T")}
+
 # Which Acorn a die means. Both variants are SQRL cards on the same P1
 # harness, and once a board runs gateware of its own its PCIe id describes
 # that gateware rather than the card, so the die is what still tells a
@@ -1414,8 +1427,11 @@ def fpga_records(docs, pinned_names=None):
             name = naming.netv2_name(b.dna)
         elif b.kind == "arty" and b.serial:
             name = arty_names[b.serial]
-        elif b.kind == "pcileech" and b.dna:
-            name = naming.pcileech_name(b.dna)
+        elif b.kind == "pcileech":
+            maker, model = PCILEECH_BOARD.get(
+                (part or "", (b.flash_jedec or "").lower()), (maker, model))
+            if b.dna:
+                name = naming.pcileech_name(b.dna)
         elif b.kind == "acorn":
             # named from the DNA like a NeTV2, and the die picks the variant
             model = ACORN_SOC_MODEL.get(b.soc_model or "") or ACORN_MODEL.get(

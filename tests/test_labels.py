@@ -135,11 +135,47 @@ def test_a_pcileech_card_with_its_die_and_flash_read_gets_a_label(tmp_path, monk
     assert row[2] == name + " 0x006425440bc8985c"
     seen = _drawn_strings(monkeypatch, docs, {"pcileech"}, tmp_path)
     assert name.split("-", 1)[1] in seen
-    assert "PCILeech FPGA  ·  XC7A75T" in seen
+    # the die and the flash name the board; see the CaptainDMA test below
+    assert "CaptainDMA 75T  ·  XC7A75T" in seen
     assert "Winbond W25Q64xx  ·  8 MiB" in seen
     assert "df64ac431b4b202f" in seen
     assert not [s for s in seen if "gateware" in s or "FPGA id" in s]
     assert not [s for s in seen if s.endswith("…")]
+
+
+def test_a_75t_pcileech_card_with_a_w25q64_is_named_a_captaindma_75t(tmp_path,
+                                                                     monkeypatch):
+    """What a PCILeech card is can be read off it after all. pi-sw1-p38 is an
+    XC7A75T with a Winbond W25Q64 and a CH347 update port, and ufrisk's own
+    flashing log for a Captain 75T (pcileech-fpga issue #199) reports exactly
+    those: CH347 chip version 5.44, tap 0x13632093, flash 'win w25q64fv/jv'
+    (0x1740ef). The original Enigma X1, the only other 75T board, carries a
+    16 MiB ISSI is25lp128f by its own flashing script."""
+    docs = {"pi-sw1-p38": ProbeDocument.from_dict("pi-sw1-p38", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "e8387e35dbce7843",
+        "revision": "b04171", "power_class": "undetermined", "fpga": [P38_CARD]}}})}
+    (rec,) = labels.fpga_records(docs)
+    assert rec.maker == "CaptainDMA"
+    assert rec.model == "CaptainDMA 75T"
+    seen = _drawn_strings(monkeypatch, docs, {"pcileech"}, tmp_path)
+    assert "CaptainDMA" in seen                      # the maker's name in type
+    assert "CaptainDMA 75T  ·  XC7A75T" in seen
+
+
+@pytest.mark.parametrize(("part", "flash"), [
+    ("0x3631093", "0xef4017"),      # a 100T: the CaptainDMA 100T, or something else
+    ("0x3632093", "0x012018"),      # a 75T whose flash is not the W25Q64
+])
+def test_another_pcileech_card_keeps_the_generic_model(part, flash):
+    """Only the die and the flash together say which board this is, so a card
+    that answers differently is not given this one's name."""
+    card = dict(P38_CARD, idcode=part, flash_jedec=flash)
+    doc = ProbeDocument.from_dict("pi-sw1-p38", {"verdict": {"summary": {
+        "model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "e8387e35dbce7843",
+        "revision": "b04171", "power_class": "undetermined", "fpga": [card]}}})
+    (rec,) = labels.fpga_records({"pi-sw1-p38": doc})
+    assert rec.model == "PCILeech FPGA"
+    assert rec.maker == ""
 
 
 def test_a_cynthion_is_keyed_on_the_die_not_the_flash_chip(docs, tmp_path):
