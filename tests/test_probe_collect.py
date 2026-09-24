@@ -787,7 +787,7 @@ def test_an_acorns_flash_is_read_from_what_its_soc_reports():
         "flash_extended_id": None, "flash_sfdp": None}}
 
 
-@pytest.mark.parametrize("doc, because", [
+@pytest.mark.parametrize(("doc", "because"), [
     # SQRL's factory image: its BAR is never opened
     (_acorn_board(result="unconverted", kind="sqrl-factory", flash=None,
                   reason="SQRL factory firmware"), "unconverted (SQRL factory firmware)"),
@@ -862,7 +862,7 @@ def test_an_acorns_flash_is_asked_over_pcie_before_any_bridge_is_loaded(fake_roo
     assert res["dna"] == "0x0054b48664b04854"
 
 
-@pytest.mark.parametrize("identify, because", [
+@pytest.mark.parametrize(("identify", "because"), [
     (None, "not installed"),
     (_acorn_board(result="fail", flash=None, reason="not our SoC"), "fail (not our SoC)"),
 ])
