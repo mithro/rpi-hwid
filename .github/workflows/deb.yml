@@ -91,8 +91,6 @@ jobs:
       suites: "bookworm trixie sid"
       # Pure Python: one Architecture: all deb serves every architecture.
       architectures: "all"
-      origin: rpi-hwid
       description: "Raspberry Pi hardware identity: probe, collector and labels"
-      keyring-name: rpi-hwid.gpg
     secrets:
       gpg-private-key: ${{ secrets.APT_GPG_PRIVATE_KEY }}
