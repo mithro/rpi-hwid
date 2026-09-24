@@ -12,9 +12,11 @@ print.
 Every label carries only what cannot change: a Pi's revision code, serial
 and soldered-down MACs and the HAT it wears; an Orange Pi's SoC serial,
 MAC, SoC and device-tree id; an FPGA board's DNA or Digilent serial and the
-name derived from it; a USB adapter's own MAC; a Tiny Tapeout board's
+name derived from it, or, on an ECP5, its configuration flash's uid and the
+die's own TraceID; a USB adapter's own MAC; a Tiny Tapeout board's
 shuttle, the chip ROM's commit and the demo board's RP2 unique id. Nothing
-about where a thing is plugged in or what it is called this month. Each
+about where a thing is plugged in, what it is called this month, or which
+gateware it happens to be running. Each
 identifier someone might need to type is also a QR code, in a monospace
 face with a slashed zero where one is installed.
 
@@ -24,9 +26,10 @@ same layout with the maker's mark and the model decoding swapped, see
 ``rpi_hwid.boards``), one FPGA label per board the probe found, one Tiny
 Tapeout label per demo board, one adapter label per removable USB network
 adapter. Artwork: the package ships the Raspberry Pi raspberry, the Orange
-Pi orange, the Alphamax, Digilent and Tiny Tapeout marks and the
-public-domain USB trident (see artwork/README.md, each mark drawn only on
-its owner's hardware); ``--artwork DIR`` overrides any of them and may add
+Pi orange, the Alphamax, Digilent, SQRL, Great Scott Gadgets and Tiny
+Tapeout marks and the public-domain USB trident (see artwork/README.md, each mark
+drawn only on its owner's hardware); ``--artwork DIR`` overrides any of
+them and may add
 ``netv2.svg``, and a label whose mark is missing sets the maker's name in
 type (or, on a board label, leaves the mark's box empty).
 """
@@ -160,6 +163,34 @@ class Label:
                   align="right", color=GREY)
         self.fit(x_val, y, val, val_font, size, max_w, min_size, color=color)
         return size
+
+    def captioned_after(self, x_left, x_cap, y, cap, val, val_font, val_size,
+                        min_size=5.5, color=black):
+        """A value set flush right with its grey caption after it: the caption
+        starts at `x_cap`, so captions of different lengths still line up in
+        one column, and the value ends just before it -- shrinking and then
+        eliding until it fits after `x_left`. `y` is the value's cap-height
+        top; the two share a baseline."""
+        x_right = x_cap - self.CAPTION_GAP
+        room = x_right - x_left
+        size = self.fitted_size(val, val_font, val_size, room, min_size)
+        while len(val) > 1 and self.width(val, val_font, size) > room:
+            val = val[:-2].rstrip() + "…"
+        self.text(x_right, y, val, val_font, size, align="right", color=color)
+        self.text(x_cap, y + (size - CAPTION) * 0.72, cap, SANS, CAPTION, color=GREY)
+        return size
+
+    def no_code(self, x, y, size, text="no id"):
+        """What stands where a code would go when there is nothing to encode:
+        a grey square the code's size, saying so."""
+        c = self.c
+        px, py = self.pt(x, y + size)
+        c.setStrokeColor(GREY)
+        c.setLineWidth(0.5)
+        c.rect(px, py, size, size, stroke=1, fill=0)
+        c.setStrokeColor(black)
+        self.text(x + size / 2, y + (size - CAPTION * 0.72) / 2, text, SANS, CAPTION,
+                  align="centre", color=GREY)
 
     def rule(self, x, y, w):
         """A thin grey line, for something to be written in by hand."""
@@ -349,6 +380,11 @@ def mark_maker(lab, board, x, y, height):
         w = mark_alphamax(lab, x, y, height)
     elif board.kind == "arty":
         w = mark_digilent(lab, x, y, height)
+    elif board.kind == "cynthion":
+        w = mark_raster(lab, "great-scott-gadgets.png", x, y, height)
+    elif board.kind == "acorn":
+        path = artwork("sqrl.svg")
+        w = lab.svg(path, x, y, height) if path else 0
     if not w:
         # the maker's name in the caption grey, so it labels the word below
         # rather than competing with it as a second heading
@@ -486,56 +522,117 @@ def draw_fpga(lab, board):
     inset from the die-cut edge by its own quiet zone (the sticker goes on a
     dark board, so the label's edge is where the white stops). Right: the
     maker's mark above the board's word, then model and die, and for an Arty
-    its Digilent serial and flash part. Bottom, full width: the DNA, or a
-    rule to write it on when nobody has read it yet."""
+    its Digilent serial. Below, the flash: its part and its unique id, set
+    flush right against the flash's own small code in the right-hand corner
+    -- or a square saying "no id" where the part has none. Bottom, the whole
+    width: the board's identifier, the Device DNA or the ECP5 TraceID."""
     dna_size = 15
-    dna_h = 6 * mm
-    qr_size = 20 * mm
-    qr_inset = 3.5 * mm            # four modules of a 25-module code at 20 mm
-    ident_str = board.dna or board.serial
+    dna_h = 5.5 * mm
+    # 18 mm rather than 20: the flash block needs the two millimetres more
+    # than the code does, and a 25-module symbol is still 0.72 mm a module.
+    qr_size = 18 * mm
+    qr_inset = 3.5 * mm
+    # half a millimetre higher than its inset from the side, which is still
+    # four 0.72 mm modules of quiet zone to the die-cut edge, for room between
+    # it and the flash rows below
+    qr_top = 3 * mm
+    ident_str = board.ident or board.serial
     if ident_str:
-        lab.qr(qr_inset, qr_inset, qr_size, ident_str)
+        lab.qr(qr_inset, qr_top, qr_size, ident_str)
 
     x = qr_inset + qr_size + 3 * mm
     col_w = LABEL_W - PAD - x
+    # The foot, and the flash's own code in the right-hand corner above it.
+    # The foot is the identifier alone, across the whole width at full size;
+    # the code sits clear of the foot's caption, and the flash rows end
+    # against it. Its room is taken whatever goes in it -- a code, or the
+    # stand-in for a flash with no unique id -- so every label is the same.
+    # 6.5 mm is 21 modules at 0.31 mm for a 64-bit uid (16 hex digits, QR
+    # version 1), and 25 at 0.26 mm for the 112- and 128-bit ones.
+    foot_y = LABEL_H - PAD - dna_h
+    cap_y = foot_y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm   # the caption over the value
+    fq = 6.5 * mm
+    fx, fy = LABEL_W - PAD - fq, cap_y - 0.5 * mm - fq
+    # a row of the right column low enough to reach the code's square stops
+    # short of it
+    beside = min(col_w, fx - 1.5 * mm - x)
     y = PAD
-    mark_h = 6 * mm if board.kind == "arty" else 5 * mm
+    # A wide wordmark (Alphamax) already carries its weight at 5 mm; a compact
+    # mark scaled to the same height reads as half the size beside it, so the
+    # Digilent triangle and the Great Scott Gadgets gears get 6 mm.
+    mark_h = 6 * mm if board.kind in ("arty", "cynthion") else 5 * mm
     mark_maker(lab, board, x, y, mark_h)
     y += mark_h + 0.5 * mm
-    word = board.name.split("-", 1)[1] if board.name else board.model.split()[0]
-    lab.fit(x, y, word, SANS_BOLD, 24, col_w)
-    y += 8.3 * mm
-    if board.part:
+    # The headline is the derived name where there is one. Without a name it
+    # falls back to the model, and for a board known only by its chain that
+    # model is "FPGA" -- which printed FPGA twice, once as the headline and
+    # again in the row below. The die is the more useful of the two, so it
+    # takes the headline and the row stops repeating it.
+    if board.name:
+        word = board.name.split("-", 1)[1]
+    else:
+        word = board.part or board.model.split()[0]
+    # 20 pt: the largest that leaves an Arty's S/N a clear gap above the flash
+    # rows, an Arty being the board with the most in this column
+    lab.fit(x, y, word, SANS_BOLD, 20, col_w)
+    y += 7.2 * mm
+    if board.part and board.part != word:
         lab.fit(x, y, "{}  ·  {}".format(board.model, board.part), SANS, 8, col_w)
     else:
         lab.fit(x, y, board.model, SANS, 8, col_w)
-        y += 3 * mm
-        # what the board's own gateware said, where it said anything: a
-        # pcileech board has no JTAG to read a die from, and "die not read"
-        # would suggest a read that failed rather than one that cannot happen
-        lab.fit(x, y, board.gateware or "die not read", SANS, CAPTION, col_w, color=GREY)
     if board.kind == "arty":
         # the serial is a board-printed identifier: its own row, larger
-        y += 3.8 * mm
-        lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 10, col_w - 6 * mm)
-        y += 4 * mm
-        # the part name alone tells the two flash fits apart; the density
-        # is the same on both (S25FL128S/127S: one JEDEC id, two parts)
-        lab.captioned(x, x + 6 * mm, y, "flash", board.flash or "not read", SANS, 7.5,
-                      col_w - 6 * mm)
+        # 8 pt on a tighter pitch than it used to have: an Arty is the only
+        # board carrying a serial, a flash line and a flash uid at once, and
+        # that stack is what decides how much room the foot has left.
+        y += 2.7 * mm
+        lab.captioned(x, x + 6 * mm, y, "S/N", board.serial, MONO, 8, beside - 6 * mm)
 
-    y = LABEL_H - PAD - dna_h
-    cap_y = y + 0.5 * mm - CAPTION * 0.72 - 0.9 * mm    # the caption sits over the DNA
-    if board.dna:
-        lab.text(PAD, cap_y, "Device DNA", SANS, CAPTION, color=GREY)
-        lab.fit(PAD, y + 0.5 * mm, board.dna, MONO, dna_size, LABEL_W - 2 * PAD)
-    else:
-        # the "0x" sits on the rule at the foot; the space above the rule,
-        # to the right of the QR column, is where the digits get written
-        lab.fit(PAD, cap_y, "Device DNA, write it in", SANS, CAPTION, qr_size, color=GREY)
-        lab.text(PAD, y + 0.5 * mm, "0x", MONO, dna_size)
-        lab.rule(PAD + 6 * mm, y + 0.5 * mm + dna_size * 0.72 + 0.3 * mm,
-                 LABEL_W - 2 * PAD - 6 * mm)
+
+    # The flash block: the same rows, in the same place, on every FPGA label.
+    # Every board here has a configuration flash; what differs is only how
+    # much of it could be read. The values are set flush right with their
+    # captions after them, in one column just before the flash's code, so the
+    # three read as one group, and they run left under the board's QR as far
+    # as they need:
+    # "Micron N25Q128/MT25QL128  ·  16 MiB" does not fit the right column at
+    # any size worth printing. Centred on the code, so the rows are
+    # at the same height on every label whatever the column above ran to.
+    cap_x = fx - 1.5 * mm - max(lab.width(c, SANS, CAPTION) for c in ("flash", "uid"))
+    row = 7 * 0.72                        # a 7 pt row's cap height, in points
+    pitch = 2.3 * mm
+    # the rows' middle is the code's: both rows where there is a uid, and the
+    # flash row alone beside a "no id" square
+    flash_y = fy + (fq - (pitch if board.flash_uid else 0) - row) / 2
+    uid_y = flash_y + pitch
+    lab.captioned_after(PAD, cap_x, flash_y, "flash", board.flash, SANS, 7, min_size=5)
+    if board.flash_uid:
+        # mono, like every other identifier here: it is a number someone may
+        # have to read off the sticker and type
+        lab.captioned_after(PAD, cap_x, uid_y, "uid", board.flash_uid, MONO_REGULAR, 7,
+                            min_size=5)
+    # A part with no unique id gets no uid row: the "no id" square where its
+    # code would be says so, and the chip's own reason (a Macronix's security
+    # register) stays in the document, off a 38 mm label.
+
+    # The flash's own code: its unique id, the identity of the chip and not of
+    # the board, which is why it is a second code and not part of the big one.
+    # A flash with no unique id gets a marked square saying so rather than a
+    # code: its JEDEC id once went here, and that is the same on every chip of
+    # the family -- a code that looks like an identifier and identifies nothing
+    # -- while an empty corner would read as something missing.
+    if board.flash_uid:
+        lab.qr(fx, fy, fq, board.flash_uid, error="l")
+    elif board.flash:
+        lab.no_code(fx, fy, fq)
+
+    # The foot always carries a value: a board with none never reaches here,
+    # because all_labels refuses it. There used to be a rule to write the
+    # digits on by hand, which defeated the point of the package -- a
+    # hand-copied Device DNA is exactly the error-prone step it exists to
+    # remove, and a sticker with a blank on it still gets stuck to a board.
+    lab.text(PAD, cap_y, board.ident_caption, SANS, CAPTION, color=GREY)
+    lab.fit(PAD, foot_y + 0.5 * mm, board.ident, MONO, dna_size, LABEL_W - 2 * PAD)
 
 
 # The header band is the raspberry's height at the QR width that the rest
@@ -842,9 +939,135 @@ def draw_tinytapeout(lab, tt):
 USB_SPEED = {"12": "FS 12 Mbit/s", "480": "HS 480 Mbit/s", "5000": "SS 5 Gbit/s",
              "10000": "SS+ 10 Gbit/s", "20000": "SS+ 20 Gbit/s"}
 BOARD_MODEL = {"netv2": ("Alphamax", "NeTV2"), "arty": ("Digilent", "Arty A7"),
-               "acorn": ("SQRL", "Acorn CLE-215+"), "jtag": ("", "FPGA"),
+               "acorn": ("SQRL", "Acorn"), "jtag": ("", "FPGA"),
                # no maker: the gateware is known, the board under it is not
-               "pcileech": ("", "PCILeech FPGA")}
+               "pcileech": ("", "PCILeech FPGA"),
+               # named by its chain alone: the die is printed beside it
+               "unknown-fpga": ("", "FPGA"),
+               "cynthion": ("Great Scott Gadgets", "Cynthion")}
+
+# Which PCILeech card a die and a configuration flash together mean. The
+# gateware says nothing: its "FPGA id" is a performance class, and 9 is set by
+# the EnigmaX1, CaptainDMA 75T and CaptainDMA 100T projects alike
+# (pcileech-fpga c538c41, PARAM_DEVICE_ID in each *_top.sv). The board answers
+# for itself: ufrisk's flashing log for a Captain 75T (pcileech-fpga issue
+# #199) reports tap 0x13632093, a CH347 at chip version 5.44 and flash
+# `win w25q64fv/jv` (0x1740ef, which is 0xef4017 in RDID order) -- pi-sw1-p38
+# to the letter. The only other 75T board, the original Enigma X1, carries a
+# 16 MiB ISSI is25lp128f by its own vivado_flash.tcl. Cards of identical
+# design are resold under other names, so this names the hardware it matches,
+# and a card answering anything else keeps the generic model.
+PCILEECH_BOARD = {("XC7A75T", "0xef4017"): ("CaptainDMA", "CaptainDMA 75T")}
+
+# Which Acorn a die means. Both variants are SQRL cards on the same P1
+# harness, and once a board runs gateware of its own its PCIe id describes
+# that gateware rather than the card, so the die is what still tells a
+# CLE-215+ from a CLE-101 (the LiteFury). Measured: pi-sw2-p48 is XC7A200T,
+# ps1's blades are XC7A100T.
+ACORN_MODEL = {"XC7A200T": "Acorn CLE-215+", "XC7A100T": "Acorn CLE-101"}
+# ...and what the board says about itself, which beats inferring from the die:
+# the SoC's ident string names the card its image was built for.
+ACORN_SOC_MODEL = {"cle-215+": "Acorn CLE-215+", "cle-101": "Acorn CLE-101"}
+
+# The ECP5 each Cynthion revision carries, from that revision's platform file
+# in the cynthion package (`device` in cynthion/gateware/platform/*.py). Every
+# board is an LFE5U-12F but r0.7, and listing them rather than defaulting means
+# an unrecognised revision prints no part instead of a plausible wrong one --
+# the same rule idcode_part follows.
+CYNTHION_PART = {
+    "0.1": "LFE5U-12F", "0.2": "LFE5U-12F", "0.3": "LFE5U-12F", "0.4": "LFE5U-12F",
+    "0.5": "LFE5U-12F", "0.6": "LFE5U-12F", "0.7": "LFE5U-25F", "1.0": "LFE5U-12F",
+    "1.1": "LFE5U-12F", "1.2": "LFE5U-12F", "1.3": "LFE5U-12F", "1.4": "LFE5U-12F",
+}
+
+# The configuration flash each Cynthion revision carries, from that
+# revision's own published bill of materials. A Cynthion's flash cannot be
+# identified the way a Xilinx board's is -- openFPGALoader has no path to it,
+# and the chip's pins belong to the ECP5's configuration bank -- but the
+# board is open hardware and says what is on it. This is the same standing as
+# CYNTHION_PART, which prints the die from the revision rather than from a
+# read, and it is only the flash's *type*: its unique id is read off the chip
+# itself by the gateware and published as the USB serial.
+#
+# r1.4: U7, "W25Q32JVSS ... IC FLASH 32M SPI 133MHZ 8SOIC, Winbond,
+# W25Q32JVSSIQ" in cynthion-bom.csv of the r1.4.0 hardware release
+# (github.com/greatscottgadgets/cynthion-hardware, fetched 2026-09-22).
+# 32 Mbit is 4 MiB. Listing revisions rather than defaulting means an
+# unrecognised one prints nothing -- and so is refused a label -- instead of
+# a plausible wrong part.
+#
+# Each entry also carries the JEDEC id its part answers, so a board whose
+# flash has been asked over background SPI can be checked against its BOM.
+# The id alone says only W25Q32xx; the BOM says which. Where the two agree the
+# BOM's name prints, so a board does not change its label by being read; where
+# they differ the board has been reworked, and the chip's answer prints. The
+# id is from Winbond's W25Q32JV datasheet (rev G, table 8.1.1:
+# "W25Q32JV-IQ/JQ 15h 4016h"; the -IM/JM parts answer 7016h instead).
+CYNTHION_FLASH = {
+    "1.4": ("0xef4016", "Winbond W25Q32JV  ·  4 MiB"),
+}
+
+
+def cynthion_flash(hw_rev, jedec):
+    """The flash line for a Cynthion of revision `hw_rev` whose flash
+    answered `jedec`, or None for a revision whose BOM is not listed and
+    whose flash nobody asked."""
+    read = flash_text(flash_from_jedec(jedec))
+    bom = CYNTHION_FLASH.get(hw_rev or "")
+    if not bom:
+        return read
+    bom_jedec, bom_text = bom
+    if read and flash_from_jedec(jedec)["jedec"] != bom_jedec:
+        return read
+    return bom_text
+
+# The foot of an FPGA label prints the identifier the sticker is keyed on. For
+# the Xilinx boards that is the Device DNA; an ECP5 has no such thing, and
+# printing "Device DNA" over a configuration flash's id would be a plain lie
+# about which chip was read.
+DNA_CAPTION = "Device DNA"
+CYNTHION_IDENT_CAPTION = "ECP5 config flash UID"
+# An ECP5's die identifier sits where a Xilinx part's Device DNA sits: it is
+# the same thing -- the number burned into the die -- so it takes the same
+# place on the label and the same QR.
+TRACE_ID_CAPTION = "ECP5 TraceID"
+
+# What reads each board's identifier, so a board that arrives without one can
+# be told where to go and what to run rather than merely refused.
+IDENT_READ_WITH = {
+    "netv2": "rpi-hwid fpga --jtag",
+    "arty": "rpi-hwid fpga --jtag",
+    "acorn": "rpi-hwid fpga --jtag",
+    "jtag": "rpi-hwid fpga --jtag",
+    "unknown-fpga": "rpi-hwid fpga --jtag",
+    "cynthion": "rpi-hwid fpga --force-offline",
+}
+
+# ...and what reads its configuration flash. Every one of these reconfigures
+# the FPGA: on a Xilinx part the flash hangs off the configuration bank, so
+# the only way to drive those pins over JTAG is a design in the fabric, and
+# openFPGALoader loads its spiOverJtag bridge and then resets the device to
+# boot from flash again. There is no cheaper path, not even for the bare
+# three-byte id (openfpgaloader-36, from the source, 2026-09-22).
+FLASH_READ_WITH = {
+    "netv2": "rpi-hwid fpga --jtag --flash",
+    "arty": "rpi-hwid fpga --jtag --flash",
+    "acorn": "rpi-hwid fpga --jtag --flash --pins=10:9:11:8",
+    "cynthion": "rpi-hwid fpga --force-offline",
+}
+
+
+class IdentifierNotReadError(Exception):
+    """A board reached the label generator without the identifier its sticker
+    exists to carry.
+
+    Fatal, and deliberately so. This package exists precisely so that nobody
+    transcribes a Device DNA or a flash uid by hand, so a label rendered with
+    the value missing -- or worse, with a rule to write it on -- is a sticker
+    that gets printed, peeled and stuck to real hardware still missing the one
+    thing it was for. Generation time is the last moment the missing read is
+    still cheap.
+    """
 # Artix-7 dies by JTAG idcode, keyed on the number with its top four bits
 # masked off. Those bits are the silicon revision, not the part, and the two
 # tools spell the same number differently: openFPGALoader prints 0x362d093,
@@ -852,7 +1075,208 @@ BOARD_MODEL = {"netv2": ("Alphamax", "NeTV2"), "arty": ("Digilent", "Arty A7"),
 # every board read by openocd was labelled "die not read" with its idcode in
 # hand, and each revision met in the wild needed its own entry added.
 IDCODE_REVISION_MASK = 0x0FFFFFFF
-IDCODE_PART = {0x362D093: "XC7A35T", 0x3631093: "XC7A100T", 0x3636093: "XC7A200T"}
+IDCODE_PART = {0x362D093: "XC7A35T", 0x3632093: "XC7A75T", 0x3631093: "XC7A100T",
+               0x3636093: "XC7A200T"}
+
+
+# SPI flash, the one component every FPGA board here has and none of them
+# reports the same way. A JEDEC id is three bytes -- manufacturer, memory
+# type, capacity -- and the capacity byte is a power of two, so the density
+# falls out of any id at all. Only the part number needs a table.
+JEDEC_VENDOR = {
+    0x01: "Spansion", 0x1F: "Atmel", 0x20: "Micron", 0x9D: "ISSI",
+    0xBF: "SST", 0xC2: "Macronix", 0xC8: "GigaDevice", 0xEF: "Winbond",
+}
+#
+# Every id here is answered by more than one part, so each names the family
+# they share, with the letters the id cannot settle written as x. That is a
+# name a person can read and search for; the id's hex is not, and one of the
+# parts would be a part number nobody read. Which parts share an id is taken
+# from flashrom's include/flashchips.h, which lists them beside each id.
+JEDEC_PART = {
+    # MX25L6405, 6405D, 6406E, 6408E, 6436E, 6445E, 6465E, 6473E: the NeTV2's
+    0xC22017: "MX25L64xx",
+    # S25FL127S, 128P, 128S and 129P. The extended id narrows an FL-S to the
+    # 127S or the 128S, and SFDP separates those two: the S25FL127S datasheet
+    # (Infineon 001-98282 Rev. *K, 10.2.4) documents RSFDP 5Ah, and the
+    # S25FL128S/256S datasheet (002-19099 Rev. *D) has no such command and
+    # never mentions SFDP. See S25FL12X_BY_SFDP.
+    0x012018: "S25FL12x",
+    # S25FL256S, and the 1.8 V S25FS256S: p48's Acorn
+    0x010219: "S25Fx256S",
+    # Micron's N25Q128 and its second generation, the MT25QL128: pi3's Arty.
+    # The extended id tells them apart (MICRON_GENERATION below).
+    0x20BA18: "N25Q128/MT25QL128",
+    0xEF4016: "W25Q32xx",      # BV, FV and JV-IQ; the Cynthion's
+    0xEF4017: "W25Q64xx",      # BV, CV and FV; pi-sw1-p38's PCILeech card
+    0xEF4018: "W25Q128xx",     # BV, FV and JV-IQ
+    0xEF4019: "W25Q256xx",     # FV and JV-IQ
+}
+
+
+# How each part gives up its unique id -- which is a property of the part and
+# not one command. 0x4B is Read Unique ID on a Winbond (four dummy bytes, 64
+# bits) and an OTP read taking a three-byte address on a Spansion, whose
+# factory 128-bit random number lives in the low 16 bytes of OTP region 0. A
+# Micron N25Q carries 112 bits in the extended reply to 0x9F. And a Macronix
+# MX25L has no such command at all, which is why a blank beside one is the
+# answer rather than a gap: measured on both NeTV2s, 2026-09-21.
+FLASH_UID_METHOD = {
+    0x01: "otp",            # Spansion / Cypress / Infineon
+    0x20: "read-uid",       # Micron, in the extended 0x9F reply
+    # Macronix: a factory ESN exists only where one was ordered. The part
+    # reports it in its security register (RDSCUR 0x2B, bit 0, factory lock),
+    # and both NeTV2s read 0x00 -- so theirs have none, which is measured
+    # rather than assumed from the vendor. Macronix AN0218 makes a factory
+    # ESN "Special Order" only.
+    0xC2: "otp-if-factory-locked",
+    0xEF: "read-uid",       # Winbond, 0x4B
+}
+
+
+# Where the three-byte id is shared, the bytes after it can name the part:
+# RDID bytes 4-6, which openFPGALoader's flash document reports as
+# extended_id for the families that define them.
+#
+# Micron: a length byte of 10h, then the extended device ID, whose bit 6 is
+# "Device Generation: 1 = 2nd generation" in the MT25QL128 datasheet (Rev. I
+# 09/16, Table 17) and reserved in the N25Q128's (Rev. M 06/2013, Table 20).
+# (first generation, second generation)
+MICRON_GENERATION = {0x20BA18: ("N25Q128", "MT25QL128")}
+# Spansion S-family: 4Dh, the sector architecture, then the family -- 80h
+# FL-S, 81h FS-S -- as Linux's drivers/mtd/spi-nor/spansion.c keys them
+# (s25fl256s0/1, s25fs256s0/1, s25fl128s0/1, s25fs128s1). An FL-S at 0x012018
+# is an S25FL127S or an S25FL128S, which these bytes do not separate -- SFDP
+# does (S25FL12X_BY_SFDP below).
+SPANSION_FAMILY = {0x010219: {0x80: "S25FL256S", 0x81: "S25FS256S"},
+                   0x012018: {0x80: "S25FL12xS", 0x81: "S25FS128S"}}
+# Of the two FL-S parts at 0x012018 only the S25FL127S answers RSFDP: its
+# datasheet (Infineon 001-98282 Rev. *K, 10.2.4) documents 5Ah, and the
+# S25FL128S/256S datasheet (002-19099 Rev. *D) has no such command. pi9's
+# Arty answers with SFDP 1.6. "none" -- a version-2 flash document's own "no
+# SFDP" -- makes it the 128S; an unknown (None) settles nothing.
+S25FL12X_BY_SFDP = (0x012018, "S25FL12xS", "S25FL127S", "S25FL128S")
+
+
+def extended_part(value, extended, sfdp=None):
+    """The part an extended id names for JEDEC id `value` -- and, where that
+    leaves two parts one of which answers SFDP, whether this one did -- or
+    None when there is none, or it is not in the shape this id's family
+    defines."""
+    try:
+        data = bytes.fromhex(extended[2:]) if extended.startswith("0x") else b""
+    except (AttributeError, ValueError):
+        return None
+    if len(data) != 3:
+        return None
+    if value in MICRON_GENERATION and data[0] == 0x10:
+        return MICRON_GENERATION[value][1 if data[1] & 0x40 else 0]
+    if value in SPANSION_FAMILY and data[0] == 0x4D:
+        part = SPANSION_FAMILY[value].get(data[2])
+        if sfdp and (value, part) == S25FL12X_BY_SFDP[:2]:
+            return S25FL12X_BY_SFDP[3 if sfdp == "none" else 2]
+        return part
+    return None
+
+
+def flash_from_jedec(jedec, extended=None, sfdp=None):
+    """Vendor, part and density from a JEDEC id, as far as each is known --
+    the part as precisely as the extended id, where there is one, allows."""
+    out = {"vendor": None, "part": None, "size": None, "jedec": None,
+           # "unknown" until a part is met: distinct from None, which is this
+           # part having no unique id to read at all
+           "uid_read_with": "unknown"}
+    try:
+        value = int(jedec, 16)
+    except (TypeError, ValueError):
+        return out
+    if not value:
+        return out
+    manufacturer = value >> 16
+    if manufacturer in FLASH_UID_METHOD:
+        out["uid_read_with"] = FLASH_UID_METHOD[manufacturer]
+    out["jedec"] = "0x%06x" % value
+    out["vendor"] = JEDEC_VENDOR.get(value >> 16)
+    out["part"] = extended_part(value, extended, sfdp) or JEDEC_PART.get(value)
+    capacity = value & 0xFF
+    # the third byte is log2 of the part's size in bytes on every vendor here
+    if 0x10 <= capacity <= 0x1B:
+        out["size"] = "%d MiB" % (1 << (capacity - 20))
+    return out
+
+
+def flash_text(info):
+    """The flash block's one line: vendor, then the part where it is known
+    and the JEDEC id where it is not, then the density.
+
+    The id's own bytes give the vendor and the density -- a JEP106
+    manufacturer code and a capacity byte that is log2 of the size -- so both
+    are as measured as the id. The part name is not: it is a database lookup
+    on a number several parts can answer to. 0xc22017 is MX25L6405,
+    MX25L6406E, MX25L6433F and others; openFPGALoader's database labels it
+    MX25L6405 and says as much with `size_source: database`. Printing that
+    would put a part number on a sticker that nobody read, so an id whose
+    part is not pinned down prints as itself.
+    """
+    part = info.get("part") or info.get("jedec")
+    named = " ".join(x for x in (info.get("vendor"), part) if x)
+    parts = [x for x in (named, info.get("size")) if x]
+    return "  ·  ".join(parts) if parts else None
+
+
+def flash_uid_note_text(note):
+    """The fact out of a reading tool's note about a unique id, or None.
+
+    openFPGALoader writes the fact and its evidence in one string -- "no
+    factory ESN: security register 0x00, bit 0 (factory lock) = 0". The head
+    before the colon is the fact. It is not printed -- the label's "no id"
+    square says as much -- but its presence is what separates the chip having
+    answered "none" from the tool knowing no command to ask it.
+    """
+    return (note or "").split(":", 1)[0].strip() or None
+
+
+class FlashNotReadError(Exception):
+    """A board reached the label generator without its flash facts.
+
+    The same rule as IdentifierNotReadError and for the same reason. Every
+    board here has a configuration flash, every label has a place for it, and
+    a label whose flash rows are blank is one that has to be checked against
+    the hardware by hand -- which is the work this package exists to remove.
+    A part that has no unique id is not this error: that is a fact, and it
+    prints.
+    """
+
+
+def flash_not_read(r):
+    """Why this record's flash rows cannot be printed, or None.
+
+    Four different silences, one of which is printable:
+      no JEDEC id           the flash was never read at all
+      no uid state          it was read before unique ids were, or by a tool
+                            that does not report them
+      state "blank"         the read happened and returned all ones or all
+                            zeroes, which is a failed read wearing a value's
+                            clothes
+      state "none", no note only the reading tool saying it knows no unique-id
+                            command for this part -- not evidence the silicon
+                            has none, so not a fact to print
+    """
+    if not r.flash:
+        return "its configuration flash was never read"
+    if not r.flash_uid_state:
+        return ("its configuration flash's unique id was never read (the flash "
+                "id was, so this document predates unique-id reading)")
+    if r.flash_uid_state == "blank":
+        return ("its configuration flash's unique id read back all ones or all "
+                "zeroes, which is a failed read and not a value")
+    if r.flash_uid_state == "none" and not flash_uid_note_text(r.flash_uid_note):
+        return ("nothing asked its configuration flash whether it has a unique "
+                "id: the reading tool knows no such command for this part, "
+                "which is not evidence that the part has none")
+    if r.flash_uid_state == "read" and not r.flash_uid:
+        return "its configuration flash's unique id was read as nothing at all"
+    return None
 
 
 def idcode_part(idcode):
@@ -899,8 +1323,21 @@ class FpgaLabel:
     name: str | None = None
     dna: str | None = None
     serial: str | None = None
-    flash: str | None = None
-    gateware: str | None = None      # "gateware v4.14  ·  FPGA id 9" (pcileech)
+    flash: str | None = None          # one line: vendor, part, density
+    flash_jedec: str | None = None
+    flash_uid: str | None = None      # the flash's own unique id, where read
+    flash_uid_state: str | None = None   # read | blank | none
+    flash_uid_note: str | None = None    # why, where the part itself says so
+    flash_error: str | None = None       # what stopped a read that was tried
+    # The ECP5's die identifier, masked to its factory 56 bits. Shown, never
+    # keyed on: reaching it costs the board's capture, so a name derived from
+    # it could not be recovered without taking the board offline again.
+    trace_id: str | None = None
+    # The identifier the sticker is keyed on and what to call it. Every Xilinx
+    # board keys on its Device DNA; a Cynthion keys on its configuration
+    # flash's uid, so the caption travels with the value.
+    ident: str | None = None
+    ident_caption: str = DNA_CAPTION
 
 
 @dataclass(frozen=True)
@@ -985,23 +1422,64 @@ def fpga_records(docs, pinned_names=None):
         maker, model = BOARD_MODEL.get(b.kind, ("", b.kind))
         part = idcode_part(b.idcode)
         name = None
+        ident, ident_caption = b.dna, DNA_CAPTION
         if b.kind == "netv2" and b.dna:
             name = naming.netv2_name(b.dna)
         elif b.kind == "arty" and b.serial:
             name = arty_names[b.serial]
+        elif b.kind == "pcileech":
+            maker, model = PCILEECH_BOARD.get(
+                (part or "", (b.flash_jedec or "").lower()), (maker, model))
+            if b.dna:
+                name = naming.pcileech_name(b.dna)
+        elif b.kind == "acorn":
+            # named from the DNA like a NeTV2, and the die picks the variant
+            model = ACORN_SOC_MODEL.get(b.soc_model or "") or ACORN_MODEL.get(
+                part or "", model)
+            if b.dna:
+                name = naming.acorn_name(b.dna)
+        elif b.kind == "cynthion":
+            # The revision names both the model and the die; the probe records
+            # a flash uid only where the gateware published one, so a board
+            # read in Apollo mode arrives here unkeyed and stays unnamed
+            # rather than being named from the debug controller's serial.
+            model = "Cynthion r%s" % b.hw_rev if b.hw_rev else "Cynthion"
+            part = CYNTHION_PART.get(b.hw_rev or "")
+            # The die's own id is the identity, exactly as a Device DNA is on
+            # a Xilinx part; the configuration flash's uid identifies a chip
+            # that could be replaced, so it belongs with the other flash facts.
+            ident, ident_caption = b.trace_id, TRACE_ID_CAPTION
+            if b.trace_id:
+                name = naming.cynthion_name(b.trace_id)
         if b.kind == "arty" and part:
             model = "Arty A7-" + part[len("XC7A"):]
-        flash = None
-        if b.flash_jedec:
-            # S25FL128S and S25FL127S both answer 0x012018
-            flash = "S25FL128S/127S" if b.flash_jedec == "0x012018" else b.flash_jedec
-        gateware = None
-        if b.gateware:
-            # the number, never a board name: a class is shared by boards
-            gateware = "gateware v%s  ·  FPGA id %s" % (b.gateware, b.gateware_id)
+        # The id the chip gave, where anything asked it; failing that, and
+        # only on a Cynthion, what that revision's published BOM says is
+        # soldered to it. The read wins where both exist, so a board that
+        # has been asked is described by its own answer.
+        if b.kind == "cynthion":
+            flash = cynthion_flash(b.hw_rev, b.flash_jedec)
+        else:
+            flash = flash_text(flash_from_jedec(b.flash_jedec, b.flash_extended_id,
+                                                b.flash_sfdp))
         out.append(FpgaLabel(kind=b.kind, maker=maker, model=model, host=host, part=part,
                              name=name, dna=b.dna, serial=b.serial, flash=flash,
-                             gateware=gateware))
+                             ident=ident, trace_id=b.trace_id,
+                             # a Cynthion's USB serial *is* its flash uid, and
+                             # any board can also have it read from the flash
+                             flash_uid=b.flash_uid or (
+                                 b.serial if b.kind == "cynthion" else None),
+                             flash_jedec=b.flash_jedec,
+                             # A Cynthion's serial is its configuration flash's
+                             # unique id, read off that chip by the gateware
+                             # and published as a descriptor -- so where the
+                             # probe found one, the id was read.
+                             flash_uid_state=b.flash_uid_state or (
+                                 "read" if b.kind == "cynthion" and b.serial
+                                 else None),
+                             flash_uid_note=b.flash_uid_note,
+                             flash_error=b.flash_error,
+                             ident_caption=ident_caption))
     return out
 
 
@@ -1085,6 +1563,11 @@ def usb_records(docs):
 # --- assembly -----------------------------------------------------------------
 
 KINDS = ("fpga", "tt", "rpi", "opi", "usb")
+# A host can carry more than one FPGA board -- rpi5-netv2 has a NeTV2 and a
+# Cynthion -- so "fpga" is not fine enough to print one sticker. Naming a kind
+# selects that board alone; "fpga" still means all of them.
+FPGA_KINDS = ("netv2", "arty", "acorn", "pcileech", "cynthion", "jtag", "unknown-fpga")
+ONLY_CHOICES = KINDS + FPGA_KINDS
 
 
 def all_labels(docs, only, pinned_names=None, order=None):
@@ -1103,16 +1586,43 @@ def all_labels(docs, only, pinned_names=None, order=None):
     turn. Hosts it does not name follow, by host name as before.
     """
     only = set(only)
+    # "fpga" gathers every board; a bare kind gathers them all too and then
+    # drops the ones not asked for, because a record does not know its kind
+    # until it has been built.
+    wanted_fpga = only & set(FPGA_KINDS)
+    any_fpga = "fpga" in only or bool(wanted_fpga)
     attached = {}
     for record_kind, records in (
-            ("fpga", fpga_records(docs, pinned_names) if "fpga" in only else ()),
+            ("fpga", fpga_records(docs, pinned_names) if any_fpga else ()),
             ("tt", tinytapeout_records(docs) if "tt" in only else ()),
             ("usb", usb_records(docs) if "usb" in only else ())):
         for r in records:
             if record_kind == "fpga":
+                if wanted_fpga and r.kind not in wanted_fpga:
+                    continue
+                if not r.ident:
+                    raise IdentifierNotReadError(
+                        "%s: the %s board has no %s, so its label would carry "
+                        "nothing that identifies it. Read it with `%s` on that "
+                        "host and collect again." % (
+                            r.host, r.kind, r.ident_caption,
+                            IDENT_READ_WITH.get(r.kind, "rpi-hwid fpga --jtag")))
+                why = flash_not_read(r)
+                if why:
+                    raise FlashNotReadError(
+                        "%s: the %s board's label has a place for its "
+                        "configuration flash and %s. Read it with `%s` on "
+                        "that host and collect again -- note that this "
+                        "reconfigures the FPGA." % (
+                            r.host, r.kind, why, FLASH_READ_WITH.get(
+                                r.kind, "rpi-hwid fpga --jtag --flash"))
+                        # a read that was tried and stopped: the command
+                        # above will stop the same way until this is fixed
+                        + (" The last attempt stopped: %s." % r.flash_error
+                           if r.flash_error else ""))
                 # the identifier the sticker is keyed on, as a Pi row carries
                 # its serial and a USB row its MAC
-                ident = r.dna or r.serial or (r.gateware or "").replace("  ·  ", ", ")
+                ident = r.ident or r.serial or ""
                 row = (r.kind, f"{r.name or r.model} {ident}".strip(),
                        draw_fpga, r)
             elif record_kind == "tt":
@@ -1180,7 +1690,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="rpi-hwid labels", description=__doc__.split("\n")[0])
     ap.add_argument("--data", required=True, type=Path, help="directory of probe JSON documents")
     ap.add_argument("--out", default="hardware-labels.pdf", type=Path)
-    ap.add_argument("--only", action="append", choices=list(KINDS))
+    ap.add_argument("--only", action="append", choices=list(ONLY_CHOICES),
+                    metavar="KIND", help="rpi|opi|fpga|tt|usb, or one FPGA board kind "
+                                         "(%s)" % "|".join(FPGA_KINDS))
     ap.add_argument("--start", type=int, default=0,
                     help="leave the first N positions of the first sheet blank")
     ap.add_argument("--outline", action="store_true", help="draw each label's edge")

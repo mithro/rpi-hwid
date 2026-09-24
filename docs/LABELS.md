@@ -7,17 +7,24 @@ the data they are made from, see [COLLECT.md](COLLECT.md).
 ## Names
 
 Raw identifiers come in near-identical clusters — Device DNAs sharing most of
-their digits, Digilent serials differing in the last byte — so `rpi-hwid name`
-hashes them into short, distinct words:
+their digits, Digilent serials differing in the last byte, configuration flash
+uids off the same reel — so `rpi-hwid name` hashes them into short, distinct
+words:
 
 ```
-$ rpi-hwid name --netv2 0x00742c4e63b9085c --arty 210319B301DE 210319B0C238
+$ rpi-hwid name --netv2 0x00742c4e63b9085c --arty 210319B301DE 210319B0C238 \
+      --cynthion 267125df30c460de
 netv2-grove  00742c4e63b9085c
+cynthion-alidade  267125df30c460de
 arty-hawk  210319B301DE
 arty-serin  210319B0C238
 ```
 
-A NeTV2's name is a pure function of its DNA. Arty names are a hash *chain*
+A NeTV2's name is a pure function of its DNA, and a Cynthion's of its flash uid.
+Both buy scatter rather than uniqueness: sixteen uids a digit apart land on
+twelve different words, so no two boards are misread as each other, but a pure
+function into 32 words can collide and it is the identifier under the name that
+identifies the board. Arty names are a hash *chain*
 resolved against a registry, so two serials never share a word and adding a board
 never renames an old one. Keep the registry as a JSON object of serial to name and
 pass it with `--names registry.json` to both `name` and `labels`.
@@ -38,26 +45,29 @@ matched back to the machine it came from.
 
 ```
 $ rpi-hwid labels --data data/ --list
-sheet 1 row 1 col 1  pi-sw2-p16     rpi    Pi 4 Model B 2 GB 10000000ce8e3593
-sheet 1 row 1 col 2  pi-sw2-p16     arty   arty-hawk
 sheet 1 row 1 col 3  pi-sw2-p22     opi    Orange Pi PC 1 GB 02c000812eb7a34e
-sheet 1 row 2 col 1  pi-sw2-p47     rpi    Pi 5 1 GB c36b093f773d46b8
-sheet 1 row 2 col 2  pi-sw2-p47     acorn  Acorn CLE-215+
-sheet 1 row 2 col 3  rpi4-tt        rpi    Pi 4 Model B 4 GB 100000003a7e1c9b
-sheet 1 row 3 col 1  rpi4-tt        tt     TT06 E6614C311B7A7A37
-sheet 1 row 3 col 2  rpi4-tt        tt     TTGF0p2 E66360B8A3C1D5F2
-sheet 1 row 3 col 3  rpi5-netv2     rpi    Pi 5 4 GB d88100008543dc30
-sheet 1 row 4 col 1  rpi5-netv2     netv2  netv2-grove
-sheet 1 row 4 col 2  rpi5-netv2     usb    ASIX Elec. Corp. AX88179 00:0e:c6:82:b5:e1
-sheet 1 row 7 col 3  rpicm1-serial  rpi    Pi Compute Module 1 512 MB 0000000067bdbf54
-sheet 2 row 1 col 1  rpicm1-serial  usb    Realtek USB 10/100/1000 LAN 00:e0:4c:68:36:95
+sheet 1 row 3 col 1  pi-sw2-p47     rpi    Pi 5 1 GB c36b093f773d46b8
+sheet 1 row 3 col 2  pi-sw2-p48     rpi    Pi 5 2 GB 0cd35697db04a4ab
+sheet 1 row 3 col 3  pi-sw2-p48     acorn  acorn-willow 0x0054b48664b04854
+sheet 1 row 4 col 1  pi3            rpi    Pi 4 Model B 1 GB 10000000f1b7bb5a
+sheet 1 row 4 col 2  pi3            arty   arty-hoopoe 0x0064f5483229085c
+sheet 1 row 4 col 3  rpi4-tt        rpi    Pi 4 Model B 4 GB 100000003a7e1c9b
+sheet 1 row 5 col 1  rpi4-tt        tt     TT06 E6614C311B7A7A37
+sheet 1 row 6 col 2  rpi5-netv2     rpi    Pi 5 4 GB d88100008543dc30
+sheet 1 row 6 col 3  rpi5-netv2     netv2  netv2-grove 0x00742c4e63b9085c
+sheet 1 row 7 col 1  rpi5-netv2     cynthion cynthion-theodolite 0x1b808604604e0e
+sheet 1 row 7 col 2  rpi5-netv2     usb    ASIX Elec. Corp. AX88179 00:0e:c6:82:b5:e1
+sheet 1 row 7 col 3  rpib-serial    rpi    Pi Model B 512 MB 00000000110aeed6
+sheet 2 row 1 col 1  rpib-serial    usb    Realtek 802.11n NIC 80:3f:5d:13:8e:67
 $ rpi-hwid labels --data data/ --out labels.pdf
-13 labels on 1 sheet -> labels.pdf
+26 labels on 2 sheets -> labels.pdf
 ```
 
 `--outline` draws the die-cut edges for an alignment print on plain paper;
 `--start N` skips N positions on the first sheet so a partly used sheet can be
-finished; `--only rpi|opi|fpga|tt|usb` limits the kinds; `--list` prints what
+finished; `--only rpi|opi|fpga|tt|usb` limits the kinds, and takes a single FPGA
+board kind (`netv2`, `arty`, `acorn`, `pcileech`, `cynthion`) where one host
+carries more than one board; `--list` prints what
 would be generated and where.
 
 Every label carries only what cannot change, and every identifier that might
@@ -78,7 +88,7 @@ The layout is always the same, so a stack of them reads at a glance.
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi5-poe-hat.png" alt="Pi 5 wearing a Waveshare PoE M.2 HAT+ (B); its radio is disabled so the wlan MAC cannot be read" width="49%">
 </p>
 <p>
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4-pmod-hat.png" alt="Pi 4 with a Digilent Pmod HAT Adaptor" width="49%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi4.png" alt="Pi 4; its header carries nothing identifiable" width="49%">
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/rpi3bplus.png" alt="Pi 3B+; the wlan MAC is derived from the eth MAC" width="49%">
 </p>
 <p>
@@ -123,13 +133,41 @@ up the spine as on a Pi.
 
 The maker and the derived name, the die, and the immutable identifier full width
 with a QR: Device DNA where read, the Digilent serial and flash part on an Arty,
-and a line to write the DNA on when it has not been read yet.
+The foot names what it is printing, because not every board has a Device DNA
+— an ECP5 has none, so a Cynthion is keyed on its configuration flash's uid
+and says so.
+
+**A board whose identifier was never read gets no label at all.** It is a
+fatal error naming the host, the board, the identifier and the command that
+would read it. There is no "not read" on a sticker and no rule to write a DNA
+on by hand: this package exists so that nobody transcribes hex, and a label
+with a blank on it still gets printed, peeled and stuck to a board. A fact
+that is not an identifier and was not read — an Arty's flash part, say — is
+simply left off rather than announced.
+
+Nothing a reflash could change appears on any of them. Which gateware a
+Cynthion is running settles whether its USB serial may be trusted as the flash
+uid, and then stays in the probe document where it belongs.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/netv2.png" alt="NeTV2" width="32%">
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/arty.png" alt="Arty A7-35T" width="32%">
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png" alt="Acorn CLE-215+, DNA not yet read" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/acorn.png" alt="An Acorn CLE-215+ named by its die, keyed on its Device DNA" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/cynthion.png" alt="Cynthion r1.4, keyed on its ECP5 configuration flash uid with the die's TraceID above it" width="32%">
 </p>
+
+A Cynthion carries two identifiers, because they cost very differently. The
+configuration flash's uid is free: the analyzer gateware already publishes it as
+the USB serial, so a bare `rpi-hwid fpga` reads it with nothing sent to the
+board, and it is what the sticker and its QR are keyed on. The ECP5's own
+TraceID — the die's answer to a Device DNA, masked to its factory 56 bits — needs
+`rpi-hwid fpga --force-offline`, which hands the USB port to Apollo, reads
+`UIDCODE_PUB` over JTAG, reconfigures the FPGA from its flash and then waits to
+watch the analyzer come back. That ends the board's capture for a few seconds and
+may drop power to whatever is on its TARGET port, which is why it is never part
+of `--jtag`. It is printed and never keyed on: a name derived from it could not
+be recovered without taking the board offline again. If a board is ever left in
+Apollo mode, `rpi-hwid fpga --recover-cynthion` is the way home.
 
 ## Tiny Tapeout boards
 
@@ -195,8 +233,8 @@ place of the RJ45, so the two kinds are told apart across the room as well.
 ## Artwork
 
 The package ships the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax,
-Digilent and Tiny Tapeout marks (each its owner's trademark, drawn only on that
+Digilent, SQRL, Great Scott Gadgets and Tiny Tapeout marks (each its owner's trademark, drawn only on that
 maker's own hardware to identify it) and the public-domain USB trident; see
 [`src/rpi_hwid/artwork/README.md`](../src/rpi_hwid/artwork/README.md) for the
 sources. A `--artwork DIR` overrides any of them and may add a `netv2.svg`. A
-board whose maker has no mark (SQRL) gets the name in type.
+board whose maker has no mark gets the name in type.

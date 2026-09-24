@@ -32,14 +32,15 @@ PX = DPI / 72.0
 # (kind, title substring) -> file name
 EXAMPLES = [
     ("netv2", "netv2-grove", "netv2"),
-    ("arty", "arty-hawk", "arty"),
-    ("acorn", "Acorn", "acorn"),
+    ("arty", "arty-hoopoe", "arty"),
+    ("acorn", "0x0054b48664b04854", "acorn"),
+    ("cynthion", "0x1b808604604e0e", "cynthion"),
     ("tt", "TT06", "tinytapeout"),
     ("tt", "TTGF0p2", "tinytapeout-gf"),
     ("tt", "FPGA", "tinytapeout-fpga"),
     ("rpi", "Pi 5 4 GB", "rpi5"),
     ("rpi", "Pi 5 1 GB", "rpi5-poe-hat"),
-    ("rpi", "10000000ce8e3593", "rpi4-pmod-hat"),
+    ("rpi", "10000000f1b7bb5a", "rpi4"),
     ("rpi", "Pi 3", "rpi3bplus"),
     ("rpi", "Zero", "rpi-zero-w-bonnet"),
     ("opi", "Orange Pi PC", "orange-pi-pc"),
@@ -54,7 +55,7 @@ def main() -> None:
     pdf = HERE / "labels.pdf"
     labels.render(docs, pdf, outline=True)
     kinds = set(labels.KINDS)
-    titles = [(kind, title) for kind, title, _d, _r in labels.all_labels(docs, kinds)]
+    titles = [(kind, title) for _host, kind, title, _d, _r in labels.all_labels(docs, kinds)]
 
     # The crop is a box of one fixed pixel size moved around the page, not four
     # edges rounded separately: rounding each edge would let a label whose left

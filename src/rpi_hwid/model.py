@@ -58,10 +58,55 @@ class FpgaBoard:
     flash_jedec: str | None = None
     gateware: str | None = None    # pcileech-fpga gateware version, "4.14"
     gateware_id: int | None = None  # its FPGA id: a profile class, not a board
+    hw_rev: str | None = None      # Cynthion board revision from bcdDevice, "1.4"
+    mode: str | None = None        # analyzer | moondancer | apollo (Cynthion)
+    # The ECP5's own die identifier, read with UIDCODE_PUB over JTAG and kept
+    # masked to its factory 56 bits. Displayed, never keyed on: reaching it
+    # costs the board's capture, so a name derived from it could not be
+    # recovered without taking the board offline again.
+    trace_id: str | None = None
+    # Which methods read this board's DNA, and whether they agreed. An
+    # identifier read two ways is only worth more than one read twice if the
+    # readings are compared; a conflict is recorded rather than resolved,
+    # because there is no way to tell which reading is the lie.
+    dna_sources: tuple[str, ...] = ()
+    dna_agree: bool | None = None
+    dna_conflict: dict[str, str] | None = None
+    soc_model: str | None = None   # the card its SoC says it was built for
+    # The configuration flash's own unique id, with the width and the state
+    # of the read beside it. The width matters: it differs by part (112 bits
+    # on a Micron N25Q, 128 on a Spansion, 64 on a Winbond), and a value
+    # whose length quietly changed between tool versions would be a
+    # permanent mislabel. `flash_uid_state` distinguishes a part that gave
+    # one up from one that has no such command and from a read that came
+    # back all ones -- three different facts, one of them printable.
+    flash_uid: str | None = None
+    flash_uid_bits: int | None = None
+    flash_uid_state: str | None = None   # read | blank | none
+    # Why, where the part itself says so. `none` on its own is only the
+    # reading tool saying it knows no unique-id command for this part, which
+    # is not evidence the silicon has none; `none` with a note is the chip
+    # having been asked and answered, as a Macronix does in its security
+    # register. Only the second is a fact a label may carry.
+    flash_uid_note: str | None = None
+    # What stopped a flash read that was attempted, in the reading tool's
+    # words, so a refused label can say why the obvious command will not do.
+    flash_error: str | None = None
+    # RDID bytes 4-6 where the flash's family defines them: what tells an
+    # N25Q128 from an MT25QL128, or an S25FL256S from an S25FS256S.
+    flash_extended_id: str | None = None
+    # The SFDP revision the flash answered with, "none" where it answered
+    # without one, None where that is unknown: what tells an S25FL127S (which
+    # has RSFDP) from an S25FL128S (which has not).
+    flash_sfdp: str | None = None
 
     @property
     def identity(self) -> str | None:
-        """The immutable identifier: the DNA when read, else the serial."""
+        """The immutable identifier: the DNA when read, else the serial.
+
+        An ECP5 board has no Xilinx Device DNA, so a Cynthion falls through to
+        its serial, which is its configuration flash's unique id.
+        """
         return self.dna or self.serial
 
 
@@ -120,7 +165,8 @@ class Summary:
             power_class=d["power_class"],
             compatible=d.get("compatible") or "", memory=d.get("memory"),
             header=tuple(d.get("header", ())), hat_uuid=d.get("hat_uuid"),
-            fpga=tuple(FpgaBoard(**b) for b in d.get("fpga", ())),
+            fpga=tuple(FpgaBoard(**dict(b, dna_sources=tuple(b.get("dna_sources", ()))))
+                       for b in d.get("fpga", ())),
             tinytapeout=tuple(TinyTapeoutBoard(**b) for b in d.get("tinytapeout", ())),
             macs=tuple(Mac(**m) for m in d.get("macs", ())),
             usb_net=tuple(UsbNetAdapter(**u) for u in d.get("usb_net", ())),
@@ -132,6 +178,9 @@ class Summary:
         d = asdict(self)
         for key in ("header", "fpga", "tinytapeout", "macs", "usb_net"):
             d[key] = list(d[key])
+        # nested tuples too, or the document does not round-trip through JSON
+        for board in d["fpga"]:
+            board["dna_sources"] = list(board["dna_sources"])
         return d
 
 

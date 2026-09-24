@@ -8,6 +8,7 @@ import errno
 import json
 import os
 import pty
+import shutil
 import struct
 import subprocess
 import termios
@@ -487,11 +488,74 @@ def test_openocd_reads_the_chain_when_openfpgaloader_is_installed_but_cannot(
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
                         "/usr/bin/openFPGALoader" if args[:1] == ["which"] else "")
     monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "error : libgpiod not found")
-    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None: {
+    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None, pins=None: {
         "idcode": "0x0362d093", "tool": "openocd", "dna": "0x0038a44663258854", "cable": "gpio"})
     res = fpga.jtag_probe()
     assert res["tool"] == "openocd"
     assert res["dna"] == "0x0038a44663258854"          # netv2-basil, pi-sw1-p10
+
+
+# openFPGALoader --flash-info on pi3's Arty, verbatim (branch flash-info
+# @7a11a6a); the same report test_core parses field by field.
+FLASH_INFO = """JEDEC ID: 0x20ba18
+
+SPI Flash information
+JEDEC ID          : 0x20ba18 (manufacturer 0x20, type 0xba, capacity 0x18)
+Manufacturer      : micron
+Part              : N25Q128_3V
+Size              : 16777216 Byte (16 MiB / 128 Mbit, database)
+Unique ID         : 235351451900080037091015126b (opcode 0x9F, 112 bits)
+Done
+"""
+
+
+def test_openfpgaloader_is_told_which_gpiochip_the_header_is(fake_root, monkeypatch):
+    """A Pi 5 drives its header from the RP1, which the kernel registers as
+    gpiochip15, and p48 has no gpiochip0 at all -- so openFPGALoader's
+    default lands on nothing. openocd is already told the chip by label;
+    this hands it the same answer."""
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "header_gpiochip", lambda chips: 15)
+    monkeypatch.setattr(fpga, "gpiochips", lambda: [(15, "pinctrl-rp1")])
+    seen = []
+
+    def fake_all(args, timeout=15):
+        seen.append(args)
+        return "idcode 0x3631093"
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/openFPGALoader")
+    monkeypatch.setattr(fpga, "sh_all", fake_all)
+    fpga.jtag_probe(pins="10:9:11:8")
+    assert seen, "openFPGALoader was never run"
+    assert "-d" in seen[0]
+    assert seen[0][seen[0].index("-d") + 1] == "/dev/gpiochip15"
+
+
+def host_openfpgaloader(monkeypatch):
+    """Pin the tool to the host's own copy, flash-capable.
+
+    These tests stub sh_rc with one answer for every command, including
+    `openFPGALoader --help`, which would otherwise read as "this build cannot
+    read a flash" and send the probe off to fetch a static one. What they are
+    about is the reading, not which binary does it.
+    """
+    monkeypatch.setattr(fpga, "openfpgaloader_tool", lambda download=True: {
+        "argv": ["sudo", "openFPGALoader"], "source": "host", "flash_info": True})
+
+
+def test_a_flash_report_reaches_the_summary(fake_root, monkeypatch):
+    """The whole point of --flash-info: the part, the density and the flash's
+    own unique id, on the record where a label can use them."""
+    monkeypatch.setattr(fpga, "digilent_cables", lambda: [{"serial": "210319A43AD3"}])
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/openFPGALoader")
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "idcode 0x362d093")
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (0, FLASH_INFO))
+    host_openfpgaloader(monkeypatch)
+    res = fpga.jtag_probe(want_flash=True)
+    assert res["flash_jedec"] == "0x20ba18"
+    assert res["flash"] == "micron N25Q128_3V"
+    assert res["flash_uid"] == "235351451900080037091015126b"
+    assert res["flash_uid_bits"] == 112
+    assert res["flash_uid_state"] == "read"
 
 
 @pytest.mark.parametrize(("idcode", "profile"), [
@@ -517,10 +581,214 @@ def test_the_arty_flash_profile_follows_the_die_not_the_spelling(fake_root, monk
             return "/usr/bin/openFPGALoader"
         return ""
     monkeypatch.setattr(fpga, "sh", fake_sh)
+    # this build has no --flash-info, so the JEDEC-only read is what runs
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (1, "unknown option"))
+    host_openfpgaloader(monkeypatch)
     fpga.jtag_probe(want_flash=True)
     flash = [a for a in seen if "-f" in a]
     assert flash
     assert flash[0][flash[0].index("-b") + 1] == profile
+
+
+def _gpio_flash(monkeypatch, idcode, answer=(1, "Fail")):
+    """A GPIO-harness host whose chain answers `idcode`; returns every argv
+    the flash read ran and the probe's result."""
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "gpiochips", list)
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
+                        "/usr/bin/openFPGALoader" if args[:1] == ["which"] else "")
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15:
+                        f"idcode {idcode}\nfamily artix a7")
+    ran = []
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (ran.append(args), answer)[1])
+    host_openfpgaloader(monkeypatch)
+    return ran, fpga.jtag_probe(want_flash=True)
+
+
+@pytest.mark.parametrize(("idcode", "part"), [
+    # the NeTV2 a7-100 and the Acorn CLE-101 alike (litex-boards)
+    ("0x3631093", "xc7a100tfgg484"),
+    ("0x13631093", "xc7a100tfgg484"),
+    ("0x13636093", "xc7a200tfbg484"),     # the Acorn CLE-215 and CLE-215+
+    # the NeTV2 a7-35 (litex-boards f593330): pi-sw1-p10..p18 and rpi3-netv2
+    ("0x362d093", "xc7a35tfgg484"),
+])
+def test_a_gpio_harness_flash_read_names_the_package(fake_root, monkeypatch, idcode, part):
+    """The bridge is built per die *and package*, and an idcode gives only the
+    die. With neither a board profile nor a part, openFPGALoader stops with
+    "Can't program SPI flash: missing device-package information" -- measured
+    on rpi5-netv2's NeTV2, 2026-09-22, and the reason its flash was never read
+    by this probe."""
+    ran, _res = _gpio_flash(monkeypatch, idcode)
+    (first, *_rest) = [a for a in ran if "--flash-info-json" in a]
+    assert first[first.index("--fpga-part") + 1] == part
+
+
+def test_a_die_with_no_known_package_is_not_flash_read_and_says_why(fake_root,
+                                                                   monkeypatch):
+    """pi-sw1-p38's Screamer is an XC7A75T, which openFPGALoader ships bridges
+    for in five packages. Nothing here says which one, and a bridge for the
+    wrong package drives the wrong pins, so no bridge is loaded at all."""
+    ran, res = _gpio_flash(monkeypatch, "0x3632093")
+    assert not [a for a in ran if "--flash-info-json" in a or "--flash-info" in a]
+    assert res["flash_jedec"] is None
+    assert "no package is known" in res["flash_error"]
+
+
+def test_a_failed_flash_read_keeps_openfpgaloaders_reason(fake_root, monkeypatch):
+    """A flash that was asked and did not answer used to leave nothing but
+    `flash: null` in the document, so the refusal downstream could say only
+    that it was never read."""
+    _ran, res = _gpio_flash(monkeypatch, "0x3631093", answer=(
+        1, "Detect flash:\nCan't program SPI flash: missing device-package "
+           "information\nFail\n"))
+    assert res["flash_jedec"] is None
+    assert "missing device-package information" in res["flash_error"]
+
+
+def test_a_ch347_is_found_among_the_usb_devices(fake_root):
+    """pi-sw1-p38's JTAG: a WCH CH347, 1a86:55dd, "USB To UART+JTAG". Its
+    serial is 0123456789 on every unit, so it is recorded and never keyed on."""
+    for name, value in (("idVendor", "1a86"), ("idProduct", "55dd"),
+                        ("manufacturer", "wch.cn"), ("product", "USB To UART+JTAG"),
+                        ("serial", "0123456789")):
+        _w(fake_root, f"/sys/bus/usb/devices/3-2/{name}", value + "\n")
+    # a CH340 serial adapter from the same vendor is not a JTAG cable
+    for name, value in (("idVendor", "1a86"), ("idProduct", "7523")):
+        _w(fake_root, f"/sys/bus/usb/devices/3-3/{name}", value + "\n")
+    assert [c["path"] for c in fpga.ch347_cables()] == ["3-2"]
+
+
+def test_a_ch347_chain_is_driven_as_one_and_its_flash_left_alone(fake_root,
+                                                                  monkeypatch):
+    """The chain is read over the CH347. Its die comes in five packages
+    openFPGALoader has bridges for and nothing here says which, so --flash
+    loads no bridge and says why."""
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "ch347_cables", lambda: [{"path": "3-2"}])
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
+                        "/usr/bin/openFPGALoader" if args[:1] == ["which"]
+                        else '{"dna": "0x006425440bc8985c"}')
+    ran = []
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: (
+        ran.append(args), "idcode 0x3632093\nfamily artix a7 75t")[1])
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (ran.append(args), (1, ""))[1])
+    host_openfpgaloader(monkeypatch)
+    res = fpga.jtag_probe(want_flash=True)
+    assert ran[0][ran[0].index("-c") + 1] == "ch347_jtag"
+    assert res["cable"] == "ch347"
+    assert res["dna"] == "0x006425440bc8985c"
+    assert "pins" not in res
+    assert not [a for a in ran if "--flash-info-json" in a]
+    assert "no package is known" in res["flash_error"]
+
+
+def _ch347_flash(monkeypatch, idcode, parts):
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "ch347_cables", lambda: [{"path": "3-2"}])
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
+                        "/usr/bin/openFPGALoader" if args[:1] == ["which"]
+                        else '{"dna": "0x006425440bc8985c"}')
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: f"idcode {idcode}")
+    ran = []
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (ran.append(args), (1, ""))[1])
+    host_openfpgaloader(monkeypatch)
+    res = fpga.jtag_probe(want_flash=True, parts=parts)
+    return [a for a in ran if "--flash-info-json" in a], res
+
+
+def test_the_gateware_names_the_package_when_the_die_agrees(fake_root, monkeypatch):
+    """pi-sw1-p38's gateware reports FPGA id 9, LeechCore's "Enigma X1", whose
+    pcileech-fpga project is built for xc7a75tfgg484 -- and the chain reads
+    an XC7A75T. With the two in agreement the bridge for that package is
+    loaded; the flash's own bitstream header then says whether it was right."""
+    parts = fpga.gateware_parts({"version": "4.14", "fpga_id": 9})
+    (flash, *_rest), _res = _ch347_flash(monkeypatch, "0x3632093", parts)
+    assert flash[flash.index("--fpga-part") + 1] == "xc7a75tfgg484"
+    # ...but not for a die the gateware was not built for
+    none, res = _ch347_flash(monkeypatch, "0x3631093", parts)
+    assert none == []
+    assert "no package is known" in res["flash_error"]
+
+
+def test_a_card_on_pcie_is_taken_off_the_bus_for_its_flash_read(fake_root, monkeypatch):
+    """A flash read replaces the running design, so a PCIe card's endpoint
+    vanishes from under a live link -- which can upset the Pi 5's root port.
+    The endpoint is removed before the bridge is loaded and the bus rescanned
+    after, as the Acorn deployment and openfpgaloader-36 do by hand."""
+    slot = "0001:01:00.0"
+    dev = fake_root / "sys/bus/pci/devices" / slot
+    dev.mkdir(parents=True, exist_ok=True)     # the fake Pi 5 tree has it already
+    ran = []
+
+    def sh(args, timeout=15):
+        ran.append(args)
+        if args[:1] == ["which"]:
+            return "/usr/bin/openFPGALoader"
+        if args[-1].endswith("/remove"):
+            shutil.rmtree(dev)
+        if args[-1].endswith("/rescan"):
+            dev.mkdir()
+        return '{"dna": "0x006425440bc8985c"}'
+    monkeypatch.setattr(fpga, "sh", sh)
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "ch347_cables", lambda: [{"path": "3-2"}])
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "idcode 0x3632093")
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (ran.append(args), (1, ""))[1])
+    monkeypatch.setattr(fpga, "PCIE_SETTLE_S", 0)
+    host_openfpgaloader(monkeypatch)
+    res = fpga.jtag_probe(want_flash=True, parts={0x3632093: "xc7a75tfgg484"},
+                          detach=[slot])
+    order = [" ".join(a) for a in ran]
+    remove = next(i for i, a in enumerate(order) if a.endswith(slot + "/remove"))
+    flash = next(i for i, a in enumerate(order) if "--flash-info-json" in a)
+    rescan = next(i for i, a in enumerate(order) if a.endswith("/rescan"))
+    assert remove < flash < rescan
+    assert res["pcie_detached"] == [slot]
+    assert res["pcie_back"] is True
+    # ...and a read that does not want the flash leaves the bus alone
+    ran.clear()
+    fpga.jtag_probe(want_flash=False, detach=[slot])
+    assert not [a for a in ran if a[-1].endswith(("/remove", "/rescan"))]
+
+
+def test_a_card_comes_back_from_the_rescan_decoding_as_it_was(fake_root, monkeypatch):
+    """A rescanned endpoint comes back with memory decoding off, and with no
+    driver bound nothing turns it on again: pi-sw2-p48's Acorn read "Control:
+    I/O- Mem- BusMaster-", BAR0 "[disabled]", after its flash read on
+    2026-09-22, and every SoC read after that answered all ones. So the
+    command register is read before the card is removed and written back
+    once it is on the bus again."""
+    slot = "0001:01:00.0"
+    dev = fake_root / "sys/bus/pci/devices" / slot
+    dev.mkdir(parents=True, exist_ok=True)
+    # Mem+ BusMaster+ in the command register at offset 4, little-endian
+    (dev / "config").write_bytes(b"\xee\x10\x21\x70\x06\x00" + bytes(58))
+    ran = []
+
+    def sh(args, timeout=15):
+        ran.append(args)
+        if args[-1].endswith("/remove"):
+            shutil.rmtree(dev)
+        if args[-1].endswith("/rescan"):
+            dev.mkdir()
+        return ""
+    monkeypatch.setattr(fpga, "sh", sh)
+    monkeypatch.setattr(fpga, "PCIE_SETTLE_S", 0)
+    saved = {}
+    assert fpga.pcie_detach([slot], saved) == [slot]
+    assert saved == {slot: 0x0006}
+    assert fpga.pcie_rescan([slot], restore=saved) is True
+    assert ["sudo", "setpci", "-s", slot, "COMMAND=0006"] in ran
+
+
+def test_only_an_fpga_endpoint_is_taken_off_the_bus():
+    """The Pi 5's own RP1 is a PCIe endpoint too, and removing it would take
+    the header, Ethernet and USB with it."""
+    pcie = [{"slot": "0001:01:00.0", "id": "10ee:0666"},
+            {"slot": "0002:01:00.0", "id": "1de4:0001"},
+            {"slot": "0001:02:00.0", "id": "1e24:021f"}]
+    assert fpga.fpga_endpoints(pcie) == ["0001:01:00.0", "0001:02:00.0"]
 
 
 def test_a_chain_neither_tool_can_read_says_why_twice(fake_root, monkeypatch):
@@ -528,12 +796,38 @@ def test_a_chain_neither_tool_can_read_says_why_twice(fake_root, monkeypatch):
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15:
                         "/usr/bin/openFPGALoader" if args[:1] == ["which"] else "")
     monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "error : libgpiod not found")
-    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None: {
+    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None, pins=None: {
         "idcode": None, "tool": "openocd", "raw": "scan chain interrogation failed: all zeroes"})
     res = fpga.jtag_probe()
     assert res["idcode"] is None
     assert "libgpiod not found" in res["raw"]
     assert "all zeroes" in res["openocd"]
+
+
+def test_openocd_reading_a_chain_keeps_openfpgaloaders_reason(fake_root, monkeypatch):
+    """Where openFPGALoader cannot read the chain but openocd can, the reading
+    is openocd's -- and openFPGALoader's last words are what say why the flash
+    is missing from it. rpi3-netv2 (kernel 4.14, Raspbian stretch) answers the
+    static build with "Assertion failed: request (line-request.c: ...)":
+    libgpiod v2 needs the GPIO uAPI v2 added in Linux 5.10. Without this the
+    document said only `tool: openocd` and nothing about the flash."""
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "")
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15:
+                        "empty\nAssertion failed: request (line-request.c: "
+                        "gpiod_line_request_set_values_subset: 199)")
+    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None, pins=None: {
+        "idcode": "0x0362d093", "tool": "openocd", "dna": "0x0058a44663258854",
+        "cable": "gpio"})
+    # the fetched static build, as on a host with no openFPGALoader of its own
+    monkeypatch.setattr(fpga, "openfpgaloader_tool", lambda download=True: {
+        "argv": ["sudo", "/home/pi/.cache/rpi-hwid/openfpgaloader/x/bin/openFPGALoader"],
+        "source": "openFPGALoader-1.1.1-linux-armv7.tar.gz", "flash_info": True})
+    res = fpga.jtag_probe(want_flash=True)
+    assert res["tool"] == "openocd"
+    assert res["dna"] == "0x0058a44663258854"
+    assert "Assertion failed" in res["flash_error"]
+    assert res["flash_jedec"] is None
 
 
 def test_peripheral_base_follows_the_board(fake_root, monkeypatch, tmp_path):
@@ -543,6 +837,42 @@ def test_peripheral_base_follows_the_board(fake_root, monkeypatch, tmp_path):
         _w(tmp_path, "/proc/device-tree/model", model)
         monkeypatch.setattr(fpga, "ROOT", str(tmp_path))
         assert fpga.peripheral_base() == base
+
+
+def _cynthion(root, path="1-1.4", pid="615b", serial="267125df30c460de",
+              bcd="0104", product="USB Analyzer", subclasses=("10", "00")):
+    """A Cynthion in a fake sysfs, as rpi5-netv2's reads on 2026-09-21."""
+    dev = f"/sys/bus/usb/devices/{path}"
+    for name, value in (("idVendor", "1d50"), ("idProduct", pid),
+                        ("manufacturer", "Cynthion Project"), ("product", product),
+                        ("serial", serial), ("bcdDevice", bcd), ("speed", "480")):
+        _w(root, f"{dev}/{name}", value + "\n")
+    for number, subclass in enumerate(subclasses):
+        iface = f"{dev}/{path}:1.{number}"
+        _w(root, f"{iface}/bInterfaceNumber", f"{number:02d}\n")
+        _w(root, f"{iface}/bInterfaceClass", "ff\n")
+        _w(root, f"{iface}/bInterfaceSubClass", subclass + "\n")
+    return root
+
+
+def test_cynthion_devices_reads_the_descriptors_a_label_needs(fake_root):
+    _cynthion(fake_root)
+    (dev,) = fpga.cynthion_devices()
+    assert dev["path"] == "1-1.4"
+    assert dev["id"] == "1d50:615b"
+    assert dev["serial"] == "267125df30c460de"
+    assert dev["bcd_device"] == "0104"
+    assert dev["product"] == "USB Analyzer"
+    # the subclasses are what tell the gateware apart, so they must survive
+    assert dev["subclasses"] == ["10", "00"]
+
+
+def test_cynthion_devices_ignores_other_usb_devices(fake_root):
+    # the Genesys hub the real board sits behind, and the ASIX dongle
+    for path, vid, pid in (("1-1", "05e3", "0610"), ("2-1.2", "0b95", "1790")):
+        for name, value in (("idVendor", vid), ("idProduct", pid)):
+            _w(fake_root, f"/sys/bus/usb/devices/{path}/{name}", value + "\n")
+    assert fpga.cynthion_devices() == []
 
 
 def test_merge_fpga_into_probe_document(fake_root):
@@ -1173,3 +1503,172 @@ def test_a_port_this_probe_itself_holds_is_still_read(monkeypatch):
     monkeypatch.setattr(tinytapeout, "port_holder_info",
                         lambda tty: ("pytest", str(os.getpid())))
     assert tinytapeout.foreign_holder("/dev/ttyACM0") is None
+
+
+# A release asset built here, with the layout the release documents: the
+# binary under bin/ and the spiOverJtag bridges under share/. The fake binary
+# answers --help the way a build carrying the flash-info series does, which
+# is the only question asked of it.
+OFL_VERSION = "1.1.1+fpgasonline.0.0.post12"
+OFL_ASSET = f"openFPGALoader-{OFL_VERSION}-linux-arm64.tar.gz"
+OFL_INDEX = {"series": "v0.0", "latest": {"stable": {"openfpgaloader": {
+    "arm64": {"asset": OFL_ASSET, "version": OFL_VERSION}}}}}
+
+
+def _release_tarball():
+    import io
+    import tarfile
+
+    root = f"openFPGALoader-{OFL_VERSION}-linux-arm64"
+    fake = b"#!/bin/sh\necho '      --flash-info-json arg     write it out'\n"
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as archive:
+        for name, blob, mode in (
+                (root + "/bin/openFPGALoader", fake, 0o755),
+                (root + "/share/openFPGALoader/spiOverJtag_xc7a100tfgg484.bit.gz",
+                 b"not really a bitstream", 0o644),
+                (root + "/README.txt", b"set OPENFPGALOADER_SOJ_DIR\n", 0o644)):
+            info = tarfile.TarInfo(name)
+            info.size, info.mode = len(blob), mode
+            archive.addfile(info, io.BytesIO(blob))
+    return buf.getvalue()
+
+
+def _serve(monkeypatch, tmp_path, tarball, digest=None):
+    """Stand in for the release: the index, the digest, and the asset."""
+    import hashlib
+
+    blob = tarball
+    sums = f"{digest or hashlib.sha256(blob).hexdigest()}  {OFL_ASSET}\n"
+    pages = {fpga.OFL_LATEST_JSON: json.dumps(OFL_INDEX).encode(),
+             OFL_ASSET + ".sha256": sums.encode(), OFL_ASSET: blob}
+
+    def get(url, timeout=180):
+        for name, body in pages.items():
+            if url.endswith("/" + name):
+                return body
+        return None
+
+    monkeypatch.setattr(fpga, "ofl_get", get)
+    monkeypatch.setattr(fpga, "OFL_CACHE", str(tmp_path / "cache"))
+    # the host has one copy, too old; anything run out of the cache is new
+    monkeypatch.setattr(fpga, "ofl_installed", lambda: ["/usr/bin/openFPGALoader"])
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (
+        (0, "      --flash-info-json arg") if args[0].startswith(str(tmp_path))
+        else (0, "      --detect   detect FPGA")))
+    monkeypatch.setattr(os, "uname", lambda: ("Linux", "h", "6", "#1", "aarch64"))
+
+
+def test_every_openfpgaloader_on_the_path_is_found_once_in_path_order(monkeypatch,
+                                                                      tmp_path):
+    """rpi5-netv2 has three: a hand-installed v1.1.0 in /usr/local/bin, the
+    package's in /usr/bin, and /bin, which is /usr/bin under another name."""
+    local, usr = tmp_path / "local", tmp_path / "usr"
+    for d in (local, usr):
+        d.mkdir()
+        (d / "openFPGALoader").write_text("#!/bin/sh\n")
+        (d / "openFPGALoader").chmod(0o755)
+    (tmp_path / "bin").symlink_to(usr)
+    (tmp_path / "noexec").mkdir()
+    (tmp_path / "noexec" / "openFPGALoader").write_text("not a program\n")
+    monkeypatch.setenv("PATH", os.pathsep.join(
+        str(tmp_path / d) for d in ("noexec", "local", "usr", "bin", "missing")))
+    monkeypatch.setattr(fpga, "OFL_SYSTEM_DIRS", ())
+    assert fpga.ofl_installed() == [str(local / "openFPGALoader"),
+                                    str(usr / "openFPGALoader")]
+
+
+def test_an_old_copy_first_on_the_path_does_not_hide_a_new_one(monkeypatch):
+    """Measured on rpi5-netv2, 2026-09-22: /usr/local/bin/openFPGALoader is a
+    v1.1.0 no package owns, and it shadows the packaged v1.1.1 in /usr/bin,
+    for the collecting user and under sudo alike. Asking only the first copy
+    said the host could not read a flash, when it could."""
+    helps = {"/usr/local/bin/openFPGALoader": "      --detect   detect FPGA",
+             "/usr/bin/openFPGALoader": "      --flash-info-json arg"}
+    monkeypatch.setattr(fpga, "ofl_installed", lambda: list(helps))
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (0, helps[args[0]]))
+    tool = fpga.openfpgaloader_tool()
+    assert tool == {"argv": ["sudo", "/usr/bin/openFPGALoader"], "source": "host",
+                    "flash_info": True}
+
+
+def test_a_host_whose_openfpgaloader_is_too_old_fetches_one_that_is_not(
+        monkeypatch, tmp_path):
+    """Most of these Pis carry a distro openFPGALoader from before the
+    flash-info series existed, and a flash read is now the difference between
+    a label and no label. So the probe fetches the published static build --
+    verifying it against the digest published beside it before anything is
+    executed -- and runs it with its own bridge bitstreams, without which a
+    Xilinx flash read cannot happen at all."""
+    _serve(monkeypatch, tmp_path, _release_tarball())
+    tool = fpga.openfpgaloader_tool()
+    assert tool["flash_info"] is True
+    assert tool["source"] == OFL_ASSET
+    assert tool["version"] == OFL_VERSION
+    assert tool["argv"][:2] == ["sudo", "env"]
+    assert tool["argv"][2].startswith("OPENFPGALOADER_SOJ_DIR=")
+    assert tool["argv"][2].endswith("/share/openFPGALoader")
+    assert tool["argv"][3].endswith("/bin/openFPGALoader")
+    assert os.access(tool["argv"][3], os.X_OK)
+    # the bridges are the whole reason the asset is a tarball
+    bridges = tool["argv"][2].split("=", 1)[1]
+    assert os.listdir(bridges) == ["spiOverJtag_xc7a100tfgg484.bit.gz"]
+    # ...and a second call is a cache hit: nothing is fetched or re-verified
+    fetched = []
+    real = fpga.ofl_get
+    monkeypatch.setattr(fpga, "ofl_get", lambda url, timeout=180: (
+        fetched.append(url) or real(url, timeout)))
+    again = fpga.openfpgaloader_tool()
+    assert again["argv"] == tool["argv"]
+    assert again["sha256"] is None
+    assert [u for u in fetched if u.endswith(OFL_ASSET)] == []
+    # ...and with no route out at all, the build already here is still used,
+    # which on a rig with no path to GitHub is the difference between a
+    # label and none
+    monkeypatch.setattr(fpga, "ofl_get", lambda url, timeout=180: None)
+    offline = fpga.openfpgaloader_tool()
+    assert offline["argv"] == tool["argv"]
+    assert offline["cached"] is True
+    assert offline["version"] == OFL_VERSION
+
+
+def test_a_download_that_does_not_match_its_digest_is_never_run(monkeypatch,
+                                                                tmp_path):
+    """The digest is the only thing between a download and a binary handed to
+    sudo on a host full of hardware, so a mismatch is not a warning. Nothing
+    is unpacked, nothing is cached, and the probe falls back to whatever the
+    host has -- saying why."""
+    _serve(monkeypatch, tmp_path, _release_tarball(), digest="0" * 64)
+    tool = fpga.openfpgaloader_tool()
+    assert tool["flash_info"] is False
+    assert tool["source"] == "host"
+    assert "did not match its published sha256" in tool["why"]
+    assert not os.path.exists(str(tmp_path / "cache"
+                                  / f"openFPGALoader-{OFL_VERSION}-linux-arm64"))
+
+
+def test_a_tarball_that_would_write_outside_the_cache_is_refused(monkeypatch,
+                                                                 tmp_path):
+    """Python 3.5 has no extraction filter and this tarball came off the
+    network, so every member is checked before anything is written."""
+    import io
+    import tarfile
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as archive:
+        info = tarfile.TarInfo("../escaped")
+        info.size = 3
+        archive.addfile(info, io.BytesIO(b"no!"))
+    assert fpga.ofl_unpack(buf.getvalue(), str(tmp_path)) is False
+    assert not os.path.exists(str(tmp_path.parent / "escaped"))
+
+
+def test_no_static_build_is_fetched_for_a_host_nothing_is_built_for(monkeypatch,
+                                                                    tmp_path):
+    """The workstation running the tests is one of these, and it has no FPGA
+    on it either. Saying so beats fetching an aarch64 binary for an x86."""
+    _serve(monkeypatch, tmp_path, _release_tarball())
+    monkeypatch.setattr(os, "uname", lambda: ("Linux", "h", "6", "#1", "x86_64"))
+    tool = fpga.openfpgaloader_tool()
+    assert tool["flash_info"] is False
+    assert "no static build is published for x86_64" in tool["why"]

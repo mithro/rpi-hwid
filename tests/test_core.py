@@ -38,6 +38,57 @@ def test_netv2_name_rejects_junk():
         names.netv2_name("not-hex")
 
 
+def test_cynthion_names_are_pure_and_decorrelated():
+    # The production board on rpi5-netv2. Pinned, because the whole promise is
+    # that a uid names the same board forever: changing the word list or the
+    # hash would rename a board that is already wearing a printed sticker.
+    uid = "267125df30c460de"
+    assert names.cynthion_name(uid) == "cynthion-alidade"
+    # however it is spelled
+    assert names.cynthion_name("0x" + uid) == "cynthion-alidade"
+    assert names.cynthion_name(uid.upper()) == "cynthion-alidade"
+    # Configuration flashes come off a reel, so boards built together carry
+    # near-consecutive uids. What the hash buys is that those land all over
+    # the word list instead of clustering, so no one misreads two boards as
+    # the same. It does not buy uniqueness -- like a NeTV2's name it is a
+    # pure function into 32 words, so two boards can collide, and it is the
+    # uid under the name that is the identifier.
+    cluster = {names.cynthion_name(uid[:-1] + c) for c in "0123456789abcdef"}
+    assert len(cluster) >= 10
+
+
+def test_acorn_names_are_pure_and_decorrelated():
+    """An Acorn is keyed on its Device DNA like a NeTV2, so it gets a name
+    the same way. The two boards actually on the fleet, read 2026-09-21."""
+    p48 = "0x0054b48664b04854"          # pi-sw2-p48, CLE-215+, XC7A200T
+    pi20 = "0x0028e5c45e304854"         # ps1 pi20, CLE-101, XC7A100T
+    assert names.acorn_name(p48).startswith("acorn-")
+    assert names.acorn_name(pi20).startswith("acorn-")
+    assert names.acorn_name(p48) != names.acorn_name(pi20)
+    # pure, however it is spelled
+    assert names.acorn_name("0054b48664b04854") == names.acorn_name(p48)
+    assert names.acorn_name(p48.upper()) == names.acorn_name(p48)
+    # DNAs off one wafer differ in a digit; the names must not
+    cluster = {names.acorn_name(p48[:-1] + c) for c in "0123456789abcdef"}
+    assert len(cluster) >= 10
+
+
+def test_pcileech_names_are_pure_and_decorrelated():
+    """A PCILeech card is keyed on its Device DNA like a NeTV2 or an Acorn, so
+    it is named the same way, from the DNA alone: the name claims nothing
+    about who made the card. pi-sw1-p38's, read over its CH347 2026-09-22."""
+    p38 = "0x006425440bc8985c"
+    assert names.pcileech_name(p38).startswith("pcileech-")
+    assert names.pcileech_name(p38) == names.pcileech_name(p38.upper()[2:])
+    cluster = {names.pcileech_name(p38[:-1] + c) for c in "0123456789abcdef"}
+    assert len(cluster) >= 10
+
+
+def test_cynthion_name_rejects_junk():
+    with pytest.raises(ValueError, match="not a hex"):
+        names.cynthion_name("not-hex")
+
+
 def test_arty_names_follow_the_chain_and_honour_the_registry():
     serials = ["210319B301DE", "210319B0C238", "210319B301E1", "210319A764F5"]
     got = names.arty_names(serials)
@@ -392,7 +443,8 @@ def test_the_gateware_is_only_asked_when_both_signatures_are_there(monkeypatch, 
     calls = []
     monkeypatch.setattr(fpga, "pcie_devices", lambda: pcie)
     monkeypatch.setattr(fpga, "ftdi_devices", lambda: ftdi)
-    monkeypatch.setattr(fpga, "jtag_probe", lambda flash=False: None)
+    monkeypatch.setattr(fpga, "jtag_probe",
+                        lambda flash=False, pins=None, parts=None, detach=None: None)
     monkeypatch.setattr(fpga, "pcileech_probe", lambda: calls.append(1) or {"version": "4.14",
                                                                              "fpga_id": 9})
     fpga.collect_fpga(jtag=True)
@@ -400,6 +452,61 @@ def test_the_gateware_is_only_asked_when_both_signatures_are_there(monkeypatch, 
     calls.clear()
     fpga.collect_fpga(jtag=False)
     assert not calls, "and never without --jtag"
+
+
+def test_the_soc_is_read_before_a_flash_read_replaces_it(monkeypatch):
+    """A flash read loads the spiOverJtag bridge over the running design and
+    takes the card off PCIe while it does. Read after it, pi-sw2-p48's Acorn
+    SoC answered nothing (ident and DNA both null, 2026-09-22), so the DNA's
+    PCIe cross-check silently went missing from the board."""
+    order = []
+    monkeypatch.setattr(fpga, "pcie_devices",
+                        lambda: [{"slot": "0001:01:00.0", "id": "10ee:7021",
+                                  "class": "0x058000", "bars": [1 << 20],
+                                  "subsystem": "10ee:0007"}])
+    monkeypatch.setattr(fpga, "ftdi_devices", list)
+    monkeypatch.setattr(fpga, "jtag_probe",
+                        lambda flash=False, pins=None, parts=None, detach=None:
+                        order.append("jtag") or None)
+    monkeypatch.setattr(fpga, "soc_probe", lambda slot: order.append("soc") or {})
+    fpga.collect_fpga(jtag=True, flash=True, soc=True)
+    assert order == ["soc", "jtag"]
+
+
+# pi-sw1-p38's chain, read by openfpgaloader-36 on 2026-09-22 over the WCH
+# CH347 on the Pi's USB (`-c ch347_jtag --detect`, then `--read-dna` twice,
+# identical both times). The FT601 beside it is PCILeech's data path, not
+# its JTAG.
+P38_CHAIN = {"idcode": "0x3632093", "family": "artix a7 75t",
+             "dna": "0x006425440bc8985c", "cable": "ch347"}
+
+
+def test_only_gateware_built_for_one_package_names_it():
+    """FPGA id 9 is LeechCore's "Enigma X1", built for xc7a75tfgg484 alone.
+    An id with no single package behind it, or no id at all, names none."""
+    assert fpga.gateware_parts({"fpga_id": 9}) == {0x3632093: "xc7a75tfgg484"}
+    assert fpga.gateware_parts({"fpga_id": 3}) == {}
+    assert fpga.gateware_parts({"error": "no reply"}) == {}
+    assert fpga.gateware_parts(None) == {}
+
+
+def test_a_chain_on_a_usb_jtag_cable_is_the_card_on_pcie():
+    """One FPGA on PCIe and one chain on the host's USB JTAG: they are one
+    card, and the chain gives it the Device DNA its gateware cannot."""
+    (board,) = fpga.fpga_verdict(dict(PCILEECH_HOST, jtag=P38_CHAIN))
+    assert board["kind"] == "pcileech"
+    assert board["dna"] == "0x006425440bc8985c"
+    assert board["idcode"] == "0x3632093"
+    assert "CH347" in board["how"]
+
+
+def test_a_chain_on_a_usb_jtag_cable_is_not_called_a_netv2():
+    """The NeTV2 is named by its GPIO harness. A chain with no pins at all
+    used to fall back to that harness's name, which would have minted a
+    netv2- name for a board that is not one."""
+    (board,) = fpga.fpga_verdict({"pcie": [], "ftdi": [], "jtag": P38_CHAIN})
+    assert board["kind"] == "jtag"
+    assert board["dna"] == "0x006425440bc8985c"
 
 
 def test_a_pcileech_board_does_not_need_its_usb_bridge_to_be_named():
@@ -443,6 +550,453 @@ def test_fpga_verdict_by_pcie_bars_and_ftdi():
         "idcode": "0x362d093", "flash": "spansion S25FL128S", "flash_jedec": "0x012018"}]
 
 
+# openFPGALoader --flash-info on pi3's Arty, verbatim, branch flash-info
+# @7a11a6a. The older unpadded "JEDEC ID:" and "Detected:" lines come first
+# and are deliberately not parsed: they are printed before the id is
+# validated, so a garbage read appears there too.
+FLASH_INFO = """JEDEC ID: 0x20ba18
+Detected: micron N25Q128_3V 256 sectors size: 128Mb
+
+SPI Flash information
+JEDEC ID          : 0x20ba18 (manufacturer 0x20, type 0xba, capacity 0x18)
+Manufacturer      : micron
+Part              : N25Q128_3V
+Size              : 16777216 Byte (16 MiB / 128 Mbit, database)
+Unique ID         : 235351451900080037091015126b (opcode 0x9F, 112 bits)
+SFDP revision     : 1.5
+RDSR : 0x00
+Done
+"""
+
+
+# The literal document openFPGALoader --flash-info-json writes, from pi3's
+# Arty (branch flash-info @3ff3075), with the sfdp detail abbreviated: none
+# of it identifies the part, and the schema promises to bump `version` if a
+# field's meaning changes.
+FLASH_INFO_JSON = {
+    "format": "openFPGALoader-flash-info", "version": 1,
+    "flashes": [{
+        "jedec_id": "0x20ba18", "manufacturer_id": "0x20", "memory_type": "0xba",
+        "capacity": "0x18", "manufacturer": "micron",
+        "manufacturer_jep106": "Micron (ST / Numonyx) or XMC", "part": "N25Q128_3V",
+        "size_bytes": 16777216, "size_source": "database",
+        "unique_id": {"state": "read", "value": "235351451900080037091015126b",
+                      "bits": 112, "opcode": "0x9f"},
+        "sfdp": {"revision": "1.5", "bfpt": {"page_size": 256}},
+    }],
+}
+
+
+def test_the_flash_document_is_preferred_to_the_printed_report():
+    """A file written only on success beats scraping human-oriented text:
+    there is no progress-bar noise in it, and it promises to bump `version`
+    when a field's meaning changes rather than quietly reword a line."""
+    got = fpga.flash_info_from_json(FLASH_INFO_JSON)
+    assert got["jedec"] == "0x20ba18"
+    assert got["manufacturer"] == "micron"
+    assert got["part"] == "N25Q128_3V"
+    assert got["size_bytes"] == 16777216
+    assert got["uid"] == "235351451900080037091015126b"
+    assert got["uid_bits"] == 112
+    assert got["uid_opcode"] == "0x9f"
+    assert got["uid_state"] == "read"
+
+
+@pytest.mark.parametrize("doc", [
+    {},                                                    # no document at all
+    {"format": "something-else", "version": 1, "flashes": [{}]},
+    # a version this code has not been taught: the schema says a bump means a
+    # field changed meaning, so guessing at it is worse than reading nothing
+    {"format": "openFPGALoader-flash-info", "version": 3, "flashes": [{}]},
+    {"format": "openFPGALoader-flash-info", "version": 1, "flashes": []},
+])
+def test_a_flash_document_this_code_does_not_understand_is_not_guessed_at(doc):
+    assert fpga.flash_info_from_json(doc) == {}
+
+
+def test_a_reason_is_kept_when_a_flash_says_it_has_no_unique_id():
+    """Macronix reports *why*: its security register says whether a factory
+    ESN was ever programmed. Both NeTV2s read 0x00, which proves "none" for
+    those chips instead of assuming it from the vendor, so the reason is
+    worth keeping beside the answer."""
+    doc = json.loads(json.dumps(FLASH_INFO_JSON))
+    doc["flashes"][0]["unique_id"] = {
+        "state": "none", "value": None, "bits": None, "opcode": None,
+        "note": "no factory ESN: security register 0x00, bit 0 (factory lock) = 0"}
+    got = fpga.flash_info_from_json(doc)
+    assert got["uid_state"] == "none"
+    assert "factory lock" in got["uid_note"]
+    # nothing to say is not an empty string
+    assert fpga.flash_info_from_json(FLASH_INFO_JSON)["uid_note"] is None
+
+
+def test_the_extended_id_travels_from_the_document_to_the_board():
+    """openFPGALoader's extended_id (mithro/openFPGALoader 2c7d956): RDID bytes
+    4-6 for the families that define them, null for the rest. pi3's Arty
+    answered 0x100000, which is what makes it an N25Q128 and not an MT25QL128."""
+    doc = json.loads(json.dumps(FLASH_INFO_JSON))
+    doc["flashes"][0]["extended_id"] = "0x100000"
+    assert fpga.flash_info_from_json(doc)["extended_id"] == "0x100000"
+    # a document from before the field existed has nothing to say, not an error
+    assert fpga.flash_info_from_json(FLASH_INFO_JSON)["extended_id"] is None
+    j = dict(NETV2_FLASH, idcode="0x362d093", dna="0x0064f5483229085c",
+             cable="digilent", flash_extended_id="0x100000")
+    (board,) = fpga.fpga_verdict({"pcie": [], "jtag": j, "ftdi": [
+        {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319A43AD3"}]})
+    assert board["flash_extended_id"] == "0x100000"
+    assert fpga.fpga_summary([board])[0]["flash_extended_id"] == "0x100000"
+
+
+# pi9's Arty (Digilent 210319B58379), read by openfpgaloader-36 on 2026-09-22
+# with the build that reports extended_id and treats a failed SFDP read as an
+# error. Trimmed to the identity fields and the SFDP revision.
+PI9_FLASH_JSON = {"format": "openFPGALoader-flash-info", "version": 1, "flashes": [{
+    "jedec_id": "0x012018", "manufacturer": "Spansion", "part": "S25FL128S/S25FL127S",
+    "extended_id": "0x4d0180", "size_bytes": 16777216,
+    "unique_id": {"state": "read", "value": "a614111b8aaeba7443d95aa761a37f24",
+                  "bits": 128, "opcode": "0x4b", "note": None},
+    "sfdp": {"revision": "1.6"}}]}
+
+
+def test_the_sfdp_revision_travels_from_the_document_to_the_board():
+    """Whether a part answers RSFDP is what separates an S25FL127S from an
+    S25FL128S, so the revision it answered with is kept on the board."""
+    got = fpga.flash_info_from_json(PI9_FLASH_JSON)
+    assert got["sfdp"] == "1.6"
+    no_sfdp = json.loads(json.dumps(PI9_FLASH_JSON))
+    no_sfdp["flashes"][0]["sfdp"] = None
+    assert fpga.flash_info_from_json(no_sfdp)["sfdp"] is None
+    j = dict(NETV2_FLASH, idcode="0x362d093", dna="0x0064f5483229085c",
+             cable="digilent", flash_sfdp="1.6")
+    (board,) = fpga.fpga_verdict({"pcie": [], "jtag": j, "ftdi": [
+        {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319B58379"}]})
+    assert fpga.fpga_summary([board])[0]["flash_sfdp"] == "1.6"
+
+
+@pytest.mark.parametrize(("version", "sfdp", "kept"), [
+    (1, {"revision": "1.6"}, "1.6"),
+    (2, {"revision": "1.6"}, "1.6"),
+    # version 2 (openFPGALoader 5d0ae2e): null means the part answered RSFDP
+    # with no SFDP signature -- a failed read is an error and writes nothing
+    (2, None, "none"),
+    # version 1: null could also follow a failed read, so it says nothing
+    (1, None, None),
+])
+def test_what_a_missing_sfdp_means_depends_on_the_document_version(version, sfdp, kept):
+    doc = json.loads(json.dumps(PI9_FLASH_JSON))
+    doc["version"] = version
+    doc["flashes"][0]["sfdp"] = sfdp
+    assert fpga.flash_info_from_json(doc)["sfdp"] == kept
+
+
+def test_the_three_unique_id_states_in_the_document():
+    """`none` means the part has no known UID command, and only that: since
+    openFPGALoader 9754753 a transfer that actually failed exits non-zero and
+    writes no file, where it used to be reported as "not available" -- which
+    this treats as a closed question and would have stopped anyone looking
+    for a number that was really there."""
+    def state(uid):
+        doc = json.loads(json.dumps(FLASH_INFO_JSON))
+        doc["flashes"][0]["unique_id"] = uid
+        return fpga.flash_info_from_json(doc)
+
+    blank = state({"state": "blank", "value": None, "bits": 128, "opcode": "0x4b"})
+    assert (blank["uid_state"], blank["uid"], blank["uid_bits"]) == ("blank", None, 128)
+    none = state({"state": "none", "value": None, "bits": None, "opcode": None})
+    assert (none["uid_state"], none["uid"]) == ("none", None)
+
+
+def test_a_part_absent_from_the_database_is_null_not_a_word():
+    doc = json.loads(json.dumps(FLASH_INFO_JSON))
+    doc["flashes"][0].update(manufacturer=None, part=None, size_bytes=None,
+                             size_source="jedec_capacity")
+    got = fpga.flash_info_from_json(doc)
+    assert got["manufacturer"] is None
+    assert got["part"] is None
+    assert got["jedec"] == "0x20ba18"      # the id is still the id
+
+
+def test_flash_info_is_read_from_the_report_and_not_the_older_lines():
+    got = fpga.flash_info_parse(0, FLASH_INFO)
+    assert got["jedec"] == "0x20ba18"
+    assert got["manufacturer"] == "micron"
+    assert got["part"] == "N25Q128_3V"
+    assert got["uid"] == "235351451900080037091015126b"
+    # the width and the command are recorded beside the value: this package
+    # names boards from identifiers, and a value whose length quietly changed
+    # between tool versions would be a permanent mislabel
+    assert got["uid_bits"] == 112
+    assert got["uid_opcode"] == "0x9F"
+    assert got["uid_state"] == "read"
+
+
+def test_a_flash_read_that_failed_yields_nothing_at_all():
+    """The report is trusted only when the tool exited 0 and printed its
+    header. Before openFPGALoader 5c83c71 a read that never happened still
+    exited 0, and before 7a11a6a a NeTV2 with no bridge loaded answered
+    RDID with garbage that was printed as an ordinary report -- either would
+    have put a wrong flash identity on a sticker."""
+    assert fpga.flash_info_parse(1, FLASH_INFO) == {}
+    assert fpga.flash_info_parse(0, "JEDEC ID: 0xc009a0\nDetected: junk\n") == {}
+    assert fpga.flash_info_parse(1, "Invalid JEDEC ID 0xc009a0: ... parity") == {}
+    assert fpga.flash_info_parse(0, "") == {}
+
+
+@pytest.mark.parametrize(("line", "state", "uid"), [
+    ("Unique ID         : 235351451900080037091015126b (opcode 0x9F, 112 bits)",
+     "read", "235351451900080037091015126b"),
+    ("Unique ID         : blank (opcode 0x4B, 128 bits returned all 0x00/0xFF)",
+     "blank", None),
+    ("Unique ID         : not available (unsupported for this manufacturer/part)",
+     "none", None),
+])
+def test_the_three_answers_a_flash_can_give_about_its_unique_id(line, state, uid):
+    """A part that has no UID command, a part whose UID reads as all ones,
+    and a part that gave one up are three different facts. Only the last may
+    be printed; the first is not a gap to chase and the second is a failed
+    read dressed as a value."""
+    got = fpga.flash_info_parse(0, "SPI Flash information\n"
+                                   "JEDEC ID          : 0x20ba18 (x)\n" + line + "\n")
+    assert got["uid_state"] == state
+    assert got["uid"] == uid
+
+
+def test_the_pcie_subsystem_id_names_the_card_under_the_gateware():
+    """vendor:device describes the gateware; subsystem exists precisely to
+    name the board under it. pi-sw2-p48 reports 10ee:7021 with subsystem
+    1e24:021f -- Squirrels Research Labs' own id for the CLE-215+ -- so the
+    card is named without a harness, a BAR or a guess (2026-09-21)."""
+    def board(subsystem):
+        return fpga.fpga_verdict({
+            "pcie": [{"slot": "0001:01:00.0", "id": "10ee:7021",
+                      "class": "0x058000", "bars": [1 << 20],
+                      "subsystem": subsystem}],
+            "ftdi": [], "jtag": None})[0]
+
+    p48 = board("1e24:021f")
+    assert p48["kind"] == "acorn"
+    assert p48["soc_model"] == "cle-215+"
+    assert board("1e24:0101")["soc_model"] == "cle-101"
+    # the flash still holds an image that states no model; a power cycle
+    # brings it back, and it must not become a different board when it does
+    assert board("10ee:0007")["kind"] == "unknown-fpga"
+    assert "soc_model" not in board("10ee:0007")
+
+
+def test_the_soc_ident_string_names_the_card_it_is_built_for():
+    """The fpgas.online Acorn SoC keeps an ident string at BAR0 0x800, one
+    character per 32-bit word: "fpgas-online Acorn PCIe SoC cle-215+ ...".
+    That is the board saying what it is, where its PCIe id only says what
+    gateware is loaded."""
+    words = [*b"fpgas-online Acorn PCIe SoC cle-215+ 2026-09-21", 0]
+    assert fpga.soc_ident(words) == "fpgas-online Acorn PCIe SoC cle-215+ 2026-09-21"
+    assert fpga.soc_model(fpga.soc_ident(words)) == "cle-215+"
+    assert fpga.soc_model("fpgas-online Acorn PCIe SoC cle-101 x") == "cle-101"
+    assert fpga.soc_model("something else entirely") is None
+    assert fpga.soc_ident([]) is None
+    # the same window copied bytewise comes back 0xff; that is not an ident
+    assert fpga.soc_ident([0xFFFFFFFF] * 64) is None
+
+
+def test_the_soc_dna_is_two_words_at_a_known_offset():
+    """DNA at BAR0 0x2800 (hi) and 0x2804 (lo), as the SoC lays it out."""
+    assert fpga.soc_dna(0x0054b486, 0x64b04854) == "0x0054b48664b04854"
+    assert fpga.soc_dna(0, 0) is None            # an unconfigured read
+    assert fpga.soc_dna(0xFFFFFFFF, 0xFFFFFFFF) is None
+
+
+def test_two_readings_of_one_dna_are_checked_against_each_other():
+    """An identifier read more than one way is worth more than one read twice
+    only if the readings are compared. Agreement is recorded so a label can
+    say how well known its number is; disagreement is never silently
+    resolved, because there is no way to tell which reading is the lie."""
+    agree = fpga.cross_check({"jtag": "0x0054b48664b04854",
+                              "pcie": "0x0054b48664b04854"})
+    assert agree["value"] == "0x0054b48664b04854"
+    assert agree["sources"] == ["jtag", "pcie"]
+    assert agree["agree"] is True
+    assert "conflict" not in agree
+
+    # spelled differently by two tools is still one value
+    same = fpga.cross_check({"jtag": "0x0054b48664b04854",
+                             "pcie": "54b48664b04854"})
+    assert same["agree"] is True
+
+    clash = fpga.cross_check({"jtag": "0x0054b48664b04854",
+                              "pcie": "0x0028e5c45e304854"})
+    assert clash["agree"] is False
+    assert clash["conflict"] == {"jtag": "0x0054b48664b04854",
+                                 "pcie": "0x0028e5c45e304854"}
+    assert clash["value"] is None       # no arbitrary winner is picked
+
+    one = fpga.cross_check({"jtag": "0x0054b48664b04854", "pcie": None})
+    assert one["value"] == "0x0054b48664b04854"
+    assert one["sources"] == ["jtag"]
+    assert one["agree"] is None         # nothing to agree with
+    assert fpga.cross_check({})["value"] is None
+
+
+def test_a_dna_read_two_ways_is_recorded_as_checked():
+    """pi-sw2-p48's real numbers: the chain and the SoC agree, so the board
+    records which methods saw it and that they matched."""
+    boards = [{"kind": "acorn", "slot": "0001:01:00.0", "dna": "0x0054b48664b04854",
+               "idcode": "0x13636093", "how": "x"}]
+    soc = {"0001:01:00.0": {"dna": "0x0054b48664b04854", "model": "cle-215+",
+                            "ident": "fpgas-online Acorn PCIe SoC cle-215+ 2026-09-21"}}
+    (board,) = fpga.merge_soc(boards, soc)
+    assert board["dna"] == "0x0054b48664b04854"
+    assert board["dna_sources"] == ["jtag", "pcie"]
+    assert board["dna_agree"] is True
+    assert board["soc_model"] == "cle-215+"
+
+
+def test_a_board_whose_two_readings_disagree_keeps_neither():
+    """There is no way to tell which reading is the lie, and the wrong one
+    would be printed. The board is left with no DNA, which the label
+    generator then refuses outright."""
+    boards = [{"kind": "acorn", "slot": "0001:01:00.0", "dna": "0x0054b48664b04854",
+               "how": "x"}]
+    soc = {"0001:01:00.0": {"dna": "0x0028e5c45e304854"}}
+    (board,) = fpga.merge_soc(boards, soc)
+    assert board["dna"] is None
+    assert board["dna_agree"] is False
+    assert board["dna_conflict"] == {"jtag": "0x0054b48664b04854",
+                                     "pcie": "0x0028e5c45e304854"}
+
+
+def test_the_soc_names_a_card_whose_pcie_id_no_longer_can():
+    """A board with no harness at all: the SoC's ident string is the only
+    thing left that says which card it is."""
+    boards = [{"kind": "unknown-fpga", "slot": "0001:01:00.0", "how": "x"}]
+    soc = {"0001:01:00.0": {"dna": "0x0054b48664b04854", "model": "cle-215+",
+                            "ident": "fpgas-online Acorn PCIe SoC cle-215+ x"}}
+    (board,) = fpga.merge_soc(boards, soc)
+    assert board["kind"] == "acorn"
+    assert board["dna"] == "0x0054b48664b04854"
+    assert board["dna_sources"] == ["pcie"]
+    assert "dna_agree" not in board          # nothing to agree with
+
+
+def test_a_failed_soc_read_leaves_the_jtag_reading_alone():
+    boards = [{"kind": "acorn", "slot": "0001:01:00.0", "dna": "0x0054b48664b04854",
+               "how": "x"}]
+    (board,) = fpga.merge_soc(boards, {"0001:01:00.0": {"error": "cannot map BAR0"}})
+    assert board["dna"] == "0x0054b48664b04854"
+    assert "dna_agree" not in board
+
+
+def test_the_harness_names_the_board_it_is_wired_to():
+    """A harness is not generic wiring: its pins are the card's own JTAG
+    header. 27:22:4:17 reaches a NeTV2 off the Pi header; 10:9:11:8 and
+    2:3:4:14 reach an Acorn's P1 Pico-EZmate on a Pi 5 and a Compute Blade.
+    Driving those pins is driving that card, which is the same evidence that
+    has always named a NeTV2."""
+    def chain(pins, idcode="0x13636093"):
+        return fpga.fpga_verdict({
+            "pcie": [], "ftdi": [],
+            "jtag": {"idcode": idcode, "dna": "0x0054b48664b04854",
+                     "cable": "gpio", "pins": pins}})[0]
+
+    assert chain("27:22:4:17", "0x3631093")["kind"] == "netv2"
+    assert chain("10:9:11:8")["kind"] == "acorn"
+    assert chain("2:3:4:14", "0x3631093")["kind"] == "acorn"
+    # a harness nobody has described still names nothing
+    assert chain("1:2:3:4")["kind"] == "jtag"
+
+
+def test_the_harness_upgrades_the_pcie_entry_rather_than_doubling_it():
+    """pi-sw2-p48: one Acorn, seen once on PCIe as its gateware and once on
+    the chain. It is one card and gets one label, named by the harness."""
+    f = {"pcie": [{"slot": "0001:01:00.0", "id": "10ee:7021", "class": "0x058000",
+                   "bars": [1 << 20], "subsystem": "10ee:0007"}],
+         "ftdi": [],
+         "jtag": {"idcode": "0x13636093", "dna": "0x0054b48664b04854",
+                  "cable": "gpio", "pins": "10:9:11:8"}}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["kind"] == "acorn"
+    assert board["dna"] == "0x0054b48664b04854"
+    assert board["idcode"] == "0x13636093"
+
+
+# rpi5-netv2's NeTV2, read by rpi-hwid itself on 2026-09-22
+NETV2_FLASH = {"flash_jedec": "0xc22017", "flash": "Macronix MX25L6405",
+               "flash_uid": None, "flash_uid_bits": None, "flash_uid_state": "none",
+               "flash_uid_note": "no factory ESN: security register 0x00, "
+                                 "bit 0 (factory lock) = 0"}
+
+
+@pytest.mark.parametrize(("pcie", "ftdi", "cable", "pins", "kind"), [
+    # the chain joins the board its PCIe edge already named (LitePCIe NeTV2
+    # gateware: 10ee:7024, one 1 MiB BAR)
+    ([{"slot": "0001:01:00.0", "id": "10ee:7024", "class": "0x058000",
+       "bars": [1 << 20], "subsystem": "10ee:0007"}], [], "gpio", "27:22:4:17", "netv2"),
+    # ...or the Arty its own FTDI named
+    ([], [{"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319A43AD3"}],
+     "digilent", None, "arty"),
+    # ...or upgrades a PCIe entry that only knew the gateware
+    ([{"slot": "0001:01:00.0", "id": "10ee:7021", "class": "0x058000",
+       "bars": [1 << 20], "subsystem": "10ee:0007"}], [], "gpio", "10:9:11:8", "acorn"),
+    # ...or is the board, named by its harness alone
+    ([], [], "gpio", "27:22:4:17", "netv2"),
+])
+def test_a_flash_reading_reaches_whichever_board_the_chain_is(pcie, ftdi, cable,
+                                                             pins, kind):
+    """The flash facts used to be copied onto an Arty only, and only its JEDEC
+    id and part string -- so no document this probe wrote ever carried a
+    flash unique id, its state or its note, and every label built from one
+    would have been refused for a flash it had in fact read."""
+    j = dict(NETV2_FLASH, idcode="0x3631093", dna="0x00742c4e63b9085c",
+             cable=cable, pins=pins)
+    (board,) = fpga.fpga_verdict({"pcie": pcie, "ftdi": ftdi, "jtag": j})
+    assert board["kind"] == kind
+    assert {k: board.get(k) for k in NETV2_FLASH} == NETV2_FLASH
+    # and on into the summary a label is made from
+    (summary,) = fpga.fpga_summary([board])
+    assert summary["flash_uid_state"] == "none"
+    assert summary["flash_uid_note"] == NETV2_FLASH["flash_uid_note"]
+
+
+def test_a_chain_on_a_foreign_harness_is_not_called_a_netv2():
+    """"The only board on the GPIO harness in this fleet is a NeTV2" stopped
+    being true when Acorns went onto harnesses of their own. Measured on
+    pi-sw2-p48 (2026-09-21): an Acorn CLE-215+ read over pins 10:9:11:8 was
+    labelled netv2, which would have minted a netv2-<word> name and printed
+    it on a sticker for a board that is not a NeTV2."""
+    f = {"pcie": [], "ftdi": [],
+         "jtag": {"idcode": "0x13636093", "dna": "0x0054b48664b04854",
+                  "cable": "gpio", "pins": "10:9:11:8"}}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["kind"] != "netv2"
+    assert board["dna"] == "0x0054b48664b04854"
+    # the default harness still means what it always did
+    netv2 = dict(f["jtag"], pins=fpga.HARNESS_PINS)
+    assert fpga.fpga_verdict(dict(f, jtag=netv2))[0]["kind"] == "netv2"
+
+
+def test_a_chain_joins_the_pcie_board_it_belongs_to():
+    """pi-sw2-p48 carries one Acorn, and it came out as two boards: an
+    unknown-fpga from PCIe and a "netv2" from the chain. One card, one label."""
+    f = {"pcie": [{"slot": "0001:01:00.0", "id": "10ee:7021", "class": "0x058000",
+                   "bars": [1 << 20], "subsystem": "10ee:0007"}],
+         "ftdi": [],
+         "jtag": {"idcode": "0x13636093", "dna": "0x0054b48664b04854",
+                  "cable": "gpio", "pins": "10:9:11:8"}}
+    boards = fpga.fpga_verdict(f)
+    assert len(boards) == 1
+    assert boards[0]["dna"] == "0x0054b48664b04854"
+    assert boards[0]["idcode"] == "0x13636093"
+
+
+def test_the_acorn_cle_101_is_known_too():
+    """1e24 is SQRL's vendor id; 0101 is the CLE-101 / LiteFury, which pi14
+    and pi16 answer with and which used to come out as unknown-fpga."""
+    f = {"pcie": [{"slot": "0001:01:00.0", "id": "1e24:0101", "class": "0x058000",
+                   "bars": [1 << 20], "subsystem": "1e24:0101"}],
+         "ftdi": [], "jtag": None}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["kind"] == "acorn"
+
+
 def test_fpga_gpio_chain_without_pcie_board_is_a_netv2():
     # a Pi 5 always lists the RP1 as a PCIe endpoint; that is not a board
     f = {"pcie": [{"slot": "0000:01:00.0", "id": "1de4:0001", "class": "0x020000",
@@ -450,6 +1004,299 @@ def test_fpga_gpio_chain_without_pcie_board_is_a_netv2():
          "ftdi": [], "jtag": {"idcode": "0x3631093", "dna": "0x00742c4e63b9085c", "cable": "gpio"}}
     boards = fpga.fpga_verdict(f)
     assert [b["kind"] for b in boards] == ["netv2"]
+
+
+# --- cynthion -------------------------------------------------------------------------
+
+# The production Cynthion on rpi5-netv2.iot.welland.mithis.com, exactly as
+# sysfs reported it on 2026-09-21: analyzer gateware sharing its USB port with
+# the Apollo stub, so subclass 0x10 and subclass 0x00 side by side.
+CYNTHION_ANALYZER = {
+    "path": "1-1.4", "id": "1d50:615b", "manufacturer": "Cynthion Project",
+    "product": "USB Analyzer", "serial": "267125df30c460de",
+    "bcd_device": "0104", "subclasses": ["10", "00"],
+}
+
+
+def test_cynthion_mode_comes_from_the_interface_subclass():
+    # cynthion/shared/usb.toml: the vid:pid is the same whatever is loaded,
+    # which is exactly why the subclass exists
+    assert fpga.cynthion_mode(CYNTHION_ANALYZER) == "analyzer"
+    assert fpga.cynthion_mode(dict(CYNTHION_ANALYZER, subclasses=["20"])) == "moondancer"
+    assert fpga.cynthion_mode(dict(CYNTHION_ANALYZER, id="1d50:615c",
+                                   subclasses=[])) == "apollo"
+    assert fpga.cynthion_mode(dict(CYNTHION_ANALYZER, subclasses=[])) is None
+
+
+def test_the_usb_serial_is_the_flash_uid_only_when_gateware_published_it():
+    # In Apollo mode the serial belongs to the debug controller, not to the
+    # ECP5's configuration flash; recording it as a flash UID would key a
+    # board's permanent name on the wrong chip.
+    assert fpga.cynthion_flash_uid(CYNTHION_ANALYZER) == "267125df30c460de"
+    apollo = dict(CYNTHION_ANALYZER, id="1d50:615c", subclasses=[], serial="deadbeef")
+    assert fpga.cynthion_flash_uid(apollo) is None
+
+
+def test_cynthion_revision_decodes_bcddevice_not_a_gateware_version():
+    # apollo_fpga/__init__.py:260 -- major is the high byte, minor the low
+    assert fpga.cynthion_revision("0104") == "1.4"
+    assert fpga.cynthion_revision("0007") == "0.7"
+    assert fpga.cynthion_revision(None) is None
+    # 0xFF is an external Apollo board (Daisho, Pergola) and 0xFE a subdevice;
+    # neither is a Cynthion revision, and "r255.1" would be a lie on a label
+    assert fpga.cynthion_revision("ff01") is None
+    assert fpga.cynthion_revision("fe00") is None
+
+
+def test_the_harness_pins_are_not_the_netv2s_everywhere(monkeypatch):
+    """27:22:4:17 is the NeTV2 harness. An Acorn's JTAG comes off the card's
+    P1 Pico-EZmate on different pins entirely -- 2:3:4:14 on a Compute Blade,
+    10:9:11:8 on a Pi 5 -- so a hardcoded constant cannot read one at all,
+    and an unread DNA is now fatal rather than a line to write on."""
+    seen = []
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/openFPGALoader")
+    monkeypatch.setattr(fpga, "sh_all",
+                        lambda args, timeout=15: seen.append(args) or "")
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "openocd_probe",
+                        lambda serial=None, pins=None: None)
+
+    fpga.jtag_probe(pins="2:3:4:14")
+    assert "--pins=2:3:4:14" in seen[0]
+
+    seen.clear()
+    fpga.jtag_probe()
+    assert "--pins=" + fpga.HARNESS_PINS in seen[0]
+
+
+def test_harness_pins_parse_into_the_order_openocd_counts_them(monkeypatch):
+    """openFPGALoader spells --pins TDI:TDO:TCK:TMS; openocd's *_jtag_nums
+    take tck tms tdi tdo. Handing one tool the other's order silently drives
+    the wrong lines."""
+    assert fpga.harness_nums("27:22:4:17") == (4, 17, 27, 22)
+    assert fpga.harness_nums("2:3:4:14") == (4, 14, 2, 3)
+    assert fpga.harness_nums("nonsense") is None
+
+
+def test_a_trace_id_keeps_only_the_factory_bits():
+    """A TraceID is 64 bits of which the top 8 are the design's own, set from
+    the bitstream's TRACE_ID_BINARY. Keyed on unmasked, a board would be
+    renamed by a gateware rebuild -- the bug DNA_MASK already guards against
+    on the Xilinx side."""
+    # least significant byte first, so the design's own byte is the last pair
+    assert fpga.trace_id_value("7766554433221100") == "0x11223344556677"
+    # the same die under a design that set a different TRACE_ID_BINARY
+    assert fpga.trace_id_value("77665544332211ff") == "0x11223344556677"
+    # an absent or unpowered chain shifts all ones or all zeroes; naming a
+    # board from either would mint a wrong name permanently
+    assert fpga.trace_id_value("ffffffffffffffff") is None
+    assert fpga.trace_id_value("0000000000000000") is None
+    # nothing but a user byte is still nothing to key on
+    assert fpga.trace_id_value("00000000000000ab") is None
+    assert fpga.trace_id_value(None) is None
+    assert fpga.trace_id_value("junk") is None
+
+
+def test_the_chain_hands_its_bytes_back_least_significant_first():
+    """Measured on rpi5-netv2: with no instruction shifted at all, the DR
+    holds the IDCODE after a TAP reset, and the chain returned 43101121 --
+    which is 0x21111043, the LFE5U-12F a Cynthion r1.4 carries, with its
+    bytes reversed. That known answer is what settles the byte order, which
+    no amount of reading apollo's source could."""
+    assert fpga.wire_hex_to_int("43101121") == 0x21111043
+
+
+def test_a_trace_id_read_from_the_real_board():
+    """The bytes rpi5-netv2's ECP5 actually returned for UIDCODE_PUB."""
+    res = fpga.cynthion_offline_parse(
+        "FLASHUID=267125df30c460de\nTRACEIDRAW=0e4e600486801b00\n"
+        "RESTORED=267125df30c460de\n")
+    assert res["trace_id"] == "0x1b808604604e0e"
+    assert res["restored"] is True
+
+
+def test_the_offline_read_reports_whether_the_board_came_back():
+    """apollo's own `info --force-offline` reads and leaves the FPGA offline.
+    A probe that ends a capture to read a number must put the board back and
+    say whether it managed to."""
+    ok = fpga.cynthion_offline_parse(
+        "TRACEIDRAW=7766554433221100\nFLASHUID=267125df30c460de\n"
+        "RESTORED=267125df30c460de\n")
+    assert ok["trace_id"] == "0x11223344556677"
+    assert ok["flash_uid"] == "267125df30c460de"
+    assert ok["restored"] is True
+    assert "error" not in ok
+
+    # read fine, but the analyzer never re-enumerated: the number is good and
+    # the rig is not, and the caller has to be told the second part
+    stranded = fpga.cynthion_offline_parse(
+        "TRACEIDRAW=7766554433221100\nRESTORED=none\n")
+    assert stranded["trace_id"] == "0x11223344556677"
+    assert stranded["restored"] is False
+
+    failed = fpga.cynthion_offline_parse("ERROR=no Apollo after handoff\n")
+    assert failed["error"] == "no Apollo after handoff"
+    assert failed.get("trace_id") is None
+
+    # A read can fail on a board that still came back, and the caller needs
+    # both halves: the number is missing, the rig is not. Met for real on
+    # rpi5-netv2, whose firmware stalls REQUEST_JTAG_GET_INFO.
+    both = fpga.cynthion_offline_parse(
+        "FLASHUID=267125df30c460de\nRESTORED=267125df30c460de\n"
+        "ERROR=jtag read failed: [Errno 32] Broken pipe\n")
+    assert both["restored"] is True
+    assert "Broken pipe" in both["error"]
+    assert both["trace_id"] is None
+
+
+def test_fpga_verdict_carries_a_trace_id_that_was_read():
+    dev = dict(CYNTHION_ANALYZER)
+    f = {"pcie": [], "ftdi": [], "jtag": None, "cynthion": [dev],
+         "cynthion_jtag": {"trace_id": "0x11223344556677",
+                           "flash_uid": "267125df30c460de", "restored": True}}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["trace_id"] == "0x11223344556677"
+    assert fpga.fpga_summary([board])[0]["trace_id"] == "0x11223344556677"
+
+
+# What rpi5-netv2's Cynthion gave the background-SPI reader on 2026-09-22.
+# The TraceID is right; the flash half is the reader's own earlier commands
+# coming back -- 0x99 0x66 are the reset it sent, 0x9f the opcode after.
+SPI_ECHO = {"trace_id": "0x1b808604604e0e", "flash_uid": "267125df30c460de",
+            "flash_jedec": "0x009966", "flash_uid_read": "0000000000009f00",
+            "flash_uid_bits": 64, "flash_uid_state": "read",
+            "flash_uid_agree": False, "restored": True}
+
+
+def _apollo_wire(flip=False, reply=None):
+    """The reader's helpers, run against a fake firmware that records every
+    vendor request -- the same harness that recorded apollo's own bytes."""
+    log = []
+    ns = {}
+    exec(fpga.APOLLO_HELPERS, ns)
+
+    def ctrl(fd, rtype, req, value=0, index=0, data=None, length=0, timeout=2000):
+        log.append((req, value, index, bytes(data or b"").hex()))
+        return bytes(reply[:length]) if reply else bytes(length)
+    ns["ctrl"] = ctrl
+    return ns, log
+
+
+def test_background_spi_goes_out_exactly_as_apollo_sends_it():
+    """apollo 1.1.1's own _enter_background_spi and _background_spi_transfer,
+    run against a recording firmware (2026-09-22), hand SET_OUT the unlock as
+    fe 68 and each SPI byte bit-reversed in its own place: 9F 00 00 00 goes
+    out f9 00 00 00. The first reader bit-reversed the unlock too (7f 16) and
+    sent the transaction back to front (00 00 00 f9), and on rpi5-netv2 got
+    its own commands echoed back."""
+    ns, log = _apollo_wire()
+    ns["enter_background_spi"](None, False)
+    set_out = [d for req, _v, _i, d in log if req == 0xB1]
+    assert set_out == ["3a", "fe68", "ffffffffffffffff", "66", "99"]
+    log.clear()
+    ns["spi"](None, (0x9F, 0, 0, 0), False)
+    assert [d for req, _v, _i, d in log if req == 0xB1] == ["f9000000"]
+    log.clear()
+    ns["spi"](None, (0x4B,) + (0,) * 12, False)
+    assert [d for req, _v, _i, d in log if req == 0xB1] == ["d2" + "00" * 12]
+
+
+def test_a_background_spi_reply_comes_back_in_the_order_it_was_clocked():
+    """apollo decodes a GET_IN of 80 01 c0 03 as 01 80 03 c0: each byte
+    bit-reversed, none moved, so reply[i] is what the flash sent while it
+    received byte i."""
+    ns, _log = _apollo_wire(reply=[0x80, 0x01, 0xC0, 0x03])
+    assert bytes(ns["spi"](None, (0x9F, 0, 0, 0), False)).hex() == "018003c0"
+
+
+def test_firmware_that_flips_bits_itself_gets_them_unflipped():
+    """QUIRK_FLIP_BITS_IN_WHOLE_BYTES: apollo's chain reverses every whole byte
+    on the way out and back, undoing the SPI layer's reversal -- so the SPI
+    bytes go raw and the unlock, a plain DR value, goes reversed."""
+    ns, log = _apollo_wire(reply=[0x01, 0x80])
+    ns["enter_background_spi"](None, True)
+    assert [d for req, _v, _i, d in log if req == 0xB1][:2] == ["5c", "7f16"]
+    log.clear()
+    assert bytes(ns["spi"](None, (0x9F, 0), True)).hex() == "0180"
+    assert [d for req, _v, _i, d in log if req == 0xB1] == ["9f00"]
+
+
+def test_the_gateware_publishes_the_flash_uid_with_its_bytes_reversed():
+    """rpi5-netv2's Cynthion, read over background SPI on 2026-09-22 once the
+    reader sent what apollo sends: the chip clocked out de 60 c4 30 df 25 71
+    26, and the gateware publishes 267125df30c460de -- the same eight bytes
+    folded up little-endian, which is how apollo's read_flash_uid prints it
+    too. The two readings agree; the first comparison, byte for byte, said
+    they did not."""
+    got = fpga.cynthion_offline_parse(
+        "FLASHUID=267125df30c460de\n"
+        "FLASHIDRAW=ffef4016\nFLASHUIDRAW=ffffffffffde60c430df257126\n"
+        "RESTORED=267125df30c460de\n")
+    assert got["flash_jedec"] == "0xef4016"
+    assert got["flash_uid_read"] == "de60c430df257126"     # as clocked out
+    assert got["flash_uid"] == "267125df30c460de"          # as published
+    assert got["flash_uid_agree"] is True
+    # ...and a different chip still disagrees, in either order
+    other = fpga.cynthion_offline_parse(
+        "FLASHUID=267125df30c460de\nFLASHUIDRAW=ffffffffff0102030405060708\n")
+    assert other["flash_uid_agree"] is False
+
+
+def test_a_jedec_id_with_no_manufacturer_is_not_an_id():
+    """JEP106 has no manufacturer 0x00, so a reply whose first byte is 0x00
+    is not an id, however plausible the two bytes after it."""
+    assert fpga.flash_id_from_raw("ff009966") is None
+    assert fpga.flash_id_from_raw("ffef4016") == "0xef4016"
+
+
+def test_a_spi_read_that_fails_its_own_check_leaves_no_flash_on_the_board():
+    """The read's unique id is compared with the one the gateware publishes,
+    and that comparison is the only evidence the transport works. When it
+    fails, the JEDEC id that came over the same transport is no better, so
+    none of the read goes on the board -- the TraceID, which has its own
+    check, still does."""
+    f = {"pcie": [], "ftdi": [], "jtag": None, "cynthion": [CYNTHION_ANALYZER],
+         "cynthion_jtag": dict(SPI_ECHO, flash_jedec="0xef4016")}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["trace_id"] == "0x1b808604604e0e"
+    assert board["flash_jedec"] is None
+    assert board["flash_uid_bits"] is None
+    # ...and a read that passed carries the id through
+    ok = dict(SPI_ECHO, flash_jedec="0xef4016", flash_uid_read="267125df30c460de",
+              flash_uid_agree=True)
+    (board,) = fpga.fpga_verdict(dict(f, cynthion_jtag=ok))
+    assert board["flash_jedec"] == "0xef4016"
+    assert board["flash_uid_bits"] == 64
+
+
+def test_a_trace_id_is_not_attached_to_the_wrong_board():
+    """Two Cynthions, one read. The uid the offline read returned is what
+    says which board the TraceID belongs to."""
+    other = dict(CYNTHION_ANALYZER, path="1-1.5", serial="aaaabbbbccccdddd")
+    f = {"pcie": [], "ftdi": [], "jtag": None,
+         "cynthion": [CYNTHION_ANALYZER, other],
+         "cynthion_jtag": {"trace_id": "0x11223344556677",
+                           "flash_uid": "267125df30c460de", "restored": True}}
+    by_serial = {b["serial"]: b for b in fpga.fpga_verdict(f)}
+    assert by_serial["267125df30c460de"]["trace_id"] == "0x11223344556677"
+    assert by_serial["aaaabbbbccccdddd"].get("trace_id") is None
+
+
+def test_fpga_verdict_names_a_cynthion_from_usb_alone():
+    f = {"pcie": [], "ftdi": [], "jtag": None, "cynthion": [CYNTHION_ANALYZER]}
+    (board,) = fpga.fpga_verdict(f)
+    assert board["kind"] == "cynthion"
+    assert board["serial"] == "267125df30c460de"
+    assert board["hw_rev"] == "1.4"
+    assert board["mode"] == "analyzer"
+    assert fpga.fpga_summary([board]) == [{
+        "kind": "cynthion", "serial": "267125df30c460de",
+        # the serial is recorded twice on purpose: it is the board's
+        # identifier on the bus and it is the configuration flash's own
+        # unique id, and a reader of the document should not have to know
+        # that those are the same number to find either of them.
+        "flash_uid": "267125df30c460de",
+        "hw_rev": "1.4", "mode": "analyzer"}]
 
 
 # --- tinytapeout verdict -------------------------------------------------------------
@@ -617,11 +1464,34 @@ def test_probe_document_from_json_skips_banner():
     assert doc.summary.rtc_battery is None
     assert doc.summary.to_dict()["fpga"] == [{"kind": "acorn", "serial": None, "dna": None,
                                               "idcode": None, "flash": None, "flash_jedec": None,
-                                              "gateware": None, "gateware_id": None}]
+                                              "gateware": None, "gateware_id": None,
+                                              "hw_rev": None, "mode": None, "trace_id": None,
+                                              "dna_sources": [], "dna_agree": None,
+                                              "dna_conflict": None, "soc_model": None,
+                                              "flash_uid": None, "flash_uid_bits": None,
+                                              "flash_uid_state": None,
+                                              "flash_uid_note": None,
+                                              "flash_error": None,
+                                              "flash_extended_id": None,
+                                              "flash_sfdp": None}]
     with pytest.raises(ValueError, match="no JSON"):
         ProbeDocument.from_json("h", "no json")
     with pytest.raises(ValueError, match=r"verdict\.summary"):
         ProbeDocument.from_json("h", json.dumps({"x": 1}))
+
+
+def test_a_cynthion_keeps_its_revision_mode_and_flash_uid_through_the_model():
+    raw = {"verdict": {"summary": {"model": "Raspberry Pi 5 Model B Rev 1.1", "serial": "s",
+                                   "revision": "a04171", "power_class": "gpio-poe-hat",
+                                   "fpga": [{"kind": "cynthion",
+                                             "serial": "267125df30c460de",
+                                             "hw_rev": "1.4", "mode": "analyzer"}]}}}
+    (board,) = ProbeDocument.from_json("h", json.dumps(raw)).summary.fpga
+    assert (board.hw_rev, board.mode) == ("1.4", "analyzer")
+    assert board.trace_id is None
+    # identity is `dna or serial`, so an ECP5 board with no Device DNA is
+    # keyed on its configuration flash uid without the property changing
+    assert board.identity == "267125df30c460de"
     with pytest.raises(ValueError, match="does not know"):
         Summary.from_dict({"model": "m", "serial": "s", "revision": "r",
                            "power_class": "p", "surprise": 1})
@@ -642,7 +1512,8 @@ def test_summary_round_trips_tinytapeout_boards():
 
 def test_load_collected(data_dir):
     docs = load_collected(data_dir)
-    assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi-sw2-p16", "rpiz-serial", "pi-sw2-p47",
+    assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi3", "rpiz-serial",
+                         "pi-sw2-p47", "pi-sw2-p48",
                          "pi-sw2-p22", "rpi4-tt", "pi-sw2-p33", "pi-sw2-p37", "rpi5-433mhz",
                          "rpib-serial", "rpicm1-serial"}
     assert docs["pi-sw2-p22"].summary.compatible == "xunlong,orangepi-pc allwinner,sun8i-h3"
@@ -818,3 +1689,140 @@ def test_tt_boards_colours_prefer_the_sheet_then_the_palette():
     assert c["chip_silk"] == tt_data.COLOURS.get("teal")
     blank = tt_boards.colours(None, tt_data.COLOURS)
     assert set(blank.values()) == {None}
+
+
+# --- which openFPGALoader, and where an able one comes from --------------------
+
+# Measured on rpi5-netv2, 2026-09-22. The rp1-jtag static build of the
+# flash-info series and an upstream build without it print the *same* version
+# string, so the version cannot be the test.
+OFL_VERSION_WITH_FEATURE = "openFPGALoader v1.1.1\n"
+OFL_HELP_WITH_FEATURE = (
+    "      --flash-info              display detailed SPI flash information\n"
+    "      --flash-info-json arg     as --flash-info, and write the "
+    "information to\n")
+OFL_HELP_WITHOUT = (
+    "      --detect                  detect FPGA\n"
+    "  -f, --write-flash             write bitstream in flash\n")
+
+
+def test_a_build_is_judged_by_the_flag_it_has_not_the_version_it_prints():
+    """Feature detection, because version detection cannot work here. The
+    rp1-jtag build carrying the whole flash-info series prints
+    "openFPGALoader v1.1.1" -- character for character what an upstream build
+    without the series prints (measured on rpi5-netv2, 2026-09-22) -- while
+    the fpgas.online build prints a "+fpgasonline." suffix instead. A version
+    test is therefore a false negative on one build and a false positive on
+    any future build that drops the suffix; the flag's own presence in --help
+    is the only honest question to ask."""
+    assert fpga.ofl_supports_flash_info(OFL_HELP_WITH_FEATURE)
+    assert not fpga.ofl_supports_flash_info(OFL_HELP_WITHOUT)
+    assert not fpga.ofl_supports_flash_info("")
+    assert not fpga.ofl_supports_flash_info(None)
+    # the version string is deliberately no evidence either way
+    assert "1.1.1" in OFL_VERSION_WITH_FEATURE
+    assert not fpga.ofl_supports_flash_info(OFL_VERSION_WITH_FEATURE)
+
+
+@pytest.mark.parametrize(("machine", "arch"), [
+    ("aarch64", "arm64"),      # every 64-bit Pi OS
+    ("armv7l", "armv7"),       # a Pi 3/4 on 32-bit userland, or arm_64bit=0
+    ("armv6l", "armv6"),       # Pi 1, Zero, Zero W
+    ("x86_64", None),          # the workstation: no published binary, and
+    ("", None),                # it does not need one
+])
+def test_the_arch_a_host_reports_picks_the_published_binary(machine, arch):
+    """`uname -m` is what a host answers, and the published assets are named
+    for something else, so the mapping is written down once. Nothing reports
+    "armhf" or "arm64" literally, and a 32-bit userland on a 64-bit kernel
+    answers armv7l -- which is the binary it can actually run."""
+    assert fpga.ofl_arch(machine) == arch
+
+
+# The shape `latest.json` publishes, from the fpgas.online-fpga-tools spec.
+OFL_LATEST = {
+    "series": "v0.0",
+    "latest": {
+        "stable": {"openfpgaloader": {
+            "arm64": {"asset": "openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64",
+                      "version": "1.1.1+fpgasonline.0.0.post12"},
+            "armv7": {"asset": "openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-armv7",
+                      "version": "1.1.1+fpgasonline.0.0.post12"}}},
+        "master": {"openfpgaloader": {
+            "arm64": {"asset": "openFPGALoader-1.1.1+git20260915.24e46d1+"
+                               "fpgasonline.0.0.post12-linux-arm64",
+                      "version": "1.1.1+git20260915.24e46d1+fpgasonline.0.0.post12"}}},
+    },
+}
+
+
+def test_the_binary_for_this_host_is_named_by_the_published_index():
+    """The asset name is not constructed here. It is read out of the index the
+    release publishes, so a change to the naming scheme is one fetch away from
+    being followed rather than a string this package has to be taught."""
+    assert fpga.ofl_asset(OFL_LATEST, "stable", "arm64") == (
+        "openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64",
+        "1.1.1+fpgasonline.0.0.post12")
+    assert fpga.ofl_asset(OFL_LATEST, "master", "arm64")[1].startswith(
+        "1.1.1+git20260915")
+    # An arch or a track the release has not built is not an error to paper
+    # over with a guess at the name: there is no such file to fetch.
+    assert fpga.ofl_asset(OFL_LATEST, "stable", "armv6") is None
+    assert fpga.ofl_asset(OFL_LATEST, "master", "armv7") is None
+    assert fpga.ofl_asset(OFL_LATEST, "nightly", "arm64") is None
+    assert fpga.ofl_asset({}, "stable", "arm64") is None
+    assert fpga.ofl_asset(None, "stable", "arm64") is None
+
+
+def test_a_checksum_is_only_accepted_for_the_file_it_names():
+    """`sha256sum` format, one line per asset. The file name is checked, not
+    skipped: a sum lifted from a neighbouring asset would verify nothing at
+    all, and this sum is the only thing standing between a download and
+    something that gets executed as root on a host full of hardware."""
+    good = ("7a8b12d15e3abdbe90d6637da6eed9af2d4d5aeb705120ffa6dd9e1bc501a7ad"
+            "  openFPGALoader-1.1.1-linux-arm64\n")
+    assert fpga.sha256_expected(good, "openFPGALoader-1.1.1-linux-arm64") == (
+        "7a8b12d15e3abdbe90d6637da6eed9af2d4d5aeb705120ffa6dd9e1bc501a7ad")
+    # the same sum, offered for a different file
+    assert fpga.sha256_expected(good, "openFPGALoader-1.1.1-linux-armv7") is None
+    # a truncated digest, a non-hex digest, an empty document, junk
+    assert fpga.sha256_expected("dead  openFPGALoader-1.1.1-linux-arm64\n",
+                                "openFPGALoader-1.1.1-linux-arm64") is None
+    assert fpga.sha256_expected("z" * 64 + "  f\n", "f") is None
+    assert fpga.sha256_expected("", "f") is None
+    assert fpga.sha256_expected(None, "f") is None
+    # "sha256sum --binary" marks the file with a star; same digest, same file
+    star = ("7a8b12d15e3abdbe90d6637da6eed9af2d4d5aeb705120ffa6dd9e1bc501a7ad"
+            " *openFPGALoader-1.1.1-linux-arm64\n")
+    assert fpga.sha256_expected(star, "openFPGALoader-1.1.1-linux-arm64")
+
+
+def test_the_downloaded_tree_is_laid_out_as_the_release_documents_it():
+    """The published asset is a tarball, not a bare executable, because a
+    bare executable cannot read a flash. Measured 2026-09-22 on rpi5-netv2
+    with rp1-jtag's static build: --detect and --read-dna work perfectly,
+    and --flash-info fails with "Can't program SPI flash: missing
+    device-package information" because the spiOverJtag bridge bitstreams
+    are runtime data in a compiled-in DATA_DIR that does not exist on the
+    host. The tarball carries them, and OPENFPGALOADER_SOJ_DIR points the
+    binary at them."""
+    tree = fpga.ofl_tree("/cache", "1.1.1+fpgasonline.0.0.post12", "arm64")
+    assert tree["binary"] == (
+        "/cache/openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64"
+        "/bin/openFPGALoader")
+    assert tree["bridges"] == (
+        "/cache/openFPGALoader-1.1.1+fpgasonline.0.0.post12-linux-arm64"
+        "/share/openFPGALoader")
+
+
+def test_a_downloaded_binary_is_run_with_its_own_bridges():
+    """`sudo` drops the environment, so the variable has to be set on the
+    other side of it -- which is why this is a prefix and not a dict the
+    caller merges into os.environ."""
+    argv = fpga.ofl_argv({"binary": "/c/t/bin/openFPGALoader",
+                          "bridges": "/c/t/share/openFPGALoader"})
+    assert argv == ["sudo", "env", "OPENFPGALOADER_SOJ_DIR=/c/t/share/openFPGALoader",
+                    "/c/t/bin/openFPGALoader"]
+    # the host's own copy needs no such thing: its bridges are where it was
+    # built to look for them
+    assert fpga.ofl_argv(None) == ["sudo", "openFPGALoader"]

@@ -2,13 +2,15 @@
 
     rpi-hwid probe [--json] [--fpga] [--jtag] [--flash] [--tinytapeout] [--no-stop-service]
                                                           on a Pi: what is this?
-    rpi-hwid fpga [--json] [--jtag] [--flash]             on a Pi: which FPGA board?
+    rpi-hwid fpga [--json] [--jtag] [--flash] [--force-offline]
+                                                          on a Pi: which FPGA board?
     rpi-hwid tinytapeout [--json] [--no-repl] [--no-stop-service]
                                                           on a Pi: which Tiny Tapeout board?
     rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--no-stop-service] HOST…
                                                           over ssh: one JSON per host
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
-    rpi-hwid name --netv2 DNA… | --arty SERIAL…           the derived board names
+    rpi-hwid name --netv2 DNA… | --arty SERIAL… | --cynthion UID…
+                                                          the derived board names
     rpi-hwid revision CODE…                               decode Pi revision codes
 """
 
@@ -21,6 +23,13 @@ from pathlib import Path
 
 from rpi_hwid import names, revision
 from rpi_hwid.collect import DEFAULT_USERS
+
+
+def fpga_module_pins() -> str:
+    """The default JTAG harness, imported late: fpga is a standalone probe."""
+    from rpi_hwid import fpga
+
+    return fpga.HARNESS_PINS
 
 # The Tiny Tapeout module stops the service holding a demo board's port for
 # the length of its read, and starts it again after -- only fpgas-tt.service
@@ -74,7 +83,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def cmd_fpga(args: argparse.Namespace) -> int:
     from rpi_hwid import fpga
 
-    f = fpga.collect_fpga(args.jtag, args.flash)
+    f = fpga.collect_fpga(args.jtag, args.flash, args.force_offline, args.pins, args.soc)
     if args.json:
         print(json.dumps(f, indent=1))
     else:
@@ -123,6 +132,9 @@ def cmd_name(args: argparse.Namespace) -> int:
     if args.netv2:
         for dna in args.netv2:
             print(f"{names.netv2_name(dna)}  {names.normalise_dna(dna)}")
+    if args.cynthion:
+        for uid in args.cynthion:
+            print(f"{names.cynthion_name(uid)}  {names.normalise_dna(uid)}")
     if args.arty:
         pinned = json.loads(Path(args.names).read_text()) if args.names else None
         for serial, name in names.arty_names(args.arty, pinned).items():
@@ -158,6 +170,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json", action="store_true")
     p.add_argument("--jtag", action="store_true")
     p.add_argument("--flash", action="store_true")
+    p.add_argument("--force-offline", action="store_true",
+                   help="read a Cynthion's ECP5 TraceID, which ends its capture "
+                        "and may drop power to its TARGET port")
+    p.add_argument("--soc", action="store_true",
+                   help="also read an fpgas.online SoC's ident and DNA over PCIe "
+                        "BAR0, to check them against JTAG")
+    p.add_argument("--pins", metavar="TDI:TDO:TCK:TMS",
+                   help="the GPIO JTAG harness, when it is not the NeTV2's "
+                        f"{fpga_module_pins()} (an Acorn is 2:3:4:14 on a "
+                        "Compute Blade, 10:9:11:8 on a Pi 5)")
     p.set_defaults(func=cmd_fpga)
 
     p = sub.add_parser("tinytapeout",
@@ -192,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("name", help="derived board names")
     p.add_argument("--netv2", nargs="*", metavar="DNA")
+    p.add_argument("--cynthion", nargs="*", metavar="FLASH_UID")
     p.add_argument("--arty", nargs="*", metavar="SERIAL")
     p.add_argument("--names", help="JSON registry of Arty serial -> name to honour")
     p.set_defaults(func=cmd_name)

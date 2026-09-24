@@ -89,7 +89,29 @@ def _doc(model, serial, revision, header, power_class, fpga, macs, usb_net, rtc,
 
 PI5_NETV2 = _doc(
     "Raspberry Pi 5 Model B Rev 1.0", "d88100008543dc30", "c04170", [], "usbc-supply",
-    [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "idcode": "0x3631093"}],
+    # The rig carries two FPGA boards: the NeTV2 on the GPIO harness, and the
+    # Cynthion wired in line on its USB, read from sysfs alone 2026-09-21.
+    # Flash read by openfpgaloader-36 2026-09-22 with openFPGALoader 7fd0028:
+    # a Macronix 0xc22017, 8 MiB, whose factory ESN was never programmed --
+    # the part says so itself in its security register, which is what makes
+    # "no factory ESN" a measured fact rather than the absence of a reading.
+    # The note was cross-checked against raw reads: the register is actively
+    # driven 0x00 where an idle line reads 0xFF, and the secured OTP is all
+    # 0xFF and distinct from the main array.
+    [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "idcode": "0x3631093",
+      "flash_jedec": "0xc22017", "flash_uid_state": "none",
+      "flash_uid_note": "no factory ESN: security register 0x00, "
+                        "bit 0 (factory lock) = 0"},
+     {"kind": "cynthion", "serial": "267125df30c460de", "hw_rev": "1.4",
+      "mode": "analyzer", "trace_id": "0x1b808604604e0e",
+      # The uid is read off the flash by the gateware and published as the
+      # USB serial. The JEDEC id is in no descriptor: it was asked of the
+      # chip itself over the ECP5's background SPI (2026-09-22), in the same
+      # offline window as the TraceID, and that read's unique id matched the
+      # published serial -- which is what lets its JEDEC id be believed.
+      "flash_jedec": "0xef4016",
+      "flash_uid": "267125df30c460de",
+      "flash_uid_bits": 64, "flash_uid_state": "read"}],
     [{"kind": "eth", "mac": "2c:cf:67:16:bd:98"}, {"kind": "wlan", "mac": "2c:cf:67:16:bd:99"}],
     [{"iface": "eth-netv2", "mac": "00:0e:c6:82:b5:e1", "driver": "ax88179_178a",
       "vidpid": "0b95:1790", "manufacturer": "ASIX Elec. Corp.", "product": "AX88179",
@@ -103,6 +125,12 @@ POOL_3BPLUS = _doc(
     [], [{"kind": "eth", "mac": "b8:27:eb:e3:e7:e4"}], [], None, None, None,
 )
 
+# pi-sw2-p16. Its Arty's flash was read before unique ids were, so the
+# document has a JEDEC id and no unique-id state at all -- which is exactly
+# the shape a label may not be printed from, and the reason this fixture is
+# kept as it was found rather than topped up with another board's numbers.
+# openfpgaloader-36 has never met Digilent 210319B301DE, so there is nothing
+# to top it up with honestly.
 ARTY_HOST = _doc(
     "Raspberry Pi 4 Model B Rev 1.5", "10000000ce8e3593", "b03115",
     ["Pmod HAT Adaptor"], "undetermined",
@@ -114,6 +142,28 @@ ARTY_HOST = _doc(
 )
 ARTY_HOST["verdict"]["summary"]["hat_uuid"] = "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a"
 
+# pi3 (10.21.0.103) on ps1.fpgas.online: the one Arty where every fact comes
+# off the same board. Host identity and the Digilent serial read by
+# openfpgaloader-36 2026-09-22, its flash document the same day (Micron
+# 0x20BA18, 16 MiB, 112 bits of factory id in the extended 0x9F reply), and
+# the DNA read here over that board's own FT2232 on 2026-09-21. pi7 and pi9
+# have flash and serials but no DNA, and an Arty's label is keyed on its DNA.
+ARTY_PI3 = _doc(
+    "Raspberry Pi 4 Model B Rev 1.1", "10000000f1b7bb5a", "a03111",
+    [], "undetermined",
+    [{"kind": "arty", "serial": "210319A43AD3", "dna": "0x0064f5483229085c",
+      "idcode": "0x362d093", "flash_jedec": "0x20ba18",
+      # RDID bytes 4-6, read by openfpgaloader-36 on 2026-09-22 with the build
+      # that reports them: extended device ID 00h, so an N25Q128 and not an
+      # MT25QL128 (which sets bit 6)
+      "flash_extended_id": "0x100000",
+      "flash_uid": "235351451900080037091015126b",
+      "flash_uid_bits": 112, "flash_uid_state": "read"}],
+    [{"kind": "eth", "mac": "dc:a6:32:05:32:45"},
+     {"kind": "wlan", "mac": "dc:a6:32:05:32:46"}],
+    [], None, None, None,
+)
+
 ZERO_BONNET = _doc(
     "Raspberry Pi Zero W Rev 1.1", "000000005157f671", "9000c1",
     ["Waveshare PoE-ETH-USB-HUB-HAT"], "bonnet-poe", [],
@@ -121,11 +171,37 @@ ZERO_BONNET = _doc(
     [], None, None, None,
 )
 
-ACORN_HOST = _doc(
+# pi-sw2-p47. Its Acorn is out of the slot at the moment, so the document
+# carries none: a board whose identifier was never read may not be labelled,
+# and inventing one for a card that is not even plugged in would be worse.
+PI5_POE_HAT = _doc(
     "Raspberry Pi 5 Model B Rev 1.1", "c36b093f773d46b8", "a04171",
-    ["Waveshare PoE M.2 HAT+ (B)"], "gpio-poe-hat", [{"kind": "acorn"}],
+    ["Waveshare PoE M.2 HAT+ (B)"], "gpio-poe-hat", [],
     [{"kind": "eth", "mac": "98:fe:54:13:f5:75"}], [], True, True, 3000,
 )
+
+# pi-sw2-p48, read 2026-09-21. Its Acorn CLE-215+ no longer holds the Sqrl
+# factory image, so its PCIe id is its gateware's (10ee:7021) and says
+# nothing about the card. The harness is what names it -- pins 10:9:11:8 are
+# the Acorn's own P1 header -- and the die picks the variant. DNA read here
+# with openocd's FUSE_DNA, identical digit for digit to what the Acorn
+# deployment read independently from the DNA_PORT primitive over UART and
+# over PCIe BAR0.
+ACORN_HOST = _doc(
+    "Raspberry Pi 5 Model B Rev 1.1", "0cd35697db04a4ab", "b04171",
+    ["Waveshare PoE M.2 HAT+ (B)"], "gpio-poe-hat",
+    # Flash read by openfpgaloader-36 2026-09-22: a Spansion S25FL256S,
+    # 32 MiB, whose 128-bit factory number came out of OTP via 0x4B.
+    [{"kind": "acorn", "dna": "0x0054b48664b04854", "idcode": "0x13636093",
+      "flash_jedec": "0x010219",
+      # 4D, 01 (4 KiB + 64 KiB sectors), 80 (FL-S): an S25FL256S, read by
+      # openfpgaloader-36 on 2026-09-22
+      "flash_extended_id": "0x4d0180",
+      "flash_uid": "edcbeececb2b2a88b04f914d2e46af90",
+      "flash_uid_bits": 128, "flash_uid_state": "read"}],
+    [{"kind": "eth", "mac": "88:a2:9e:45:85:77"}], [], False, True, 3000,
+)
+ACORN_HOST["verdict"]["summary"]["hat_uuid"] = "9729525c-eeee-98e9-f348-a0720f4c16eb"
 
 # The pool's Orange Pi PC, probed on pi-sw2-p22: no revision code, no power
 # sensing, a SoC serial from U-Boot and the eth0 MAC U-Boot derives from it.
@@ -320,9 +396,10 @@ RAW = {
     "rpib-serial": MODEL_B,
     "rpicm1-serial": COMPUTE_MODULE_1,
     "pi-sw1-p10": POOL_3BPLUS,
-    "pi-sw2-p16": ARTY_HOST,
+    "pi3": ARTY_PI3,
     "rpiz-serial": ZERO_BONNET,
-    "pi-sw2-p47": ACORN_HOST,
+    "pi-sw2-p47": PI5_POE_HAT,
+    "pi-sw2-p48": ACORN_HOST,
     "pi-sw2-p22": OPI_PC,
     "rpi4-tt": TT_HOST,
     "pi-sw2-p33": TT_FPGA_HOST,
@@ -342,3 +419,22 @@ def data_dir(tmp_path):
     for name, raw in RAW.items():
         (tmp_path / f"{name}.json").write_text(json.dumps(raw))
     return tmp_path
+
+
+@pytest.fixture(autouse=True)
+def no_downloads(monkeypatch):
+    """Nothing in this suite reaches the network.
+
+    `fpga.openfpgaloader_tool` fetches a static openFPGALoader when the
+    host's own copy cannot read a flash, which is the right behaviour on a
+    Pi and wrong in a test: it would make the suite depend on GitHub being
+    up and on a release existing. Stubbed to "no answer", which is the same
+    path a host with no route out takes. A test that wants the download path
+    stubs this itself.
+    """
+    from rpi_hwid import fpga
+
+    def refuse(url, timeout=180):
+        raise AssertionError("a test tried to fetch " + url)
+
+    monkeypatch.setattr(fpga, "ofl_get", refuse)
