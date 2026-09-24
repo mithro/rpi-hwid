@@ -298,6 +298,9 @@ def fake_root(tmp_path, monkeypatch):
         return ""
     monkeypatch.setattr(probe, "sh", fake_sh)
     monkeypatch.setattr(fpga, "sh", fake_sh)
+    # nor any fpgas-acorn-verify, which runs under sudo: a stub that says it
+    # was not run, so no test reaches the real thing whatever `which` answers
+    monkeypatch.setattr(fpga, "sh_split", lambda args, timeout=15: ("", "stub: not run"))
     return tmp_path
 
 
@@ -750,6 +753,130 @@ def test_a_card_on_pcie_is_taken_off_the_bus_for_its_flash_read(fake_root, monke
     ran.clear()
     fpga.jtag_probe(want_flash=False, detach=[slot])
     assert not [a for a in ran if a[-1].endswith(("/remove", "/rescan"))]
+
+
+# What `sudo fpgas-acorn-verify --identify` printed on pi-sw2-p48 (the Acorn
+# deployment, 2026-09-23); its unique id is the one the JTAG read gave.
+ACORN_IDENTIFY = {
+    "schema_version": 1, "result": "read", "boards": [{
+        "bdf": "0001:01:00.0", "ids": "10ee:7021", "subsystem": "1e24:021f",
+        "kind": "fpgas-online", "variant": "cle-215+",
+        "running": {"identifier": "fpgas-online Acorn PCIe SoC cle-215+ 2026-09-21 14:23:32",
+                    "build": "operational"},
+        "flash": {"part": "S25FL256S", "jedec": "0x010219",
+                  "unique_id": "edcbeececb2b2a88b04f914d2e46af90",
+                  "size_bytes": 33554432},
+        "result": "read"}]}
+
+
+def _acorn_board(**changes):
+    doc = json.loads(json.dumps(ACORN_IDENTIFY))
+    doc["boards"][0].update(changes)
+    doc["result"] = doc["boards"][0]["result"]
+    return doc
+
+
+def test_an_acorns_flash_is_read_from_what_its_soc_reports():
+    read, why = fpga.acorn_flash_parse(json.dumps(ACORN_IDENTIFY))
+    assert why is None
+    assert read == {"0001:01:00.0": {
+        "flash_source": "pcie", "flash_jedec": "0x010219", "flash": "S25FL256S",
+        "flash_uid": "edcbeececb2b2a88b04f914d2e46af90", "flash_uid_bits": 128,
+        "flash_uid_state": "read", "flash_uid_note": None,
+        # nothing over PCIe reports these, so nothing is claimed for them
+        "flash_extended_id": None, "flash_sfdp": None}}
+
+
+@pytest.mark.parametrize("doc, because", [
+    # SQRL's factory image: its BAR is never opened
+    (_acorn_board(result="unconverted", kind="sqrl-factory", flash=None,
+                  reason="SQRL factory firmware"), "unconverted (SQRL factory firmware)"),
+    # someone else's design, or a build this release does not know
+    (_acorn_board(result="fail", flash=None, reason="not our SoC"), "fail (not our SoC)"),
+    # "read" but with no unique id in it is not a read of the flash's identity
+    (_acorn_board(flash={"part": "S25FL256S", "jedec": "0x010219", "unique_id": None}),
+     "read (no unique id)"),
+    ({"schema_version": 1, "result": "none", "boards": []}, "no board"),
+    ({"schema_version": 2, "result": "read", "boards": []}, "schema_version 2"),
+])
+def test_an_acorn_the_soc_could_not_read_says_why(doc, because):
+    read, why = fpga.acorn_flash_parse(json.dumps(doc))
+    assert read == {}
+    assert because in why
+
+
+def test_output_that_is_not_the_tools_document_is_not_read():
+    read, why = fpga.acorn_flash_parse("sudo: fpgas-acorn-verify: command not found")
+    assert read == {}
+    assert "command not found" in why
+
+
+def _acorn_jtag(fake_root, monkeypatch, identify):
+    """jtag_probe on a Pi 5 with an Acorn on PCIe and on the GPIO harness,
+    fpgas-acorn-verify answering `identify` (None: not installed)."""
+    slot = "0001:01:00.0"
+    dev = fake_root / "sys/bus/pci/devices" / slot
+    dev.mkdir(parents=True, exist_ok=True)
+    ran = []
+
+    def sh(args, timeout=15):
+        ran.append(args)
+        if args == ["which", "fpgas-acorn-verify"]:
+            return "/usr/bin/fpgas-acorn-verify" if identify is not None else ""
+        if args[:1] == ["which"]:
+            return "/usr/bin/openFPGALoader"
+        if args[-1].endswith("/remove"):
+            shutil.rmtree(dev)
+        if args[-1].endswith("/rescan"):
+            dev.mkdir()
+        return '{"dna": "0x0054b48664b04854"}'
+
+    def sh_split(args, timeout=15):
+        ran.append(args)
+        return (json.dumps(identify), "")
+    monkeypatch.setattr(fpga, "sh", sh)
+    monkeypatch.setattr(fpga, "sh_split", sh_split)
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "ch347_cables", list)
+    monkeypatch.setattr(fpga, "gpiochips", list)
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "idcode 0x3636093")
+    monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (ran.append(args), (1, ""))[1])
+    monkeypatch.setattr(fpga, "PCIE_SETTLE_S", 0)
+    host_openfpgaloader(monkeypatch)
+    res = fpga.jtag_probe(want_flash=True, pins="10:9:11:8", detach=[slot])
+    return res, [" ".join(a) for a in ran]
+
+
+def test_an_acorns_flash_is_asked_over_pcie_before_any_bridge_is_loaded(fake_root,
+                                                                         monkeypatch):
+    """A JTAG flash read replaces the design the Acorn is running, which may
+    be someone's session; the SoC can read the same flash without that."""
+    res, ran = _acorn_jtag(fake_root, monkeypatch, ACORN_IDENTIFY)
+    assert "sudo fpgas-acorn-verify --identify" in ran
+    assert not [a for a in ran if "--flash-info-json" in a or a.endswith("/remove")]
+    assert res["flash_source"] == "pcie"
+    assert res["flash_uid"] == "edcbeececb2b2a88b04f914d2e46af90"
+    assert res["flash_jedec"] == "0x010219"
+    # the chain was still read: the die and the DNA come from JTAG either way
+    assert res["idcode"] == "0x3636093"
+    assert res["dna"] == "0x0054b48664b04854"
+
+
+@pytest.mark.parametrize("identify, because", [
+    (None, "not installed"),
+    (_acorn_board(result="fail", flash=None, reason="not our SoC"), "fail (not our SoC)"),
+])
+def test_an_acorn_the_soc_cannot_read_falls_back_to_jtag(fake_root, monkeypatch,
+                                                         identify, because):
+    res, ran = _acorn_jtag(fake_root, monkeypatch, identify)
+    assert [a for a in ran if "--flash-info-json" in a]
+    assert res["flash_source"] == "jtag"
+    assert because in res["flash_pcie_error"]
+
+
+def test_the_flash_source_reaches_the_summary():
+    (entry,) = fpga.fpga_summary([{"kind": "acorn", "flash_source": "pcie"}])
+    assert entry["flash_source"] == "pcie"
 
 
 def test_a_card_comes_back_from_the_rescan_decoding_as_it_was(fake_root, monkeypatch):
@@ -1672,3 +1799,12 @@ def test_no_static_build_is_fetched_for_a_host_nothing_is_built_for(monkeypatch,
     tool = fpga.openfpgaloader_tool()
     assert tool["flash_info"] is False
     assert "no static build is published for x86_64" in tool["why"]
+
+
+def test_a_summary_saying_where_its_flash_was_read_loads():
+    """Every key fpga_summary writes has to be one the label side can load:
+    FpgaBoard is built with **, so a key it lacks is a TypeError there."""
+    from rpi_hwid.model import FpgaBoard
+    (entry,) = fpga.fpga_summary([{"kind": "acorn", "flash_source": "pcie",
+                                   "flash_jedec": "0x010219"}])
+    assert FpgaBoard(**entry).flash_source == "pcie"

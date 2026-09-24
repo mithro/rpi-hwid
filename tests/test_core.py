@@ -1473,7 +1473,8 @@ def test_probe_document_from_json_skips_banner():
                                               "flash_uid_note": None,
                                               "flash_error": None,
                                               "flash_extended_id": None,
-                                              "flash_sfdp": None}]
+                                              "flash_sfdp": None,
+                                              "flash_source": None}]
     with pytest.raises(ValueError, match="no JSON"):
         ProbeDocument.from_json("h", "no json")
     with pytest.raises(ValueError, match=r"verdict\.summary"):

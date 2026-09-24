@@ -99,6 +99,9 @@ class FpgaBoard:
     # without one, None where that is unknown: what tells an S25FL127S (which
     # has RSFDP) from an S25FL128S (which has not).
     flash_sfdp: str | None = None
+    # How the flash was read: "pcie" by an Acorn's own SoC, "jtag" through a
+    # bridge that replaced the running design.
+    flash_source: str | None = None
 
     @property
     def identity(self) -> str | None:
