@@ -1561,15 +1561,6 @@ def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
     res["openfpgaloader"] = tool
     if cable == "gpio":
         res["pins"] = pins or HARNESS_PINS
-    if want_flash and detach:
-        # A card on PCIe may be an Acorn whose SoC can read the flash without
-        # replacing itself; only what it could not read goes on to the bridge.
-        pcie, said = acorn_flash_probe()
-        mine = [pcie[s] for s in detach if s in pcie]
-        if mine:
-            res.update(mine[0])
-            return res
-        res["flash_pcie_error"] = said
     if want_flash:
         res["flash_source"] = "jtag"
         # The bridge replaces the running design either way, which is what
@@ -2257,7 +2248,7 @@ def fpga_verdict(d):
 # What a chain's flash read leaves on the board it belongs to
 JTAG_FLASH_KEYS = ("flash_jedec", "flash", "flash_uid", "flash_uid_bits",
                    "flash_uid_state", "flash_uid_note", "flash_error",
-                   "flash_extended_id", "flash_sfdp")
+                   "flash_extended_id", "flash_sfdp", "flash_source")
 
 
 def merge_soc(boards, soc):
@@ -2286,6 +2277,18 @@ def merge_soc(boards, soc):
             if reading.get("model") and board["kind"] in ("acorn", "unknown-fpga", "jtag"):
                 board["kind"] = "acorn"
                 board["soc_model"] = reading["model"]
+    return boards
+
+
+def merge_acorn_flash(boards, read):
+    """Put each flash an Acorn's SoC read on the board at that PCIe address.
+
+    By slot, not through the chain: the chain belongs to whatever board its
+    harness names, and on a Pi 4's default pins that is a NeTV2."""
+    for board in boards:
+        reading = read.get(board.get("slot") or "")
+        if reading:
+            board.update(reading)
     return boards
 
 
@@ -2332,15 +2335,27 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
         for pc in f["pcie"]:
             if pc["id"].startswith(("10ee:", "1e24:")):
                 f["soc"][pc["slot"]] = soc_probe(pc["slot"])
-    f["jtag"] = jtag_probe(flash, pins, gateware_parts(f["pcileech"]),
-                           fpga_endpoints(f["pcie"])) if jtag else None
+    # An Acorn's SoC reads its own flash without replacing itself, and needs
+    # no chain to do it: pi-sw2-p48's was read this way while its harness
+    # said "TDO is stuck at 0". So it is asked first, and on its own; only a
+    # board it could not read goes on to the bridge, which replaces whatever
+    # design is running -- possibly someone's session.
+    endpoints = fpga_endpoints(f["pcie"])
+    f["acorn_flash"] = None
+    if flash and endpoints:
+        read, why = acorn_flash_probe()
+        f["acorn_flash"] = {"read": read, "error": why}
+    unread = [s for s in endpoints if s not in (f["acorn_flash"] or {}).get("read", {})]
+    f["jtag"] = jtag_probe(flash and (unread or not endpoints), pins,
+                           gateware_parts(f["pcileech"]), endpoints) if jtag else None
     # The ECP5 TraceID, and only when asked for by name. This ends the
     # board's capture and may drop power to whatever is on its TARGET port,
     # so it is not folded into --jtag, which is harmless everywhere else.
     f["cynthion_jtag"] = None
     if force_offline and any(cynthion_flash_uid(c) for c in f["cynthion"]):
         f["cynthion_jtag"] = cynthion_offline_probe()
-    f["boards"] = merge_soc(fpga_verdict(f), f["soc"])
+    f["boards"] = merge_acorn_flash(merge_soc(fpga_verdict(f), f["soc"]),
+                                    (f["acorn_flash"] or {}).get("read", {}))
     f["summary"] = fpga_summary(f["boards"])
     return f
 
@@ -2348,7 +2363,7 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
 def merge_fpga(doc, f):
     """Fold an fpga document into a Pi probe document (in place)."""
     doc["fpga"] = {k: f[k] for k in ("pcie", "ftdi", "jtag", "cynthion",
-                                     "cynthion_jtag", "soc")}
+                                     "cynthion_jtag", "soc", "acorn_flash")}
     doc["verdict"]["fpga"] = f["boards"]
     doc["verdict"]["summary"]["fpga"] = f["summary"]
     return doc

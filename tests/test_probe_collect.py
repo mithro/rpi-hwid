@@ -811,9 +811,10 @@ def test_output_that_is_not_the_tools_document_is_not_read():
     assert "command not found" in why
 
 
-def _acorn_jtag(fake_root, monkeypatch, identify):
-    """jtag_probe on a Pi 5 with an Acorn on PCIe and on the GPIO harness,
-    fpgas-acorn-verify answering `identify` (None: not installed)."""
+def _acorn_collect(fake_root, monkeypatch, identify, chain="idcode 0x3636093"):
+    """collect_fpga(--jtag --flash) on a Pi 5 with an Acorn on PCIe and on
+    the GPIO harness, fpgas-acorn-verify answering `identify` (None: not
+    installed) and the chain answering --detect with `chain`."""
     slot = "0001:01:00.0"
     dev = fake_root / "sys/bus/pci/devices" / slot
     dev.mkdir(parents=True, exist_ok=True)
@@ -839,27 +840,56 @@ def _acorn_jtag(fake_root, monkeypatch, identify):
     monkeypatch.setattr(fpga, "digilent_cables", list)
     monkeypatch.setattr(fpga, "ch347_cables", list)
     monkeypatch.setattr(fpga, "gpiochips", list)
-    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: "idcode 0x3636093")
+    monkeypatch.setattr(fpga, "sh_all", lambda args, timeout=15: chain)
     monkeypatch.setattr(fpga, "sh_rc", lambda args, timeout=15: (ran.append(args), (1, ""))[1])
+    # the harness's openocd fallback, for a chain openFPGALoader cannot read
+    monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None, pins=None: None)
     monkeypatch.setattr(fpga, "PCIE_SETTLE_S", 0)
     host_openfpgaloader(monkeypatch)
-    res = fpga.jtag_probe(want_flash=True, pins="10:9:11:8", detach=[slot])
-    return res, [" ".join(a) for a in ran]
+    f = fpga.collect_fpga(jtag=True, flash=True, pins="10:9:11:8")
+    (board,) = [b for b in f["boards"] if b.get("slot") == slot]
+    return f, board, [" ".join(a) for a in ran]
 
 
 def test_an_acorns_flash_is_asked_over_pcie_before_any_bridge_is_loaded(fake_root,
                                                                          monkeypatch):
     """A JTAG flash read replaces the design the Acorn is running, which may
     be someone's session; the SoC can read the same flash without that."""
-    res, ran = _acorn_jtag(fake_root, monkeypatch, ACORN_IDENTIFY)
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, ACORN_IDENTIFY)
     assert "sudo fpgas-acorn-verify --identify" in ran
     assert not [a for a in ran if "--flash-info-json" in a or a.endswith("/remove")]
-    assert res["flash_source"] == "pcie"
-    assert res["flash_uid"] == "edcbeececb2b2a88b04f914d2e46af90"
-    assert res["flash_jedec"] == "0x010219"
+    assert board["flash_source"] == "pcie"
+    assert board["flash_uid"] == "edcbeececb2b2a88b04f914d2e46af90"
+    assert board["flash_jedec"] == "0x010219"
     # the chain was still read: the die and the DNA come from JTAG either way
-    assert res["idcode"] == "0x3636093"
-    assert res["dna"] == "0x0054b48664b04854"
+    assert board["idcode"] == "0x3636093"
+    assert board["dna"] == "0x0054b48664b04854"
+    (entry,) = [e for e in f["summary"] if e["kind"] == "acorn"]
+    assert entry["flash_source"] == "pcie"
+    assert entry["flash_uid"] == "edcbeececb2b2a88b04f914d2e46af90"
+
+
+def test_an_acorns_flash_is_read_over_pcie_when_its_chain_does_not_answer(fake_root,
+                                                                          monkeypatch):
+    """pi-sw2-p48, 2026-09-25: its SoC read the flash while its harness gave
+    "TDO is stuck at 0". The PCIe read needs no chain, and it is not skipped
+    when there is none."""
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, ACORN_IDENTIFY,
+                                   chain="JTAG init failed with: TDO is stuck at 0")
+    assert f["jtag"]["idcode"] is None
+    assert not [a for a in ran if "--flash-info-json" in a or a.endswith("/remove")]
+    assert board["flash_source"] == "pcie"
+    assert board["flash_uid"] == "edcbeececb2b2a88b04f914d2e46af90"
+
+
+def test_no_acorn_tool_is_run_where_no_fpga_is_on_pcie(fake_root, monkeypatch):
+    shutil.rmtree(fake_root / "sys/bus/pci/devices/0001:01:00.0")
+    ran = []
+    # installed, so only the absence of an FPGA keeps it from running
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/" + args[-1])
+    monkeypatch.setattr(fpga, "sh_split", lambda args, timeout=15: (ran.append(args), ("", ""))[1])
+    fpga.collect_fpga(flash=True)
+    assert ran == []
 
 
 @pytest.mark.parametrize(("identify", "because"), [
@@ -868,10 +898,10 @@ def test_an_acorns_flash_is_asked_over_pcie_before_any_bridge_is_loaded(fake_roo
 ])
 def test_an_acorn_the_soc_cannot_read_falls_back_to_jtag(fake_root, monkeypatch,
                                                          identify, because):
-    res, ran = _acorn_jtag(fake_root, monkeypatch, identify)
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, identify)
     assert [a for a in ran if "--flash-info-json" in a]
-    assert res["flash_source"] == "jtag"
-    assert because in res["flash_pcie_error"]
+    assert board["flash_source"] == "jtag"
+    assert because in f["acorn_flash"]["error"]
 
 
 def test_the_flash_source_reaches_the_summary():
