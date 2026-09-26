@@ -106,6 +106,35 @@ License: trademark
  it. Copied byte for byte from gf.com's own site icon SVG, GF's
  symbol-only mark; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/tasmota.svg
+Copyright: Theo Arends and the Tasmota contributors (the logo designed by tmo)
+License: GPL-3.0-only
+ The Tasmota symbol (the house with the power symbol), drawn only on the
+ label of a device running Tasmota, to identify its firmware. Copied byte
+ for byte from tools/logo/TASMOTA_Symbol_Vector.svg in
+ https://github.com/arendst/Tasmota, whose licence is GPL-3.0-only; see
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/athom.png
+Copyright: Athom (AthomTech)
+License: trademark
+ The "athom" wordmark, drawn only on the label of hardware Athom made, to
+ identify it. From the og:image of athom.tech, cropped to the wordmark and
+ with its grey deepened for print (the shapes untouched); see
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/sonoff.png
+Copyright: Shenzhen Sonoff Technologies Co., Ltd.
+License: trademark
+ The SONOFF wordmark, drawn only on the label of hardware Sonoff made, to
+ identify it. From the og:image of sonoff.tech, cropped to the mark with
+ its white ground made transparent (the shapes untouched); see
+ src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.
+
+License: GPL-3.0-only
+ On Debian systems, the complete text of the GNU General Public License
+ version 3 can be found in '/usr/share/common-licenses/GPL-3'.

@@ -29,6 +29,44 @@ $ rpi-hwid collect --out data/ -J jump.example.org --fpga --jtag pi@10.21.2.16 \
 that worked is recorded in the document. A host that cannot be reached is reported
 and skipped, and the exit status says so.
 
+## Tasmota devices
+
+A Tasmota plug is not an ssh host, so `rpi-hwid tasmota` reads it over its
+HTTP API instead, finding the devices in gdoc2netcfg's IoT sheet: every row
+named `tasmota-...`, or whose hardware column says Tasmota. The sheet is its
+`.cache/iot.csv`, its published URL, or the URL and site a
+`gdoc2netcfg.toml` names; a URL is fetched into memory and not written
+anywhere. `--site NAME=OCTET` resolves the sheet's `10.X.` addresses, once
+per site; a row with no site belongs to the first.
+
+These plugs power switches, routers and other hosts, and the API that reads
+one also switches it, restarts it and flashes it. So the collector sends only
+`Status 0`, and `Module` and `Template` with no value, and fetches only the
+Information page (`/in`): an allowlist of exact strings, checked before a URL
+exists, so anything else -- or one of those with anything added -- is
+refused. Each device is read once, one request at a time, a few devices at
+a time (`--workers`, default 4) with a timeout (`--timeout`, default 5 s);
+one that does not answer is reported, not retried. A device with a web
+password is read with `TASMOTA_WEB_PASSWORD` from the environment, which is
+sent and never written down.
+
+```
+$ rpi-hwid tasmota --gdoc2netcfg ~/github/mithro/gdoc2netcfg/gdoc2netcfg.toml \
+      --site monarto=2 --out data/tasmota
+  au-plug-1: Athom Plug V3 7c:2c:67:d9:ba:24
+  ...
+  au-plug-24: FAILED (no answer to Status 0 from 10.1.91.24: [Errno 113] No route to host)
+  ...
+  us-plug-4: Sonoff S31 bc:dd:c2:ea:b0:c8
+52 of 65 device(s) written to data/tasmota
+```
+
+A device answering with a MAC the sheet does not have at that address is
+refused rather than filed under the wrong name. Each document keeps the
+device's answers as evidence and a `verdict.tasmota` drawn from them, beside
+a probe-document `summary` that names no board, so `rpi-hwid labels --data
+data/tasmota --only tasmota` prints their [micro labels](LABELS.md#tasmota-devices).
+
 ## The document
 
 `rpi-hwid probe --json`, and every file the collector writes, is one JSON object:

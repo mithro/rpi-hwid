@@ -1,0 +1,965 @@
+{
+ "au-plug-29": {
+  "ip": "10.1.91.29",
+  "status": {
+   "Status": {
+    "Module": 0,
+    "DeviceName": "au-plug-29",
+    "FriendlyName": [
+     "au-plug-29"
+    ],
+    "Topic": "au-plug-29",
+    "ButtonTopic": "0",
+    "Power": 0,
+    "PowerOnState": 3,
+    "LedState": 1,
+    "LedMask": "FFFF",
+    "SaveData": 1,
+    "SaveState": 1,
+    "SwitchTopic": "0",
+    "SwitchMode": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ButtonRetain": 0,
+    "SwitchRetain": 0,
+    "SensorRetain": 0,
+    "PowerRetain": 0,
+    "InfoRetain": 0,
+    "StateRetain": 0,
+    "StatusRetain": 0
+   },
+   "StatusPRM": {
+    "Baudrate": 115200,
+    "SerialConfig": "8N1",
+    "GroupTopic": "tasmotas",
+    "OtaUrl": "http://ota.tasmota.com/tasmota32/release/tasmota32c3.bin",
+    "RestartReason": "Software reset digital core",
+    "Uptime": "31T01:40:08",
+    "StartupUTC": "2026-08-26T05:35:50",
+    "Sleep": 50,
+    "CfgHolder": 4617,
+    "BootCount": 36,
+    "BCResetTime": "2026-05-31T08:46:58",
+    "SaveCount": 396
+   },
+   "StatusFWR": {
+    "Version": "13.1.0(tasmota32)",
+    "BuildDateTime": "2023-09-08T13:45:14",
+    "Core": "2_0_11",
+    "SDK": "4.4.5.230722",
+    "CpuFrequency": 160,
+    "Hardware": "ESP32-C3 rev.4",
+    "CR": "513/699"
+   },
+   "StatusLOG": {
+    "SerialLog": 2,
+    "WebLog": 2,
+    "MqttLog": 0,
+    "SysLog": 2,
+    "LogHost": "10.1.90.1",
+    "LogPort": 514,
+    "SSId": [
+     "ansells-iot",
+     ""
+    ],
+    "TelePeriod": 300,
+    "Resolution": "558180C0",
+    "SetOption": [
+     "00208009",
+     "0405C80001000680003C5A0A192800000000",
+     "08000080",
+     "00006000",
+     "00004000",
+     "00000000"
+    ]
+   },
+   "StatusMEM": {
+    "ProgramSize": 1855,
+    "Free": 1024,
+    "Heap": 175,
+    "StackLowMark": 4,
+    "PsrMax": 0,
+    "PsrFree": 0,
+    "ProgramFlashSize": 4096,
+    "FlashSize": 4096,
+    "FlashChipId": "164020",
+    "FlashFrequency": 80,
+    "FlashMode": "DIO",
+    "Features": [
+     "00000809",
+     "9F9AD7DF",
+     "0015A001",
+     "B7F7BFCF",
+     "05DA9BC4",
+     "E0360DC7",
+     "080840D2",
+     "20200000",
+     "D4BC482D",
+     "010A80B1"
+    ],
+    "Drivers": "1,2,3,4,5,7,8,9,10,11,12,14,16,17,20,21,24,26,27,29,34,35,38,50,52,59,60,62,63,66,67,68,86,87,88",
+    "Sensors": "1,2,3,5,6,7,8,9,10,11,12,13,14,15,17,18,19,20,21,22,26,31,34,37,39,40,42,43,45,51,52,55,56,58,59,64,66,67,74,85,92,95,98,103,105,109,127",
+    "I2CDriver": "7,8,9,10,11,12,13,14,15,17,18,20,24,29,31,36,41,42,44,46,48,58,62,65,69,76,77,82"
+   },
+   "StatusNET": {
+    "Hostname": "au-plug-29",
+    "IPAddress": "10.1.91.29",
+    "Gateway": "10.1.90.1",
+    "Subnetmask": "255.255.254.0",
+    "DNSServer1": "10.1.90.1",
+    "DNSServer2": "0.0.0.0",
+    "Mac": "7C:2C:67:D7:C0:E8",
+    "IP6Global": "",
+    "IP6Local": "fe80::7e2c:67ff:fed7:c0e8",
+    "Webserver": 2,
+    "HTTP_API": 1,
+    "WifiConfig": 4,
+    "WifiPower": 19.0
+   },
+   "StatusMQT": {
+    "MqttHost": "ha.welland.mithis.com",
+    "MqttPort": 1883,
+    "MqttClientMask": "DVES_%06X",
+    "MqttClient": "DVES_D7C0E8",
+    "MqttUser": "tas-au_plug_29_iot",
+    "MqttCount": 16,
+    "MAX_PACKET_SIZE": 1200,
+    "KEEPALIVE": 30,
+    "SOCKET_TIMEOUT": 4
+   },
+   "StatusTIM": {
+    "UTC": "2026-09-26T07:15:58",
+    "Local": "2026-09-26T08:15:58",
+    "StartDST": "2026-03-29T02:00:00",
+    "EndDST": "2026-10-25T03:00:00",
+    "Timezone": "+01:00",
+    "Sunrise": "06:42",
+    "Sunset": "18:39"
+   },
+   "StatusPTH": {
+    "PowerDelta": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "PowerLow": 0,
+    "PowerHigh": 0,
+    "VoltageLow": 0,
+    "VoltageHigh": 0,
+    "CurrentLow": 0,
+    "CurrentHigh": 0
+   },
+   "StatusSNS": {
+    "Time": "2026-09-26T08:15:58",
+    "ENERGY": {
+     "TotalStartTime": "2026-05-31T08:46:58",
+     "Total": 0.743,
+     "Yesterday": 0.0,
+     "Today": 0.0,
+     "Power": 0,
+     "ApparentPower": 0,
+     "ReactivePower": 0,
+     "Factor": 0.0,
+     "Voltage": 242,
+     "Current": 0.0
+    }
+   },
+   "StatusSTS": {
+    "Time": "2026-09-26T08:15:58",
+    "Uptime": "31T01:40:08",
+    "UptimeSec": 2684408,
+    "Heap": 179,
+    "SleepMode": "Dynamic",
+    "Sleep": 50,
+    "LoadAvg": 19,
+    "MqttCount": 16,
+    "Berry": {
+     "HeapUsed": 4,
+     "Objects": 46
+    },
+    "POWER": "OFF",
+    "Wifi": {
+     "AP": 1,
+     "SSId": "ansells-iot",
+     "BSSId": "22:05:88:33:AE:73",
+     "Channel": 6,
+     "Mode": "11n",
+     "RSSI": 100,
+     "Signal": -24,
+     "LinkCount": 2,
+     "Downtime": "0T00:00:13"
+    }
+   }
+  },
+  "module": {
+   "Module": {
+    "0": "Athom Plug V3"
+   }
+  },
+  "template": {
+   "NAME": "Athom Plug V3",
+   "GPIO": [
+    0,
+    0,
+    0,
+    32,
+    0,
+    224,
+    576,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    3104,
+    0
+   ],
+   "FLAG": 0,
+   "BASE": 1
+  },
+  "in": "<table style='width:100%'><tr><th>Program Version}213.1.0(tasmota32)}1Build Date & Time}22023-09-08T13:45:14}1Core/SDK Version}22_0_11/4.4.5.230722}1Uptime}231T01:40:09}1Flash Write Count}2396}1Boot Count}236}1Restart Reason}2Software reset digital core}1Friendly Name 1}2au-plug-29}1}2&nbsp;}1AP1 SSId (RSSI)}2ansells-iot 6 (100%, -24 dBm) 11n}1Hostname}2au-plug-29}1 IPv6 Local (wifi)}2fe80::7e2c:67ff:fed7:c0e8}1MAC Address}27C:2C:67:D7:C0:E8}1IP Address (wifi)}210.1.91.29}1Gateway}210.1.90.1}1Subnet Mask}2255.255.254.0}1DNS Server1}210.1.90.1}1DNS Server2}20.0.0.0}1}2&nbsp;}1HTTP API}2Enabled}1}2&nbsp;}1MQTT Host}2ha.welland.mithis.com}1MQTT Port}21883}1MQTT TLS}2Disabled}1MQTT User}2tas-au_plug_29_iot}1MQTT Client}2DVES_D7C0E8}1MQTT Topic}2au-plug-29}1MQTT Group Topic 1}2cmnd/tasmotas/}1MQTT Full Topic}2cmnd/au-plug-29/}1MQTT Fallback Topic}2cmnd/DVES_D7C0E8_fb/}1MQTT No Retain}2Disabled}1}2&nbsp;}1Emulation}2None}1mDNS Discovery}2Disabled}1}2&nbsp;}1ESP Chip Id}214139624 (ESP32-C3 rev.4)}1Flash Chip Id}20x164020 (DIO)}1Flash Size}24096 KB}1Program Flash Size}24096 KB}1Program Size}21855 KB}1Free Program Space}21024 KB}1Free Memory}2181.3 KB (frag. 13%)}1}2&nbsp;}1Partition safeboot}2832 KB (used 89%)}1Partition app0*}22880 KB (used 64%)}1Partition fs}2320 KB</td></tr></table>"
+ },
+ "us-plug-1": {
+  "ip": "10.1.91.250",
+  "status": {
+   "Status": {
+    "Module": 41,
+    "DeviceName": "us-plug-1",
+    "FriendlyName": [
+     "us-plug-1"
+    ],
+    "Topic": "us-plug-1",
+    "ButtonTopic": "0",
+    "Power": "1",
+    "PowerLock": "0",
+    "PowerOnState": 3,
+    "LedState": 1,
+    "LedMask": "FFFF",
+    "SaveData": 1,
+    "SaveState": 1,
+    "SwitchTopic": "0",
+    "SwitchMode": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ButtonRetain": 0,
+    "SwitchRetain": 0,
+    "SensorRetain": 0,
+    "PowerRetain": 0,
+    "InfoRetain": 0,
+    "StateRetain": 0,
+    "StatusRetain": 0
+   },
+   "StatusPRM": {
+    "Baudrate": 4800,
+    "SerialConfig": "8E1",
+    "GroupTopic": "tasmotas",
+    "OtaUrl": "http://ota.tasmota.com/tasmota/release/tasmota.bin.gz",
+    "RestartReason": "Power On",
+    "Uptime": "38T00:32:22",
+    "StartupUTC": "2026-08-19T06:43:36",
+    "Sleep": 50,
+    "CfgHolder": 4617,
+    "BootCount": 18,
+    "BCResetTime": "2026-02-26T12:42:06",
+    "SaveCount": 399,
+    "SaveAddress": "F5000"
+   },
+   "StatusFWR": {
+    "Version": "15.3.0(release-tasmota)",
+    "BuildDateTime": "2026-02-19T13:51:25",
+    "Boot": 31,
+    "Core": "2.7.8",
+    "SDK": "2.2.2-dev(38a443e)",
+    "CpuFrequency": 80,
+    "Hardware": "ESP8266EX",
+    "CR": "464/699"
+   },
+   "StatusLOG": {
+    "SerialLog": 0,
+    "WebLog": 2,
+    "MqttLog": 0,
+    "SysLog": 2,
+    "LogHost": "10.1.90.1",
+    "LogPort": 514,
+    "SSId": [
+     "ansells-iot",
+     ""
+    ],
+    "TelePeriod": 300,
+    "Resolution": "558180C0",
+    "SetOption": [
+     "00008009",
+     "2805C80001000680003C5A0A192800000000",
+     "00000080",
+     "00006000",
+     "00004000",
+     "00000000"
+    ]
+   },
+   "StatusMEM": {
+    "ProgramSize": 655,
+    "Free": 348,
+    "Heap": 21,
+    "ProgramFlashSize": 1024,
+    "FlashSize": 4096,
+    "FlashChipId": "1640EF",
+    "FlashFrequency": 40,
+    "FlashMode": "DOUT",
+    "Features": [
+     "0809",
+     "8F9AC787",
+     "04368001",
+     "000000CF",
+     "010013C0",
+     "C000F981",
+     "00004004",
+     "00001000",
+     "54000020",
+     "00000080",
+     "00000000"
+    ],
+    "Drivers": "1,2,3,!4,!5,!6,7,!8,9,10,12,!16,!18,!19,!20,!21,!22,!24,26,!27,29,!30,!35,!37,!45,62,!68",
+    "Sensors": "1,2,3,4,5,6",
+    "I2CDriver": "7"
+   },
+   "StatusNET": {
+    "Hostname": "us-plug-1",
+    "IPAddress": "10.1.91.250",
+    "Gateway": "10.1.90.1",
+    "Subnetmask": "255.255.254.0",
+    "DNSServer1": "10.1.90.1",
+    "DNSServer2": "0.0.0.0",
+    "Mac": "BC:DD:C2:EA:BB:9E",
+    "Webserver": 2,
+    "HTTP_API": 1,
+    "WifiConfig": 4,
+    "WifiPower": 17.0
+   },
+   "StatusMQT": {
+    "MqttHost": "ha.welland.mithis.com",
+    "MqttPort": 1883,
+    "MqttClientMask": "DVES_%06X",
+    "MqttClient": "DVES_EABB9E",
+    "MqttUser": "tas-us_plug_1_iot",
+    "MqttCount": 23,
+    "MqttTLS": 0,
+    "MAX_PACKET_SIZE": 1200,
+    "KEEPALIVE": 30,
+    "SOCKET_TIMEOUT": 4
+   },
+   "StatusTIM": {
+    "UTC": "2026-09-26T07:15:58Z",
+    "Local": "2026-09-26T08:15:58",
+    "StartDST": "2026-03-29T02:00:00",
+    "EndDST": "2026-10-25T03:00:00",
+    "Timezone": "+01:00",
+    "Sunrise": "06:42",
+    "Sunset": "18:39"
+   },
+   "StatusPTH": {
+    "PowerDelta": 0,
+    "PowerLow": 0,
+    "PowerHigh": 0,
+    "VoltageLow": 0,
+    "VoltageHigh": 0,
+    "CurrentLow": 0,
+    "CurrentHigh": 0,
+    "MaxPower": 0,
+    "MaxPowerHold": 10,
+    "MaxPowerWindow": 30,
+    "MaxEnergy": 0,
+    "MaxEnergyStart": 0
+   },
+   "StatusSNS": {
+    "Time": "2026-09-26T08:15:58",
+    "ENERGY": {
+     "TotalStartTime": "2026-02-26T12:42:07",
+     "Total": 10.635,
+     "Yesterday": 0.0,
+     "Today": 0.0,
+     "Power": 0,
+     "ApparentPower": 0,
+     "ReactivePower": 0,
+     "Factor": 0.0,
+     "Voltage": 121,
+     "Current": 0.0
+    }
+   },
+   "StatusSTS": {
+    "Time": "2026-09-26T08:15:58",
+    "Uptime": "38T00:32:22",
+    "UptimeSec": 3285142,
+    "Heap": 21,
+    "SleepMode": "Dynamic",
+    "Sleep": 50,
+    "LoadAvg": 19,
+    "MqttCount": 23,
+    "POWER": "ON",
+    "Wifi": {
+     "AP": 1,
+     "SSId": "ansells-iot",
+     "BSSId": "22:05:88:33:AE:73",
+     "Channel": 6,
+     "Mode": "11n",
+     "RSSI": 100,
+     "Signal": -45,
+     "LinkCount": 5,
+     "Downtime": "0T00:01:11"
+    },
+    "Hostname": "us-plug-1",
+    "IPAddress": "10.1.91.250"
+   }
+  },
+  "module": {
+   "Module": {
+    "41": "Sonoff S31"
+   }
+  },
+  "template": {
+   "NAME": "Generic",
+   "GPIO": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+   ],
+   "FLAG": 0,
+   "BASE": 18
+  },
+  "in": "<table style='width:100%'><tr><th>Program Version}215.3.0 (release-tasmota) }1Build Date & Time}22026-02-19T13:51:25}1Core/SDK Version}22.7.8/2.2.2-dev(38a443e)}1Uptime}238T00:32:22}1Flash Write Count}2399 at 0xF5000}1Boot Count}218}1Restart Reason}2Power On}1Friendly Name 1}2us-plug-1</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1AP1 Information}2SSId ansells-iot<br>RSSI 100% (-47 dBm)<br>Mode 11n<br>Channel 6<br>BSSId 22:05:88:33:AE:73</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1Hostname}2us-plug-1}1MAC Address}2BC:DD:C2:EA:BB:9E}1IP Address (WiFi)}210.1.91.250}1Gateway}210.1.90.1}1Subnet Mask}2255.255.254.0}1DNS Server1}210.1.90.1}1DNS Server2}20.0.0.0</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1HTTP API}2Enabled</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1MQTT Host}2ha.welland.mithis.com}1MQTT Port}21883}1MQTT User}2tas-us_plug_1_iot}1MQTT Client}2DVES_EABB9E}1MQTT Topic}2us-plug-1}1MQTT Group Topic 1}2cmnd/tasmotas/}1MQTT Full Topic}2cmnd/us-plug-1/}1MQTT Fallback Topic}2cmnd/DVES_EABB9E_fb/}1MQTT No Retain}2Disabled</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1Emulation}2None</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1ESP Chip Id}215383454 (ESP8266EX)}1Flash Chip Id}20x1640EF (DOUT)}1Flash Size}24096 KB}1Program Flash Size}21024 KB}1Program Size}2655 KB}1Free Program Space}2348 KB}1Free Memory}224.1 KB</td></tr></table>"
+ },
+ "ir-ac-remote": {
+  "ip": "10.1.90.15",
+  "status": {
+   "Status": {
+    "Module": 0,
+    "DeviceName": "ir-ac-remote",
+    "FriendlyName": [
+     "ir-ac-remote"
+    ],
+    "Topic": "ir-ac-remote",
+    "ButtonTopic": "0",
+    "Power": 0,
+    "PowerOnState": 3,
+    "LedState": 1,
+    "LedMask": "FFFF",
+    "SaveData": 1,
+    "SaveState": 1,
+    "SwitchTopic": "0",
+    "SwitchMode": [
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4,
+     4
+    ],
+    "ButtonRetain": 0,
+    "SwitchRetain": 0,
+    "SensorRetain": 0,
+    "PowerRetain": 0,
+    "InfoRetain": 0,
+    "StateRetain": 0
+   },
+   "StatusPRM": {
+    "Baudrate": 115200,
+    "SerialConfig": "8N1",
+    "GroupTopic": "tasmotas",
+    "OtaUrl": "http://ota.tasmota.com/tasmota/release/tasmota-ir.bin.gz",
+    "RestartReason": "Power On",
+    "Uptime": "63T19:41:39",
+    "StartupUTC": "2026-07-24T11:34:21",
+    "Sleep": 50,
+    "CfgHolder": 4617,
+    "BootCount": 33,
+    "BCResetTime": "2026-02-07T05:45:33",
+    "SaveCount": 286,
+    "SaveAddress": "F6000"
+   },
+   "StatusFWR": {
+    "Version": "10.1.0(ir)",
+    "BuildDateTime": "2023-05-19T17:48:34",
+    "Boot": 31,
+    "Core": "2_7_4_9",
+    "SDK": "2.2.2-dev(38a443e)",
+    "CpuFrequency": 80,
+    "Hardware": "ESP8266EX",
+    "CR": "479/699"
+   },
+   "StatusLOG": {
+    "SerialLog": 2,
+    "WebLog": 4,
+    "MqttLog": 0,
+    "SysLog": 2,
+    "LogHost": "10.1.90.1",
+    "LogPort": 514,
+    "SSId": [
+     "ansells-iot",
+     ""
+    ],
+    "TelePeriod": 300,
+    "Resolution": "558180C0",
+    "SetOption": [
+     "00208009",
+     "0405C80001000600003C5A00000000000000",
+     "08000080",
+     "00006000",
+     "00004000"
+    ]
+   },
+   "StatusMEM": {
+    "ProgramSize": 628,
+    "Free": 372,
+    "Heap": 24,
+    "ProgramFlashSize": 2048,
+    "FlashSize": 2048,
+    "FlashChipId": "1540A1",
+    "FlashFrequency": 40,
+    "FlashMode": 3,
+    "Features": [
+     "00000809",
+     "0F5A0582",
+     "04000001",
+     "00000003",
+     "00000000",
+     "00000000",
+     "00000000",
+     "00000000",
+     "00000000"
+    ],
+    "Drivers": "1,2,4,5,7,9,10,12",
+    "Sensors": "1"
+   },
+   "StatusNET": {
+    "Hostname": "ir-ac-remote",
+    "IPAddress": "10.1.90.15",
+    "Gateway": "10.1.90.1",
+    "Subnetmask": "255.255.254.0",
+    "DNSServer1": "10.1.90.1",
+    "DNSServer2": "0.0.0.0",
+    "Mac": "34:98:7A:D9:38:AD",
+    "Webserver": 2,
+    "HTTP_API": 1,
+    "WifiConfig": 4,
+    "WifiPower": 17.0
+   },
+   "StatusMQT": {
+    "MqttHost": "ha.welland.mithis.com",
+    "MqttPort": 1883,
+    "MqttClientMask": "DVES_%06X",
+    "MqttClient": "DVES_D938AD",
+    "MqttUser": "tas-ir_ac_remote_iot",
+    "MqttCount": 25,
+    "MAX_PACKET_SIZE": 1200,
+    "KEEPALIVE": 30,
+    "SOCKET_TIMEOUT": 4
+   },
+   "StatusTIM": {
+    "UTC": "2026-09-26T07:16:00",
+    "Local": "2026-09-26T16:46:00",
+    "StartDST": "2026-10-04T02:00:00",
+    "EndDST": "2026-04-05T02:00:00",
+    "Timezone": 99,
+    "Sunrise": "15:12",
+    "Sunset": "03:09"
+   },
+   "StatusSNS": {
+    "Time": "2026-09-26T16:46:00"
+   },
+   "StatusSTS": {
+    "Time": "2026-09-26T16:46:00",
+    "Uptime": "63T19:41:39",
+    "UptimeSec": 5514099,
+    "Vcc": 3.427,
+    "Heap": 24,
+    "SleepMode": "Dynamic",
+    "Sleep": 50,
+    "LoadAvg": 19,
+    "MqttCount": 25,
+    "Wifi": {
+     "AP": 1,
+     "SSId": "ansells-iot",
+     "BSSId": "22:05:88:33:AE:73",
+     "Channel": 6,
+     "Mode": "11n",
+     "RSSI": 98,
+     "Signal": -51,
+     "LinkCount": 4,
+     "Downtime": "0T00:13:58"
+    }
+   }
+  },
+  "module": {
+   "Module": {
+    "0": "Athom_IR_Remote"
+   }
+  },
+  "template": {
+   "NAME": "Athom_IR_Remote",
+   "GPIO": [
+    32,
+    0,
+    0,
+    0,
+    1056,
+    1088,
+    0,
+    0,
+    0,
+    576,
+    0,
+    0,
+    0,
+    0
+   ],
+   "FLAG": 0,
+   "BASE": 18
+  },
+  "in": "<table style='width:100%'><tr><th>Program Version}210.1.0(ir)}1Build Date & Time}22023-05-19T17:48:34}1Core/SDK Version}22_7_4_9/2.2.2-dev(38a443e)}1Uptime}263T19:41:39}1Flash write Count}2286 at 0xF6000}1Boot Count}233}1Restart Reason}2Power On}1}2&nbsp;}1AP1 SSId (RSSI)}2ansells-iot (100%, -49 dBm) 11n}1Hostname}2ir-ac-remote}1MAC Address}234:98:7A:D9:38:AD}1IP Address (wifi)}210.1.90.15}1<hr/>}2<hr/>}1Gateway}210.1.90.1}1Subnet Mask}2255.255.254.0}1DNS Server1}210.1.90.1}1DNS Server2}20.0.0.0}1}2&nbsp;}1HTTP API}2Enabled}1}2&nbsp;}1MQTT Host}2ha.welland.mithis.com}1MQTT Port}21883}1MQTT User}2tas-ir_ac_remote_iot}1MQTT Client}2DVES_D938AD}1MQTT Topic}2ir-ac-remote}1MQTT Group Topic 1}2cmnd/tasmotas/}1MQTT Full Topic}2cmnd/ir-ac-remote/}1MQTT Fallback Topic}2cmnd/DVES_D938AD_fb/}1MQTT No Retain}2Disabled}1}2&nbsp;}1ESP Chip Id}214235821 (ESP8266EX)}1Flash Chip Id}20x1540A1}1Flash Size}22048 kB}1Program Flash Size}22048 kB}1Program Size}2628 kB}1Free Program Space}2372 kB}1Free Memory}227.1 kB</td></tr></table>"
+ },
+ "esp32-433mhz-cc1101-blue": {
+  "ip": "10.1.90.183",
+  "status": {
+   "Status": {
+    "Module": 1,
+    "DeviceName": "esp32-433mhz-cc1101-blue",
+    "FriendlyName": [
+     "esp32-433mhz-cc1101-blue"
+    ],
+    "Topic": "esp32-433mhz-cc1101-blue",
+    "ButtonTopic": "0",
+    "Power": "0",
+    "PowerLock": "0",
+    "PowerOnState": 3,
+    "LedState": 1,
+    "LedMask": "FFFF",
+    "SaveData": 1,
+    "SaveState": 1,
+    "SwitchTopic": "0",
+    "SwitchMode": [
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0,
+     0
+    ],
+    "ButtonRetain": 0,
+    "SwitchRetain": 0,
+    "SensorRetain": 0,
+    "PowerRetain": 0,
+    "InfoRetain": 0,
+    "StateRetain": 0,
+    "StatusRetain": 0
+   },
+   "StatusPRM": {
+    "Baudrate": 115200,
+    "SerialConfig": "8N1",
+    "GroupTopic": "tasmotas",
+    "OtaUrl": "",
+    "RestartReason": "Usb uart reset digital core",
+    "Uptime": "0T00:02:06",
+    "StartupUTC": "2026-09-26T07:13:54",
+    "Sleep": 50,
+    "CfgHolder": 4617,
+    "BootCount": 43,
+    "BCResetTime": "2026-09-08T03:42:18",
+    "SaveCount": 68
+   },
+   "StatusFWR": {
+    "Version": "15.5.0(cc1101-node)",
+    "BuildDateTime": "2026-09-09T01:38:31",
+    "Core": "3.3.8",
+    "SDK": "5.5.4.260407",
+    "CpuFrequency": 160,
+    "Hardware": "ESP32-C3 v0.4",
+    "CR": "537/699"
+   },
+   "StatusLOG": {
+    "SerialLog": 4,
+    "WebLog": 2,
+    "MqttLog": 0,
+    "FileLog": 0,
+    "SysLog": 2,
+    "LogHost": "10.1.90.1",
+    "LogPort": 514,
+    "SSId": [
+     "ansells-iot",
+     ""
+    ],
+    "TelePeriod": 300,
+    "Resolution": "558180C0",
+    "SetOption": [
+     "00008009",
+     "2805C80001000600003C5A0A192800000000",
+     "00000080",
+     "00006000",
+     "00004000",
+     "00000000"
+    ]
+   },
+   "StatusMEM": {
+    "ProgramSize": 2104,
+    "Free": 775,
+    "Heap": 155,
+    "StackLowMark": 3,
+    "PsrMax": 0,
+    "PsrFree": 0,
+    "ProgramFlashSize": 4096,
+    "FlashSize": 4096,
+    "FlashChipId": "164046",
+    "FlashFrequency": 80,
+    "FlashMode": "DIO",
+    "Features": [
+     "0809",
+     "9F9AD7DF",
+     "0015A001",
+     "B7F7BFCF",
+     "05DA9BC4",
+     "E0360DC7",
+     "480840D2",
+     "20200000",
+     "D4BC482D",
+     "810A80F1",
+     "00200815"
+    ],
+    "Drivers": "1,2,!3,!4,!5,7,!8,9,10,11,12,!14,!16,!17,!20,!21,!24,26,!27,29,!34,!35,38,50,52,!59,!60,62,!63,!66,!67,!68,!71,!73,!75,82,!86,!87,!88,!91,95,!121",
+    "Sensors": "1,2,3,5,6,7,8,9,10,11,12,13,14,15,17,18,19,20,21,22,26,31,34,37,39,40,42,43,45,51,52,55,56,58,59,64,66,67,74,85,92,95,98,103,105,109,119,127",
+    "I2CDriver": "7,8,9,10,11,12,13,14,15,17,18,20,24,29,31,36,41,42,44,46,48,58,62,65,69,76,77,82,89,97"
+   },
+   "StatusNET": {
+    "Hostname": "esp32-433mhz-cc1101-blue",
+    "IPAddress": "10.1.90.183",
+    "Gateway": "10.1.90.1",
+    "Subnetmask": "255.255.254.0",
+    "DNSServer1": "10.1.90.1",
+    "DNSServer2": "0.0.0.0",
+    "Mac": "E8:3D:C1:8C:3E:B8",
+    "IP6Global": "",
+    "IP6Local": "fe80::ea3d:c1ff:fe8c:3eb8%st2",
+    "Ethernet": {
+     "Hostname": "",
+     "IPAddress": "0.0.0.0",
+     "Gateway": "0.0.0.0",
+     "Subnetmask": "0.0.0.0",
+     "DNSServer1": "10.1.90.1",
+     "DNSServer2": "0.0.0.0",
+     "Mac": "00:00:00:00:00:00",
+     "IP6Global": "",
+     "IP6Local": ""
+    },
+    "Webserver": 2,
+    "HTTP_API": 1,
+    "WifiConfig": 5,
+    "WifiPower": 19.0
+   },
+   "StatusMQT": {
+    "MqttHost": "ha.welland.mithis.com",
+    "MqttPort": 1883,
+    "MqttClientMask": "DVES_%06X",
+    "MqttClient": "DVES_8C3EB8",
+    "MqttUser": "tas-esp32_433mhz_cc1101_blue_iot",
+    "MqttCount": 1,
+    "MqttTLS": 0,
+    "MAX_PACKET_SIZE": 1200,
+    "KEEPALIVE": 30,
+    "SOCKET_TIMEOUT": 4
+   },
+   "StatusTIM": {
+    "UTC": "2026-09-26T07:16:00Z",
+    "Local": "2026-09-26T09:16:00",
+    "StartDST": "2026-03-29T02:00:00",
+    "EndDST": "2026-10-25T03:00:00",
+    "Timezone": 99,
+    "Sunrise": "07:42",
+    "Sunset": "19:39"
+   },
+   "StatusSNS": {
+    "Time": "2026-09-26T09:16:00",
+    "CC1101": {
+     "Mode": "weather",
+     "Preset": "fineoffset-fsk",
+     "RSSI": -88,
+     "Rx": 35,
+     "Decoded": 15,
+     "Tx": 0,
+     "Reinit": 0,
+     "SecplusId": 0,
+     "Rolling": 0
+    }
+   },
+   "StatusSTS": {
+    "Time": "2026-09-26T09:16:00",
+    "Uptime": "0T00:02:06",
+    "UptimeSec": 126,
+    "Heap": 155,
+    "SleepMode": "Dynamic",
+    "Sleep": 50,
+    "LoadAvg": 19,
+    "MqttCount": 1,
+    "Berry": {
+     "HeapUsed": 4,
+     "Objects": 46
+    },
+    "Wifi": {
+     "AP": 1,
+     "SSId": "ansells-iot",
+     "BSSId": "42:07:0B:01:A2:28",
+     "Channel": 6,
+     "Mode": "HT20",
+     "RSSI": 100,
+     "Signal": -42,
+     "LinkCount": 1,
+     "Downtime": "0T00:00:05"
+    },
+    "Hostname": "esp32-433mhz-cc1101-blue",
+    "IPAddress": "10.1.90.183"
+   }
+  },
+  "module": {
+   "Module": {
+    "1": "ESP32C3"
+   }
+  },
+  "template": {
+   "NAME": "ESP32C3",
+   "ARCH": "ESP32C3",
+   "GPIO": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    1,
+    1,
+    1
+   ],
+   "FLAG": 0,
+   "BASE": 1
+  },
+  "in": "<table style='width:100%'><tr><th>Program Version}215.5.0 (cc1101-node) }1Build Date & Time}22026-09-09T01:38:31}1Core/SDK Version}23.3.8/5.5.4.260407}1Uptime}20T00:02:06}1Flash Write Count}268}1Boot Count}243}1Restart Reason}2Usb uart reset digital core</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1AP1 Information}2SSId ansells-iot<br>RSSI 100% (-42 dBm)<br>Mode HT20<br>Channel 6<br>BSSId 42:07:0B:01:A2:28</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1Hostname}2esp32-433mhz-cc1101-blue}1 IPv6 Local (WiFi)}2fe80::ea3d:c1ff:fe8c:3eb8%st2}1MAC Address}2E8:3D:C1:8C:3E:B8}1IP Address (WiFi)}210.1.90.183}1Gateway}210.1.90.1}1Subnet Mask}2255.255.254.0}1DNS Server1}210.1.90.1}1DNS Server2}20.0.0.0</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1HTTP API}2Enabled</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1MQTT Host}2ha.welland.mithis.com}1MQTT Port}21883}1MQTT TLS}2Disabled}1MQTT User}2tas-esp32_433mhz_cc1101_blue_iot}1MQTT Client}2DVES_8C3EB8}1MQTT Topic}2esp32-433mhz-cc1101-blue}1MQTT Group Topic 1}2cmnd/tasmotas/}1MQTT Full Topic}2cmnd/esp32-433mhz-cc1101-blue/}1MQTT Fallback Topic}2cmnd/DVES_8C3EB8_fb/}1MQTT No Retain}2Disabled</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1Emulation}2None}1mDNS Discovery}2Disabled</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1ESP Chip Id}29191096 (ESP32-C3 v0.4)}1Flash Chip Id}20x164046 (DIO)}1Flash Size}24096 KB}1Program Flash Size}24096 KB}1Program Size}22104 KB}1Free Program Space}2775 KB}1Free Memory}2158.0 KB (frag. 28%)</td></tr><tr><td colspan=2><hr style='font-size:2px'>}1Partition safeboot}2832 KB (used 98%)}1Partition app0*}22880 KB (used 73%)}1Partition fs}2320 KB</td></tr></table>"
+ }
+}
