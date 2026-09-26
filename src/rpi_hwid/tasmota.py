@@ -32,6 +32,7 @@ into a document or an error.
 
 from __future__ import annotations
 
+import argparse
 import base64
 import csv
 import html
@@ -39,19 +40,22 @@ import http.client
 import io
 import ipaddress
 import json
+import os
 import re
+import tomllib
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from rpi_hwid.model import ProbeDocument
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from pathlib import Path
+
 
 READ_ONLY_COMMANDS = frozenset({"Status 0", "Module", "Template"})
 READ_ONLY_PAGES = frozenset({"/in"})
@@ -416,3 +420,94 @@ def collect(devices: Sequence[SheetDevice], out_dir: Path, fetch: Fetch = urllib
         if r.ok and r.doc is not None:
             (out_dir / f"{r.host.replace('/', '_')}.json").write_text(r.doc.to_json())
     return sorted(results, key=lambda r: r.host)
+
+
+# --- the command ------------------------------------------------------------------
+
+
+def gdoc2netcfg_source(config: Path) -> tuple[str, dict[str, int]]:
+    """The IoT sheet's published CSV URL and the site (name -> octet) from a
+    gdoc2netcfg.toml. Only read: gdoc2netcfg's own ``fetch`` writes its cache,
+    so the sheet is fetched here, into memory, instead."""
+    with open(config, "rb") as f:
+        cfg = tomllib.load(f)
+    url = (cfg.get("sheets") or {}).get("iot")
+    if not url:
+        raise ValueError(f"{config} has no [sheets] iot URL")
+    site = cfg.get("site") or {}
+    sites = {site["name"]: int(site["site_octet"])} if "name" in site else {}
+    return url, sites
+
+
+def read_sheet(source: str) -> str:
+    """The IoT sheet's CSV from a file, or from a URL (gdoc2netcfg's
+    published one), fetched into memory and never written anywhere."""
+    if re.match(r"https?://", source):
+        with urllib.request.urlopen(source, timeout=60) as resp:
+            return bytes(resp.read()).decode("utf-8")
+    with open(source, encoding="utf-8") as f:
+        return f.read()
+
+
+def _site(text: str) -> tuple[str, int]:
+    name, sep, octet = text.partition("=")
+    if not sep or not name or not octet.isdigit() or not 0 <= int(octet) <= 255:
+        raise argparse.ArgumentTypeError(f"--site wants NAME=OCTET (welland=1), not {text!r}")
+    return name, int(octet)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="rpi-hwid tasmota",
+        description="read Tasmota devices over HTTP (read-only), one JSON document each")
+    src = ap.add_mutually_exclusive_group(required=True)
+    src.add_argument("--sheet", metavar="CSV_OR_URL",
+                     help="gdoc2netcfg's IoT sheet: its .cache/iot.csv or the published URL")
+    src.add_argument("--gdoc2netcfg", type=Path, metavar="TOML",
+                     help="a gdoc2netcfg.toml: fetch its [sheets] iot URL, for its [site]")
+    ap.add_argument("--site", type=_site, action="append", default=[], metavar="NAME=OCTET",
+                    help="a site and its second octet (10.X.); a row with no site is the "
+                         "first one's. Repeat for more sites")
+    ap.add_argument("--out", type=Path, required=True)
+    ap.add_argument("--workers", type=int, default=4,
+                    help="devices read at once (default 4)")
+    ap.add_argument("--timeout", type=float, default=5.0,
+                    help="seconds to wait for each answer (default 5)")
+    ap.add_argument("hosts", nargs="*", help="only these devices (Machine or Name column)")
+    args = ap.parse_args(argv)
+
+    sites: dict[str, int] = {}
+    source = args.sheet
+    if args.gdoc2netcfg:
+        source, sites = gdoc2netcfg_source(args.gdoc2netcfg)
+    sites.update(dict(args.site))
+    if not sites:
+        ap.error("no site: give --site NAME=OCTET")
+    devices, skipped = sheet_devices(read_sheet(source), sites)
+    if args.hosts:
+        wanted = set(args.hosts)
+        known = {d.host for d in devices} | {d.name for d in devices} | {h for h, _ in skipped}
+        missing = sorted(wanted - known)
+        if missing:
+            ap.error(f"not a Tasmota device in the sheet: {', '.join(missing)}")
+        devices = [d for d in devices if d.host in wanted or d.name in wanted]
+        skipped = [(h, why) for h, why in skipped if h in wanted]
+
+    password = os.environ.get(ENV_PASSWORD) or None
+    results = collect(devices, args.out, fetch=urllib_fetch, password=password,
+                      workers=args.workers, timeout=args.timeout)
+    failed = 0
+    for r in results:
+        if r.ok and r.doc is not None:
+            t = r.doc.evidence["verdict"]["tasmota"]
+            print(f"  {r.host}: {t['model'] or t['hardware']} {t['mac']}"
+                  + ("" if not t["read_errors"] else
+                     f"; not read: {', '.join(sorted(t['read_errors']))}"))
+        else:
+            failed += 1
+            print(f"  {r.host}: FAILED ({r.error})")
+    for host, why in skipped:
+        print(f"  {host}: SKIPPED ({why})")
+    print(f"{len(results) - failed} of {len(results)} device(s) written to {args.out}"
+          + (f"; {len(skipped)} skipped" if skipped else ""))
+    return 1 if failed else 0
