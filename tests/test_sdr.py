@@ -456,3 +456,28 @@ def test_a_dead_link_reads_all_ones():
     assert sdr.usdr_health(b"\xff" * 8, True).startswith("card not answering")
     assert sdr.usdr_health(b"\xee\x10\x49\x70\x06\x00\x10\x00", True) is None
     assert sdr.usdr_health(None, True) == "config space unreadable"
+
+
+def test_the_open_read_takes_the_flash_esn(xsdr_root, monkeypatch):
+    """rpi-sdr-xsdr's AT25SL321, 2026-09-26: the secured OTP's first eight
+    bytes programmed, the rest erased, factory lock clear."""
+    tools = _xsdr_tools(xsdr_root)
+    esn = '{"rdid32": "1f16421f", "security": "00", "enso": 0, "exso": 0, "read": 0, ' \
+          '"esn": "190402030' '90e9769ffffffffffffffff"}'
+
+    def fake(args, timeout=15):
+        if args[:4] == ["sudo", "-n", "python3", "-c"]:
+            assert args[4] == sdr.USDR_ESN_READER
+            return 0, esn + "\n", ""
+        return tools(args, timeout)
+
+    monkeypatch.setattr(sdr, "sdr_sh", fake)
+    (x,) = sdr.collect_sdr(open_radios=True)["summary"]
+    assert x["flash_uid"] == "19040203090e9769ffffffffffffffff"
+    assert x["flash_uid_state"] == "read"
+    assert "factory lock 0" in x["flash_uid_note"]
+
+
+def test_the_esn_reader_is_python35_source():
+    compile(sdr.USDR_ESN_READER, "usdr_esn_reader", "exec")
+    assert "f\"" not in sdr.USDR_ESN_READER

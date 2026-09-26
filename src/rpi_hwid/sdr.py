@@ -236,6 +236,8 @@ def usdr_open(p):
         res["firmware_id"] = m.group(1).lower()
     for kind, devid, fwid in USDR_IMAGE.findall(text):
         res[kind.lower() + "_image"] = {"devid": devid.lower(), "firmware_id": fwid.lower()}
+    if res.get("flash_jedec") == "0x1f4216" and res.get("hwid") != "ffffffff":
+        usdr_esn(res)
     if res.get("hwid") == "ffffffff":
         res["error"] = ("card not answering: HWID reads ffffffff; reboot the host, or "
                         "power-cycle it if that does not bring it back")
@@ -279,6 +281,117 @@ def rtl_open(u):
         res["error"] = "rtl_eeprom -d %s: %s" % (u["serial"], (text.strip() or "rc %d" % rc)
                                                  .splitlines()[-1])
     return res
+
+# The XSDR configuration flash's ESN, read through libusdr's own espi core.
+# Run as root in a process of its own, so the device is closed on exit
+# whatever happens. Mirrors usdr_flash's own id read; see rpi_hwid.sdr.
+USDR_ESN_READER = r"""
+import ctypes, json, sys
+L = ctypes.CDLL("libusdr.so.0")
+V = ctypes.c_void_p
+L.lowlevel_create.argtypes = [ctypes.c_uint, V, V, ctypes.POINTER(V), ctypes.c_uint, V,
+                              ctypes.c_size_t]
+L.lowlevel_get_ops.restype = V
+L.lowlevel_get_ops.argtypes = [V]
+L.lowlevel_get_device.restype = V
+L.lowlevel_get_device.argtypes = [V]
+L.usdr_device_vfs_obj_val_get_u64.argtypes = [V, ctypes.c_char_p,
+                                               ctypes.POINTER(ctypes.c_uint64)]
+L.espi_flash_get_id.argtypes = [V, ctypes.c_uint64, ctypes.c_uint,
+                                ctypes.POINTER(ctypes.c_uint32), ctypes.c_char_p,
+                                ctypes.c_size_t]
+L.espi_flash_read.argtypes = [V, ctypes.c_uint64, ctypes.c_uint, ctypes.c_uint,
+                              ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p]
+LSOP = ctypes.CFUNCTYPE(ctypes.c_int, V, ctypes.c_uint64, ctypes.c_uint, ctypes.c_uint,
+                        ctypes.c_size_t, V, ctypes.c_size_t, V)
+out = {}
+dev = V()
+if L.lowlevel_create(0, None, None, ctypes.byref(dev), 0, None, 0):
+    print(json.dumps({"error": "lowlevel_create failed"})); sys.exit(0)
+# struct lowlevel_ops: generic_get, then ls_op
+ls_op = LSOP(ctypes.cast(L.lowlevel_get_ops(dev), ctypes.POINTER(V))[1])
+base = ctypes.c_uint64(10)
+L.usdr_device_vfs_obj_val_get_u64(L.lowlevel_get_device(dev), b"/ll/qspi_flash/base",
+                                  ctypes.byref(base))
+base = base.value
+def wr(addr, v):
+    w = ctypes.c_uint32(v)
+    return ls_op(dev, 0, 0, addr, 0, None, 4, V(ctypes.addressof(w)))
+def rd(addr):
+    r = ctypes.c_uint32(0)
+    res = ls_op(dev, 0, 0, addr, 4, V(ctypes.addressof(r)), 0, None)
+    return res, r.value
+def done():
+    for _ in range(100000):
+        res, st = rd(base + 0)
+        if res or not st & 1:
+            return res
+    return -110
+def cmd(op, sz):
+    # MAKE_ESPI_CORE_CMD(op, sz, 0, 0, 0, 0): espi_flash.c's WREN/RDSR shape
+    return wr(base + 0, (op << 24) | (sz << 16)) or done()
+def reg8(op):
+    res = cmd(op, 4)
+    res2, v = rd(base + 1)
+    return res or res2, v & 0xFF
+def flash(off, n):
+    b = ctypes.create_string_buffer(n)
+    return L.espi_flash_read(dev, 0, base, 512, off, n, b), bytearray(b.raw)
+fid = ctypes.c_uint32(0)
+name = ctypes.create_string_buffer(64)
+L.espi_flash_get_id(dev, 0, base, ctypes.byref(fid), name, 64)
+out["rdid32"] = "%08x" % fid.value
+if fid.value & 0xFFFFFF != 0x16421F:
+    out["error"] = "not an AT25SL321: ESN not read"
+    print(json.dumps(out)); sys.exit(0)
+res, sr = reg8(0x05)
+res2, scur = reg8(0x2B)
+if res or res2 or sr & 1:
+    out["error"] = "status %02x: busy or unreadable, ESN not read" % sr
+    print(json.dumps(out)); sys.exit(0)
+out["security"] = "%02x" % scur
+r0, before = flash(0, 16)
+e = cmd(0xB1, 0)                                   # Enter Secured OTP
+r1, esn = flash(0, 16) if not e else (e, b"")
+x = cmd(0xC1, 0)                                   # Exit Secured OTP, always
+r2, after = flash(0, 16)
+out.update(enso=e, exso=x, read=r1)
+if r0 or r2 or before != after:
+    out["error"] = "MAIN ARRAY DOES NOT READ BACK AS BEFORE: power-cycle the card"
+elif not (e or r1 or x):
+    out["esn"] = "".join("%02x" % c for c in esn)
+print(json.dumps(out))
+"""
+
+
+def usdr_esn(res):
+    """The AT25SL321's 128-bit ESN, from its secured OTP area, into `res`.
+
+    The part (JEDEC 1f 42 16, "at25sl321" in Linux's spi-nor atmel.c) has no
+    Read Unique ID command. Its datasheet (Renesas DS-AT25SL321-112 Rev. K,
+    8.41 and Table 17) puts a "128-bit ESN (Electrical Serial Number)" at
+    000000-00000F of a separate 4-kbit secured OTP area, reached by Enter
+    Secured OTP (B1h), a normal read and Exit Secured OTP (C1h), and says
+    security register (2Bh) bit 0 shows whether the factory locked it. Only
+    the mode switch is sent -- volatile, no write-enable, no program, no
+    erase -- and the reader proves the main array reads back unchanged
+    after it. rpi-sdr-xsdr's, 2026-09-26: 19 04 02 03 09 0e 97 69 then
+    eight bytes of ff, factory lock 0.
+    """
+    rc, out, err = sdr_sh(["sudo", "-n", "python3", "-c", USDR_ESN_READER], timeout=60)
+    try:
+        got = json.loads(out.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        res["flash_uid_error"] = "ESN reader: %s" % (err.strip() or "no answer")[-300:]
+        return
+    if got.get("error") or not got.get("esn"):
+        res["flash_uid_error"] = got.get("error") or "ESN reader gave no ESN"
+        return
+    scur = int(got["security"], 16)
+    res["flash_uid"] = got["esn"]
+    res["flash_uid_state"] = "read"
+    res["flash_uid_note"] = ("AT25SL321 secured-OTP ESN; security register 0x%02x: factory "
+                             "lock %d, customer lock %d" % (scur, scur & 1, (scur >> 1) & 1))
 
 
 def iio_range(text):
@@ -432,6 +545,10 @@ def sdr_verdict(d):
         golden = opened.get("golden_image") or {}
         devices.append({
             "usdr_hwid": opened.get("hwid"), "flash_jedec": opened.get("flash_jedec"),
+            "flash_uid": opened.get("flash_uid"),
+            "flash_uid_state": opened.get("flash_uid_state"),
+            "flash_uid_note": opened.get("flash_uid_note"),
+            "flash_uid_error": opened.get("flash_uid_error"),
             "fpga_devid": golden.get("devid"), "usdr_images": {
                 k: opened[k] for k in ("firmware_id", "golden_image", "master_image")
                 if k in opened} or None,
@@ -452,7 +569,7 @@ SDR_SUMMARY_KEYS = (
     "iio_uri", "hw_model", "hw_model_variant", "hw_serial", "fw_version", "rf_chip",
     "xo_hz", "rx_lo_hz", "tx_lo_hz", "rx_rate_hz", "tx_rate_hz", "rx_bw_hz", "tx_bw_hz",
     "rx_channels", "tx_channels", "adc_bits", "usdr_hwid", "flash_jedec", "fpga_devid",
-    "usdr_error", "tuner")
+    "usdr_error", "tuner", "flash_uid", "flash_uid_state", "flash_uid_note")
 
 
 def sdr_summary(devices):

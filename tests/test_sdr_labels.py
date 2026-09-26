@@ -78,7 +78,8 @@ def test_an_xsdr_whose_unique_id_was_not_read_is_refused():
 def test_a_label_row_per_radio():
     rows = [(h, k, t) for h, k, t, _d, _r in labels.all_labels(sdr_docs(), {"sdr"})]
     assert rows == [("rpi-sdr-kraken", "sdr", "KrakenSDR 1000\u20131004"),
-                    ("rpi-sdr-pluto", "sdr", "ADALM-Pluto 10447354119600022000120009f61e2b82")]
+                    ("rpi-sdr-pluto", "sdr", "ADALM-Pluto 10447354119600022000120009f61e2b82"),
+                    ("rpi-sdr-xsdr", "sdr", "XSDR 19040203090e9769ffffffffffffffff")]
 
 
 def test_frequencies_read_as_people_write_them():
@@ -91,7 +92,7 @@ def test_frequencies_read_as_people_write_them():
 def test_render_and_decode(tmp_path):
     out = tmp_path / "sdr.pdf"
     n, sheets = labels.render(sdr_docs(), out, only=["sdr"], outline=True)
-    assert (n, sheets) == (2, 1)
+    assert (n, sheets) == (3, 1)
     pdftoppm = shutil.which("pdftoppm")
     if pdftoppm is None:
         pytest.skip("pdftoppm not installed")
@@ -102,8 +103,8 @@ def test_render_and_decode(tmp_path):
     got = set()
     for png in sorted(glob.glob(str(tmp_path / "page-*.png"))):
         got |= {b.text for b in zxingcpp.read_barcodes(Image.open(png))}
-    # the Pluto's serial is its only code: the Kraken has no identity to encode
-    assert got == {"10447354119600022000120009f61e2b82"}
+    # the Kraken has no identity to encode, so it gets no code
+    assert got == {"10447354119600022000120009f61e2b82", "19040203090e9769ffffffffffffffff"}
 
 
 def test_a_missing_mark_sets_the_makers_name(tmp_path, monkeypatch):
@@ -116,3 +117,15 @@ def test_a_missing_mark_sets_the_makers_name(tmp_path, monkeypatch):
     sdr_labels.draw_sdr(labels.Label(c, 0, 0), k)
     c.save()
     assert out.stat().st_size > 1000
+
+
+def test_the_xsdr_is_keyed_on_its_flash_esn():
+    x = records()["rpi-sdr-xsdr"]
+    assert x.title == "XSDR"
+    assert x.maker == "Wavelet Lab"
+    assert x.ident == "19040203090e9769ffffffffffffffff"
+    assert "XC7A50T" in x.subtitle
+    assert (x.rx_channels, x.tx_channels) == (2, 2)
+    prov = dict(x.provenance)
+    assert prov["model"].startswith("read: HWID 8030012d")
+    assert "DS-AT25SL321-112" in prov["identity"]
