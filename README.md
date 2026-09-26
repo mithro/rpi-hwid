@@ -1,7 +1,7 @@
 # rpi-hwid — Raspberry Pi hardware identity
 
 [![PyPI](https://img.shields.io/pypi/v/rpi-hwid)](https://pypi.org/project/rpi-hwid/)
-[![CI](https://github.com/mithro/rpi-hwid/actions/workflows/ci.yml/badge.svg)](https://github.com/mithro/rpi-hwid/actions/workflows/ci.yml)
+[![Debian packages](https://github.com/mithro/rpi-hwid/actions/workflows/deb.yml/badge.svg)](https://github.com/mithro/rpi-hwid/actions/workflows/deb.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 What is this Raspberry Pi wearing, what powers it, and what is soldered to it?

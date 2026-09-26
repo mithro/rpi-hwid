@@ -1,65 +1,110 @@
-name: Debian packages + apt repo
+name: Debian packages
 
-# Rolling release: every GREEN push to main builds python3-rpi-hwid for Debian
-# bookworm, trixie and sid and republishes a signed flat apt repository on
-# GitHub Pages (https://mith.ro/rpi-hwid/) through mithro/apt-repo-action,
-# like the other mithro apt-repo projects. The package is Architecture: all
-# (pure Python), so one build per suite on the default runner serves every
-# architecture, arm64 and armhf Raspberry Pis included. The version is
-# git-derived (X.Y at a vX.Y tag, X.Y.postN after it), identical to the wheel's.
+# Rolling release: every push to main tests, builds python3-rpi-hwid for each
+# suite, and republishes a signed flat apt repository per suite on GitHub
+# Pages (https://mith.ro/rpi-hwid/<suite>/) through mithro/apt-repo-action.
+# The package is Architecture: all (pure Python), so one build per suite
+# serves every architecture, arm64 and armhf Raspberry Pis included. A pull
+# request runs the same tests and builds, and publishes nothing.
 #
-# bookworm is built because the Raspberry Pi OS netboot images this is for are
-# still bookworm.
+# bookworm is built because the NeTV2's host (rpi5-netv2) runs Raspberry Pi
+# OS bookworm.
 #
-# Gated on CI exactly like publish-pypi.yml: triggered when the "CI" workflow
-# completes for main, and build-deb only proceeds when that run succeeded, so a
-# red commit never reaches the apt repo. workflow_dispatch stays for re-runs;
-# pull requests build to validate the packaging but never publish.
+# A green run of this workflow on main is also what publishes to PyPI:
+# publish-pypi.yml is triggered by it completing (workflow_run), so renaming
+# this workflow breaks that trigger.
+#
+# This follows mithro/apt-repo-action's docs/packaging.md; the differences
+# from its defaults are declared in .github/apt-packaging.toml.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
-  workflow_dispatch:
   pull_request:
+  workflow_dispatch:
 
-# Least privilege by default: only the publish job below raises this, and only
-# for itself. actions:read stays here because the build job's workflow_run
-# gating reads the triggering run's conclusion.
 permissions:
   contents: read
-  actions: read
+
+concurrency:
+  group: deb-${{ github.ref }}
+  # A newer push to a pull request cancels the older build. On the default
+  # branch a running publish is never cancelled: the newest push waits for it,
+  # and replaces any older push still waiting (it contains that one's commits).
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The same gates as local development (ruff, mypy --strict, pytest with
+  # coverage), across the supported Pythons.
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # full history so hatch-vcs can derive the version
+
+      - name: Install poppler (pdftoppm, for the label QR check) and a monospace font
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends poppler-utils fonts-dejavu-core
+
+      - uses: astral-sh/setup-uv@v7
+
+      - name: Install the matrix Python
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync all extras and the dev group
+        run: uv sync --all-extras --dev --python ${{ matrix.python-version }}
+
+      - name: Lint (ruff)
+        run: uv run ruff check
+
+      - name: Type-check (mypy --strict)
+        run: uv run mypy
+
+      - name: Tests + coverage gate
+        run: uv run pytest
+
+      # The three probe files must stay runnable by the oldest python3 a Pi in
+      # the field carries (Raspbian stretch: 3.5). Byte-compile them with a
+      # real 3.5 from the python:3.5 image (uv has no 3.7 build for this
+      # runner, and 3.7 would not have been the right grammar anyway); the
+      # test suite separately refuses f-strings, which 3.5 lacks.
+      - name: Byte-compile the probes with python 3.5
+        run: >-
+          docker run --rm -v "$PWD:/src" -w /src python:3.5-slim
+          python -W error -m py_compile src/rpi_hwid/probe.py src/rpi_hwid/fpga.py src/rpi_hwid/tinytapeout.py
+
   build-deb:
-    # workflow_run fires on every completion (failure/cancelled too); only a
-    # successful CI run is a release. publish-apt inherits the skip via needs.
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      github.event_name == 'pull_request' ||
-      github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-latest
+    name: build-deb (${{ matrix.suite }} ${{ matrix.arch }})
+    needs: test
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         suite: [bookworm, trixie, sid]
+        arch: [all]
     steps:
-      - uses: actions/checkout@v5
+      - name: Check out
+        uses: actions/checkout@v5
         with:
-          # Pin to the SHA CI validated, not the default-branch HEAD (which a
-          # workflow_run checkout would otherwise use and may already be past).
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-          fetch-depth: 0  # full history + tags so deb-version.py can describe
+          fetch-depth: 0  # full history + tags: the version is git describe's
 
-      - name: Build package in debian:${{ matrix.suite }}
+      - name: Build
         run: |
           docker run --rm \
             -v "${PWD}:/src" -w /src \
             docker.io/library/debian:${{ matrix.suite }} \
             sh packaging/ci-build.sh
 
-      - name: Install the package in a clean debian:${{ matrix.suite }} and run it
+      # Install what was just built into a clean container of the same suite,
+      # with its dependencies from the Debian archive, and run it.
+      - name: Install test
         run: |
           docker run --rm \
             -v "${PWD}/built-debs:/debs:ro" \
@@ -69,12 +114,19 @@ jobs:
                     rpi-hwid name --netv2 0x00742c4e63b9085c
                     python3 -c "import rpi_hwid.probe, rpi_hwid.fpga, rpi_hwid.model"'
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload
+        uses: actions/upload-artifact@v7
         with:
-          name: debs-${{ matrix.suite }}
-          path: built-debs/
+          name: debs-${{ matrix.suite }}-${{ matrix.arch }}
+          path: built-debs/*.deb
+          retention-days: 14
 
   publish-apt:
+    # Build and install-test pull requests, but never publish from one (or
+    # from any branch but main): that would overwrite the live repository
+    # with unreviewed packages.
+    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+    needs: build-deb
     # Scoped to this job alone. A job calling a reusable workflow sets the
     # maximum permissions available to it, so the elevated Pages scopes stay
     # here rather than applying to the whole workflow.
@@ -82,10 +134,6 @@ jobs:
       contents: read
       pages: write
       id-token: write
-    # Build on PRs to validate, but never publish from one: that would
-    # overwrite the live repository with unreviewed packages.
-    if: github.event_name != 'pull_request'
-    needs: build-deb
     uses: mithro/apt-repo-action/.github/workflows/publish-apt.yml@main
     with:
       suites: "bookworm trixie sid"
