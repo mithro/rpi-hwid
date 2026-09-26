@@ -56,7 +56,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
     if args.sdr:
         from rpi_hwid import sdr
 
-        sdr.merge_sdr(doc, sdr.collect_sdr())
+        sdr.merge_sdr(doc, sdr.collect_sdr(args.sdr_open))
     if args.json:
         print(json.dumps(doc, indent=1))
         return 0
@@ -119,6 +119,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         fpga=args.fpga, jtag_hosts=tuple(args.jtag or ()), flash_hosts=tuple(args.flash or ()),
         workers=args.workers, tinytapeout=args.tinytapeout,
         take_port=not args.no_stop_service, sdr=args.sdr,
+        sdr_open_hosts=tuple(args.sdr_open or ()),
     )
     failed = 0
     for r in results:
@@ -174,6 +175,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="also look for a Tiny Tapeout demo board (reads its REPL)")
     p.add_argument("--sdr", action="store_true",
                    help="also look for a software-defined radio (opens none)")
+    p.add_argument("--sdr-open", action="store_true",
+                   help="with --sdr: open a usdr card nothing holds, for its HWID and "
+                        "flash id")
     p.add_argument("--no-stop-service", action="store_true",
                    help=NO_STOP_SERVICE_HELP)
     p.set_defaults(func=cmd_probe)
@@ -221,6 +225,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sdr", action="store_true",
                    help="append the SDR module on every host (reads sysfs and a Pluto's "
                         "network IIO context; opens no radio)")
+    p.add_argument("--sdr-open", action="append", metavar="HOST",
+                   help="also open this host's usdr card, when nothing holds it, for its "
+                        "HWID and flash id (implies --sdr for it)")
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_collect)
 

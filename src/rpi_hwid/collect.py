@@ -34,7 +34,7 @@ DEFAULT_USERS = (getpass.getuser(), "pi")
 
 def probe_source(
     fpga: bool = False, jtag: bool = False, flash: bool = False, tinytapeout: bool = False,
-    take_port: bool = True, sdr: bool = False,
+    take_port: bool = True, sdr: bool = False, sdr_open: bool = False,
 ) -> str:
     """The script to feed to ``python3 -`` on a host.
 
@@ -61,7 +61,9 @@ def probe_source(
     if sdr:
         # the radios: sysfs and a Pluto's network IIO context, nothing opened
         extra += "\n" + pkg.joinpath("sdr.py").read_text()
-        glue += "merge_sdr(_doc, collect_sdr())\n"
+        # opening a free usdr card is its own opt-in, written out only when asked
+        glue += ("merge_sdr(_doc, collect_sdr(open_radios=True))\n" if sdr_open
+                 else "merge_sdr(_doc, collect_sdr())\n")
     glue += "print(json.dumps(_doc, indent=1))\n"
     return "RPI_HWID_EMBEDDED = True\n" + probe + extra + glue
 
@@ -88,9 +90,11 @@ def probe_host(
     tinytapeout: bool = False,
     take_port: bool = True,
     sdr: bool = False,
+    sdr_open: bool = False,
 ) -> Result:
     """Run the probe on one host; `host` may carry its own ``user@``."""
-    source = probe_source(fpga, jtag, flash, tinytapeout, take_port, sdr)
+    source = probe_source(fpga, jtag, flash, tinytapeout, take_port, sdr or sdr_open,
+                          sdr_open)
     args = ["--json"]
     if "@" in host:
         user_list: Sequence[str] = [host.split("@", 1)[0]]
@@ -134,6 +138,7 @@ def collect(
     tinytapeout: bool = False,
     take_port: bool = True,
     sdr: bool = False,
+    sdr_open_hosts: Sequence[str] = (),
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
@@ -150,7 +155,7 @@ def collect(
     def one(host: str) -> Result:
         return probe_host(host, users, jump, fpga or host in jtag_hosts,
                           host in jtag_hosts, host in flash_hosts, tinytapeout=tinytapeout,
-                          take_port=take_port, sdr=sdr)
+                          take_port=take_port, sdr=sdr, sdr_open=host in sdr_open_hosts)
 
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:

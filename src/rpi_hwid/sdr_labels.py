@@ -124,6 +124,13 @@ IDENT_READ_WITH = {
 }
 
 
+# The 7-series IDCODEs a usdr card's image names, revision bits masked.
+# 0362c093 is the XC7A50T (UG470 Table 1-1); usdr_flash refuses an image
+# whose DEVID is not the die's ("FPGA Devid mismatch"), so the golden
+# image's DEVID is the die.
+XILINX_DEVID = {0x362C093: "XC7A50T", 0x362D093: "XC7A35T", 0x3631093: "XC7A100T"}
+
+
 class RadioNotIdentifiedError(Exception):
     """A radio reached the label generator known only by its bus id: what it
     is, and so what it can do, was never read. Printing a guess would put a
@@ -186,6 +193,9 @@ def sdr_records(docs):
     out = []
     for host in sorted(docs):
         for r in docs[host].summary.sdr:
+            if r.usdr_error:
+                raise RadioNotIdentifiedError(f"{host}: the {r.kind} card at "
+                                              f"{r.pcie_id}: {r.usdr_error}.")
             key = model_key(r)
             if key is None:
                 raise RadioNotIdentifiedError(
@@ -198,8 +208,8 @@ def sdr_records(docs):
 
 NOT_IDENTIFIED = {
     "usdr": ("Its HWID register says which LMS7002M card it is (0x30 in bits 23:16 "
-             "is an XSDR): read it with `sudo usdr_dm_sensors -l 3` on that host and "
-             "collect again."),
+             "is an XSDR): read it with `rpi-hwid collect --sdr-open HOST` (the card "
+             "must be free: nothing holding /dev/usdr0)."),
     "rtl-sdr": ("An RTL2832U's EEPROM strings are the same on most dongles; which tuner "
                 "is behind it is read with `rtl_test -t` on that host (stop whatever "
                 "holds the dongle first) and collect again."),
@@ -261,6 +271,14 @@ def record(host, key, r):
     elif key == "xsdr":
         ident = r.flash_uid
         ident_caption = "configuration flash unique id"
+        prov.append(("model", f"read: HWID {r.usdr_hwid} (bits 23:16 = 0x30, XSDR_DEV in "
+                              "usdr-lib src/lib/device/m2_lm7_1/xsdr_ctrl.h)"))
+        if r.fpga_devid:
+            part = XILINX_DEVID.get(int(r.fpga_devid, 16) & 0x0FFFFFFF)
+            if part:
+                extra = part
+                prov.append(("FPGA", f"read: the golden image's DEVID {r.fpga_devid}, "
+                                     "which usdr_flash checks against the die"))
     facts = ("  ·  ".join(x for x in (rate, f"{bits}-bit") if x), clock or "")
     return SdrLabel(
         kind=key, host=host, maker=m.maker, mark=m.mark, title=m.title,

@@ -60,7 +60,7 @@ def test_a_radio_known_only_by_its_bus_id_is_refused():
     raw["verdict"]["summary"]["sdr"] = [{"kind": "usdr", "pcie_id": "10ee:7049",
                                          "usdr_family": "m2_lm7_1"}]
     docs = {"rpi-sdr-xsdr": ProbeDocument.from_dict("rpi-sdr-xsdr", raw)}
-    with pytest.raises(sdr_labels.RadioNotIdentifiedError, match="usdr_dm_sensors"):
+    with pytest.raises(sdr_labels.RadioNotIdentifiedError, match="--sdr-open"):
         sdr_labels.sdr_records(docs)
 
 
