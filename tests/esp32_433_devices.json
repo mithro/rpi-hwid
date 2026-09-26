@@ -1,0 +1,188 @@
+{
+ "rpi5-433mhz": [
+  {
+   "transport": "usb-serial-jtag",
+   "usb_path": "3-1.2",
+   "vidpid": "303a:1001",
+   "tty": "/dev/ttyACM0",
+   "tty_links": [
+    "/dev/radio-esp32-E8:3D:C1:8C:5C:88",
+    "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_E8:3D:C1:8C:5C:88-if00"
+   ],
+   "usb_manufacturer": "Espressif",
+   "usb_product": "USB JTAG/serial debug unit",
+   "usb_serial": "E8:3D:C1:8C:5C:88",
+   "bcd_device": "0101",
+   "bridge": null,
+   "mac": "e8:3d:c1:8c:5c:88",
+   "mac_source": "usb-serial-jtag serial; efuse",
+   "chip": "ESP32-C3",
+   "chip_description": "ESP32-C3 (QFN32) (revision v0.4)",
+   "revision": "v0.4",
+   "package": "QFN32",
+   "features": [
+    "WiFi",
+    "BLE",
+    "Embedded Flash 4MB (XMC)"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0x464016",
+   "flash_uid": "0000000000000000",
+   "efuse": {
+    "MAC": "e8:3d:c1:8c:5c:88 (OK)",
+    "WAFER_VERSION_MINOR_LO": 4,
+    "PKG_VERSION": 0,
+    "BLK_VERSION_MINOR": 3,
+    "FLASH_CAP": 1,
+    "FLASH_TEMP": 1,
+    "FLASH_VENDOR": 1,
+    "WAFER_VERSION_MINOR_HI": false,
+    "WAFER_VERSION_MAJOR": 0,
+    "OPTIONAL_UNIQUE_ID": "89 e4 be c5 5c 62 67 1e ca 93 59 3f 98 6f a7 c9",
+    "BLK_VERSION_MAJOR": 1,
+    "CUSTOM_MAC": "00:00:00:00:00:00 (OK)",
+    "WAFER_VERSION_MINOR": 4
+   },
+   "read": "esptool 4.7.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "(trimmed)",
+   "radio": {
+    "chip": null,
+    "present": false,
+    "partnum": null,
+    "version": null,
+    "pins": {},
+    "firmware": "15.5.0(safeboot)"
+   }
+  },
+  {
+   "transport": "usb-serial-jtag",
+   "usb_path": "3-1.3",
+   "vidpid": "303a:1001",
+   "tty": "/dev/ttyACM2",
+   "tty_links": [
+    "/dev/radio-esp32-44:1B:F6:2E:B3:80",
+    "/dev/radio-sx1278-ra02",
+    "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_44:1B:F6:2E:B3:80-if00"
+   ],
+   "usb_manufacturer": "Espressif",
+   "usb_product": "USB JTAG/serial debug unit",
+   "usb_serial": "44:1B:F6:2E:B3:80",
+   "bcd_device": "0101",
+   "bridge": null,
+   "mac": "44:1b:f6:2e:b3:80",
+   "mac_source": "usb-serial-jtag serial; efuse",
+   "chip": "ESP32-C3",
+   "chip_description": "ESP32-C3 (QFN32) (revision v0.4)",
+   "revision": "v0.4",
+   "package": "QFN32",
+   "features": [
+    "WiFi",
+    "BLE",
+    "Embedded Flash 4MB (XMC)"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0x464016",
+   "flash_uid": "0000000000000000",
+   "efuse": {
+    "MAC": "44:1b:f6:2e:b3:80 (OK)",
+    "WAFER_VERSION_MINOR_LO": 4,
+    "PKG_VERSION": 0,
+    "BLK_VERSION_MINOR": 3,
+    "FLASH_CAP": 1,
+    "FLASH_TEMP": 1,
+    "FLASH_VENDOR": 1,
+    "WAFER_VERSION_MINOR_HI": false,
+    "WAFER_VERSION_MAJOR": 0,
+    "OPTIONAL_UNIQUE_ID": "4c d0 73 86 be f1 34 a5 3c d0 e8 7a 86 d3 66 03",
+    "BLK_VERSION_MAJOR": 1,
+    "CUSTOM_MAC": "00:00:00:00:00:00 (OK)",
+    "WAFER_VERSION_MINOR": 4
+   },
+   "read": "esptool 4.7.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "(trimmed)",
+   "radio": {
+    "chip": "SX1278",
+    "present": true,
+    "partnum": null,
+    "version": "0x12",
+    "pins": {
+     "SCK": 3,
+     "MISO": 7,
+     "MOSI": 4,
+     "NSS": 1,
+     "RST": 10,
+     "DIO0": 6
+    },
+    "firmware": "15.5.0(cc1101-node)"
+   }
+  },
+  {
+   "transport": "usb-serial-jtag",
+   "usb_path": "3-1.4",
+   "vidpid": "303a:1001",
+   "tty": "/dev/ttyACM3",
+   "tty_links": [
+    "/dev/radio-cc1101-blue",
+    "/dev/radio-esp32-E8:3D:C1:8C:3E:B8",
+    "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_E8:3D:C1:8C:3E:B8-if00"
+   ],
+   "usb_manufacturer": "Espressif",
+   "usb_product": "USB JTAG/serial debug unit",
+   "usb_serial": "E8:3D:C1:8C:3E:B8",
+   "bcd_device": "0101",
+   "bridge": null,
+   "mac": "e8:3d:c1:8c:3e:b8",
+   "mac_source": "usb-serial-jtag serial; efuse",
+   "chip": "ESP32-C3",
+   "chip_description": "ESP32-C3 (QFN32) (revision v0.4)",
+   "revision": "v0.4",
+   "package": "QFN32",
+   "features": [
+    "WiFi",
+    "BLE",
+    "Embedded Flash 4MB (XMC)"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0x464016",
+   "flash_uid": "0000000000000000",
+   "efuse": {
+    "MAC": "e8:3d:c1:8c:3e:b8 (OK)",
+    "WAFER_VERSION_MINOR_LO": 4,
+    "PKG_VERSION": 0,
+    "BLK_VERSION_MINOR": 3,
+    "FLASH_CAP": 1,
+    "FLASH_TEMP": 1,
+    "FLASH_VENDOR": 1,
+    "WAFER_VERSION_MINOR_HI": false,
+    "WAFER_VERSION_MAJOR": 0,
+    "OPTIONAL_UNIQUE_ID": "53 b9 b9 18 42 e4 1b 19 ee 00 32 14 02 a8 b4 9b",
+    "BLK_VERSION_MAJOR": 1,
+    "CUSTOM_MAC": "00:00:00:00:00:00 (OK)",
+    "WAFER_VERSION_MINOR": 4
+   },
+   "read": "esptool 4.7.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "(trimmed)",
+   "radio": {
+    "chip": "CC1101",
+    "present": true,
+    "partnum": "0x00",
+    "version": "0x14",
+    "pins": {
+     "SCK": 3,
+     "MISO": 7,
+     "MOSI": 4,
+     "CS": 1,
+     "GDO0": 10,
+     "GDO2": 6
+    },
+    "firmware": "15.5.0(cc1101-node)"
+   }
+  }
+ ]
+}
