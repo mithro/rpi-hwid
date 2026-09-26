@@ -132,6 +132,63 @@ def test_a_lone_rtl2832u_is_an_rtl_sdr_and_keeps_its_serial(tmp_path, monkeypatc
                  "manufacturer": "Realtek", "product": "RTL2838UHIDIR"}
 
 
+# `rtl_eeprom -d 1000` on rpi-sdr-kraken, OpenWebRX stopped, 2026-09-26
+KRAKEN_EEPROM = """Found 5 device(s):
+  0:  Generic RTL2832U OEM
+  1:  Generic RTL2832U OEM
+  2:  Generic RTL2832U OEM
+  3:  Generic RTL2832U OEM
+  4:  Generic RTL2832U OEM
+Using device 1: Generic RTL2832U OEM
+Found Rafael Micro R820T tuner
+Current configuration:
+__________________________________________
+Vendor ID:\t\t0x0bda
+Product ID:\t\t0x2838
+Manufacturer:\t\tRealtek
+Product:\t\tRTL2838UHIDIR
+Serial number:\t\t1000
+Serial number enabled:\tyes
+IR endpoint enabled:\tyes
+Remote wakeup enabled:\tno
+__________________________________________
+"""
+
+
+def test_the_open_read_finds_every_krakens_tuner(kraken_root, monkeypatch):
+    for n, port in enumerate(("2", "3", "4", "5", "6")):
+        (kraken_root / "sys/bus/usb/devices" / ("1-1." + port) / "busnum").write_text("1\n")
+        (kraken_root / "sys/bus/usb/devices" / ("1-1." + port) / "devnum").write_text(
+            f"{n + 3}\n")
+    asked = []
+
+    def fake(args, timeout=15):
+        if args[:3] == ["sudo", "-n", "fuser"]:
+            return 1, "", ""
+        if args[:2] == ["rtl_eeprom", "-d"]:
+            asked.append(args[2])
+            return 0, "", KRAKEN_EEPROM.replace("1000", args[2])
+        return 127, "", "not here"
+
+    monkeypatch.setattr(sdr, "sdr_sh", fake)
+    s = sdr.collect_sdr(open_radios=True)
+    (k,) = s["summary"]
+    assert k["tuner"] == "Rafael Micro R820T"
+    assert sorted(asked) == ["1000", "1001", "1002", "1003", "1004"]
+    assert s["rtl_open"]["1-1.5"]["eeprom"]["IR endpoint enabled"] == "yes"
+
+
+def test_a_dongle_readsb_holds_is_not_opened(kraken_root, monkeypatch):
+    for port in ("2", "3", "4", "5", "6"):
+        (kraken_root / "sys/bus/usb/devices" / ("1-1." + port) / "busnum").write_text("1\n")
+        (kraken_root / "sys/bus/usb/devices" / ("1-1." + port) / "devnum").write_text("3\n")
+    monkeypatch.setattr(sdr, "sdr_sh", lambda args, timeout=15: (0, " 4242", "")
+                        if args[:3] == ["sudo", "-n", "fuser"] else (127, "", "not here"))
+    s = sdr.collect_sdr(open_radios=True)
+    assert "tuner" not in s["summary"][0]
+    assert "held by" in s["rtl_open"]["1-1.2"]["error"]
+
+
 def test_five_rtl_dongles_that_are_not_a_kraken_stay_five_dongles(tmp_path, monkeypatch):
     # serials a Kraken would never carry: five separate radios
     _usb(tmp_path, "1-1", "0424", "2517")
