@@ -169,6 +169,14 @@ class SdrDevice:
     rx_channels: int | None = None
     tx_channels: int | None = None
     adc_bits: int | None = None
+    # Read by opening the radio, which only an opt-in read does (--sdr-open)
+    usdr_hwid: str | None = None           # the M2_LM7_1 card's HWID register, hex
+    flash_jedec: str | None = None         # its configuration flash
+    flash_uid: str | None = None           # that flash's factory serial, where it has one
+    flash_uid_state: str | None = None     # read | none
+    flash_uid_note: str | None = None      # why, where the chip itself says so
+    tuner: str | None = None               # an RTL2832U's tuner, as librtlsdr names it
+    rtl_model: str | None = None           # which RTL2832U dongle, where evidence says
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> SdrDevice:
