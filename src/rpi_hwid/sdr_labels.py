@@ -114,7 +114,7 @@ MODELS = {
 
 # Serials a unit is shipped with that every other unit shares, and why.
 SHARED_SERIALS = {
-    "00000001": "factory default of the RTL2832U's EEPROM",
+    "00000001": "the RTL2832U EEPROM's factory default",
 }
 
 # What reads a radio's unique identifier, for the refusal when it is missing.
@@ -268,6 +268,10 @@ def record(host, key, r):
         shared ="–".join((r.channel_serials[0], r.channel_serials[-1]))
         shared_caption = "channel serials  ·  the same on every KrakenSDR: not unique"
     elif key == "rtl-sdr-blog-v3":
+        prov.append(("model", "read: tuner Rafael Micro R820T (rtl_eeprom), and the "
+                              "direct-sampling Q branch carrying signal where the I branch "
+                              "does not, the V3's hardware HF path (" + RTL_V3_DOCS[:77] +
+                              ")"))
         if r.usb_serial in SHARED_SERIALS:
             shared = r.usb_serial
             shared_caption = "USB serial  ·  " + SHARED_SERIALS[r.usb_serial] + ": not unique"
@@ -357,7 +361,14 @@ def coverage(lab, x0, y, w, r):
         for lo, hi in aux:
             px, py = lab.pt(axis_x(ax0, aw, lo), by + bar)
             c.setFillColor(LIGHT)
-            c.rect(px, py, axis_x(ax0, aw, hi) - axis_x(ax0, aw, lo), bar, stroke=0, fill=1)
+            aw_ = axis_x(ax0, aw, hi) - axis_x(ax0, aw, lo)
+            c.rect(px, py, aw_, bar, stroke=0, fill=1)
+            # what the grey is: the direct-sampling path, where it fits
+            atext = "HF direct sampling"
+            if lab.width(atext, lb.SANS_BOLD, 4.5) <= aw_ - 1 * lb.mm:
+                lb.Label.text(lab, axis_x(ax0, aw, lo) + aw_ / 2,
+                              by + (bar - 4.5 * 0.72) / 2, atext, lb.SANS_BOLD, 4.5,
+                              align="centre", color=white)
         for lo, hi in bands:
             x1, x2 = axis_x(ax0, aw, lo), axis_x(ax0, aw, hi)
             if cap == "RX":
@@ -370,12 +381,14 @@ def coverage(lab, x0, y, w, r):
             text = f"{mhz(lo)} – {mhz(hi)}"
             size = 5
             tw = lab.width(text, lb.SANS, size)
+            # left of the bar only where no auxiliary band sits there
+            left_end = min([x1] + [axis_x(ax0, aw, lo) for lo, _hi in aux])
             if ax0 + aw - x2 >= tw + 0.8 * lb.mm:
                 lb.Label.text(lab, x2 + 0.8 * lb.mm, by + (bar - size * 0.72) / 2, text,
                              lb.SANS, size)
-            elif x1 - ax0 >= tw + 0.8 * lb.mm:
-                lb.Label.text(lab, x1 - 0.8 * lb.mm, by + (bar - size * 0.72) / 2, text,
-                             lb.SANS, size, align="right")
+            elif left_end - ax0 >= tw + 0.8 * lb.mm:
+                lb.Label.text(lab, left_end - 0.8 * lb.mm, by + (bar - size * 0.72) / 2,
+                             text, lb.SANS, size, align="right")
             elif cap == "RX":
                 lb.Label.text(lab, (x1 + x2) / 2, by + (bar - size * 0.72) / 2, text,
                              lb.SANS_BOLD, size, align="centre", color=white)
@@ -551,5 +564,6 @@ def draw_sdr(lab, r):
         lab.text(pad, cap_y, r.ident_caption, lb.SANS, lb.CAPTION, color=lb.GREY)
         lab.fit(pad, foot, r.ident, lb.MONO, size, lb.LABEL_W - 2 * pad, min_size=5.5)
     else:
-        lab.text(pad, cap_y, r.shared_caption, lb.SANS, lb.CAPTION, color=lb.NOTE)
+        lab.fit(pad, cap_y, r.shared_caption, lb.SANS, lb.CAPTION, lb.LABEL_W - 2 * pad,
+                min_size=4.5, color=lb.NOTE)
         lab.fit(pad, foot, r.shared or "", lb.MONO, size, lb.LABEL_W - 2 * pad)

@@ -56,6 +56,16 @@ SDR_RAW = {
           "flash_uid": "19040203090e9769ffffffffffffffff", "flash_uid_state": "read",
           "flash_uid_note": "AT25SL321 secured-OTP ESN; security register 0x00: factory "
                             "lock 0, customer lock 0"}]),
+    # the RTL-SDR Blog V3 on the adsb.im appliance: generic EEPROM, told by
+    # its HF path into the Q branch (--sdr-open with ultrafeeder stopped)
+    "rpi-sdr-rtlsdr-v3": _doc(
+        "Raspberry Pi 4 Model B Rev 1.5", "10000000f48203d0", "c03115", "4 GB",
+        "raspberrypi,4-model-b brcm,bcm2711",
+        [("eth", "e4:5f:01:a1:52:df"), ("wlan", "e4:5f:01:a1:52:e0")],
+        [{"kind": "rtl-sdr", "vidpid": "0bda:2838", "usb_serial": "00000001",
+          "manufacturer": "Realtek", "product": "RTL2838UHIDIR",
+          "tuner": "Rafael Micro R820T", "rtl_model": "rtl-sdr-blog-v3"}],
+        power_class="undetermined"),
     # the KrakenSDR: five RTL2832U on its own USB2517 hub, serials 1000-1004
     "rpi-sdr-kraken": _doc(
         PI5[0], "9eb82f307e52c50f", "d04171", "8 GB", PI5[1],
