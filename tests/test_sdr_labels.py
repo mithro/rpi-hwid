@@ -79,6 +79,7 @@ def test_a_label_row_per_radio():
     rows = [(h, k, t) for h, k, t, _d, _r in labels.all_labels(sdr_docs(), {"sdr"})]
     assert rows == [("rpi-sdr-kraken", "sdr", "KrakenSDR 1000\u20131004"),
                     ("rpi-sdr-pluto", "sdr", "ADALM-Pluto 10447354119600022000120009f61e2b82"),
+                    ("rpi-sdr-rtlsdr-v3", "sdr", "RTL-SDR V3 00000001"),
                     ("rpi-sdr-xsdr", "sdr", "XSDR 19040203090e9769ffffffffffffffff")]
 
 
@@ -92,7 +93,7 @@ def test_frequencies_read_as_people_write_them():
 def test_render_and_decode(tmp_path):
     out = tmp_path / "sdr.pdf"
     n, sheets = labels.render(sdr_docs(), out, only=["sdr"], outline=True)
-    assert (n, sheets) == (3, 1)
+    assert (n, sheets) == (4, 1)
     pdftoppm = shutil.which("pdftoppm")
     if pdftoppm is None:
         pytest.skip("pdftoppm not installed")
@@ -103,7 +104,7 @@ def test_render_and_decode(tmp_path):
     got = set()
     for png in sorted(glob.glob(str(tmp_path / "page-*.png"))):
         got |= {b.text for b in zxingcpp.read_barcodes(Image.open(png))}
-    # the Kraken has no identity to encode, so it gets no code
+    # the Kraken and the V3 have no identity to encode, so they get no code
     assert got == {"10447354119600022000120009f61e2b82", "19040203090e9769ffffffffffffffff"}
 
 
@@ -129,3 +130,14 @@ def test_the_xsdr_is_keyed_on_its_flash_esn():
     prov = dict(x.provenance)
     assert prov["model"].startswith("read: HWID 8030012d")
     assert "DS-AT25SL321-112" in prov["identity"]
+
+
+def test_the_v3_prints_its_shared_serial_as_not_unique():
+    v = records()["rpi-sdr-rtlsdr-v3"]
+    assert v.title == "RTL-SDR V3"
+    assert v.maker == "RTL-SDR Blog"
+    assert v.ident is None
+    assert v.shared == "00000001"
+    assert "not unique" in v.shared_caption
+    assert v.rx_aux == ((500_000, 24_000_000),)
+    assert dict(v.provenance)["model"].startswith("read: tuner Rafael Micro R820T")

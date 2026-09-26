@@ -257,7 +257,7 @@ def usb_node(u):
         return None
 
 
-def rtl_open(u):
+def rtl_open(u, kraken=False):
     """Ask librtlsdr about one RTL2832U -- `rtl_eeprom -d SERIAL`, which with
     no write flag only reads -- for the tuner and the EEPROM's fields. Only
     with --sdr-open, and only when nothing holds the device: readsb, OpenWebRX
@@ -277,6 +277,9 @@ def rtl_open(u):
     fields = dict(RTL_EEPROM_FIELD.findall(text))
     if fields:
         res["eeprom"] = fields
+    if res.get("tuner") == "Rafael Micro R820T" and not kraken:
+        # the V3's own feature: HF wired into the Q branch (see sdr_verdict)
+        res["direct_sampling"] = rtl_direct_sampling(u["serial"])
     if not res:
         res["error"] = "rtl_eeprom -d %s: %s" % (u["serial"], (text.strip() or "rc %d" % rc)
                                                  .splitlines()[-1])
@@ -393,6 +396,54 @@ def usdr_esn(res):
     res["flash_uid_note"] = ("AT25SL321 secured-OTP ESN; security register 0x%02x: factory "
                              "lock %d, customer lock %d" % (scur, scur & 1, (scur >> 1) & 1))
 
+# One RTL2832U's direct-sampling inputs, compared: half a second from the I
+# branch (mode 1) and half from the Q branch (mode 2), at 14 MHz, through
+# librtlsdr's rtlsdr_read_sync with a fixed byte count. In a process of its
+# own so a stuck USB read is killed by the timeout, not waited on.
+RTL_DS_READER = r"""
+import ctypes, ctypes.util, json, math, sys
+lib = ctypes.CDLL(ctypes.util.find_library("rtlsdr") or "librtlsdr.so.0")
+lib.rtlsdr_get_index_by_serial.argtypes = [ctypes.c_char_p]
+idx = lib.rtlsdr_get_index_by_serial(sys.argv[1].encode())
+dev = ctypes.c_void_p()
+if idx < 0 or lib.rtlsdr_open(ctypes.byref(dev), idx):
+    print(json.dumps({"error": "could not open %s" % sys.argv[1]})); sys.exit(0)
+out = {}
+try:
+    lib.rtlsdr_set_sample_rate(dev, 2400000)
+    for mode, name in ((1, "i_rms"), (2, "q_rms")):
+        lib.rtlsdr_set_direct_sampling(dev, mode)
+        lib.rtlsdr_set_center_freq(dev, 14000000)
+        lib.rtlsdr_reset_buffer(dev)
+        n = ctypes.c_int(0)
+        buf = ctypes.create_string_buffer(2400000)
+        lib.rtlsdr_read_sync(dev, buf, 2400000, ctypes.byref(n))
+        v = bytearray(buf.raw[:n.value])[600000::2]
+        if len(v) < 100000:
+            out["error"] = "short read in mode %d" % mode
+            break
+        mean = sum(v) / float(len(v))
+        out[name] = round(math.sqrt(sum((x - mean) ** 2 for x in v) / len(v)), 3)
+    lib.rtlsdr_set_direct_sampling(dev, 0)
+finally:
+    lib.rtlsdr_close(dev)
+print(json.dumps(out))
+"""
+# The Q branch's signal must stand this far clear of the unconnected I
+# branch's ADC noise to count as wired. Measured on rpi-sdr-rtlsdr-v3,
+# 2026-09-26, at 14 MHz: I 0.46, Q 2.32 (and at 1 and 7.1 MHz, Q 1.14 and
+# 1.76 against I 0.50 and 0.49 -- rising with frequency, as antenna noise
+# through a 24 MHz low-pass does, where the I branch stays flat).
+DS_Q_OVER_I = 3.0
+
+
+def rtl_direct_sampling(serial):
+    rc, out, err = sdr_sh(["python3", "-c", RTL_DS_READER, serial], timeout=30)
+    try:
+        return json.loads(out.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"error": "direct-sampling read: %s" % ((err.strip() or "no answer")[-200:])}
+
 
 def iio_range(text):
     """'[325000000 1 3800000000]' -> [325000000, 3800000000]; else None."""
@@ -485,6 +536,24 @@ def rtl_tuner(d, members):
     return read[0] if read and read[0] and len(set(read)) == 1 else None
 
 
+def rtl_model(d, u):
+    """'rtl-sdr-blog-v3' where the evidence says so, else None.
+
+    A Blog V3's EEPROM is the generic one, so it is told by its hardware.
+    Its datasheet (rtl-sdr.com RTL-SDR-Blog-V3-Datasheet.pdf): "The V3 has
+    direct sampling mode implemented in hardware already, so no hardware
+    mods are required", HF diplexed off the SMA into the RTL2832U's Q
+    branch, where "on typical R820T RTL-SDR dongles one can enable direct
+    sampling mode by soldering a wire to the Q-branch pins". So an R820T
+    dongle whose Q branch carries signal and whose I branch does not is a
+    V3 (or one modified to be like one)."""
+    read = (d.get("rtl_open") or {}).get(u["path"]) or {}
+    ds = read.get("direct_sampling") or {}
+    if read.get("tuner") != "Rafael Micro R820T" or not ds.get("i_rms") or not ds.get("q_rms"):
+        return None
+    return "rtl-sdr-blog-v3" if ds["q_rms"] >= DS_Q_OVER_I * ds["i_rms"] else None
+
+
 def sdr_verdict(d):
     """Name the radios this host has, from USB and PCIe."""
     devices = []
@@ -513,6 +582,7 @@ def sdr_verdict(d):
             "kind": "rtl-sdr", "usb": u["path"], "vidpid": u["id"],
             "usb_serial": u["serial"], "manufacturer": u["manufacturer"],
             "product": u["product"], "tuner": rtl_tuner(d, [u]),
+            "rtl_model": rtl_model(d, u),
             "how": "USB %s %s %s at %s" % (u["id"], u["manufacturer"] or "",
                                           u["product"] or "", u["path"])})
     for u in d["usb"]:
@@ -569,7 +639,7 @@ SDR_SUMMARY_KEYS = (
     "iio_uri", "hw_model", "hw_model_variant", "hw_serial", "fw_version", "rf_chip",
     "xo_hz", "rx_lo_hz", "tx_lo_hz", "rx_rate_hz", "tx_rate_hz", "rx_bw_hz", "tx_bw_hz",
     "rx_channels", "tx_channels", "adc_bits", "usdr_hwid", "flash_jedec", "fpga_devid",
-    "usdr_error", "tuner", "flash_uid", "flash_uid_state", "flash_uid_note")
+    "usdr_error", "tuner", "flash_uid", "flash_uid_state", "flash_uid_note", "rtl_model")
 
 
 def sdr_summary(devices):
@@ -584,8 +654,16 @@ def sdr_summary(devices):
 def collect_sdr(open_radios=False):
     s = {"usb": sdr_usb_devices(), "pcie": sdr_pcie_devices(), "iio": {}}
     s["usdr_open"] = {p["slot"]: usdr_open(p) for p in s["pcie"]} if open_radios else {}
-    s["rtl_open"] = {u["path"]: rtl_open(u) for u in s["usb"]
-                     if u["id"] in RTL_IDS} if open_radios else {}
+    # a KrakenSDR's channels are asked their EEPROM only, never streamed:
+    # rpi-sdr-kraken browns out under load on its 15 W supply
+    kraken_paths = set()
+    rtl = [u for u in s["usb"] if u["id"] in RTL_IDS]
+    for hub in set(u["parent"] for u in rtl):
+        members = [u for u in rtl if u["parent"] == hub]
+        if hub and tuple(sorted(u["serial"] or "" for u in members)) == KRAKEN_SERIALS:
+            kraken_paths.update(u["path"] for u in members)
+    s["rtl_open"] = {u["path"]: rtl_open(u, u["path"] in kraken_paths)
+                     for u in rtl} if open_radios else {}
     for u in s["usb"]:
         if u["id"] in PLUTO_IDS:
             addr, why = pluto_address(u)
