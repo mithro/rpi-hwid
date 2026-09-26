@@ -41,7 +41,9 @@ SDR_RAW = {
           "rx_lo_hz": [325000000, 3800000000], "tx_lo_hz": [325000000, 3800000000],
           "rx_rate_hz": [520833, 30720000], "tx_rate_hz": [520833, 30720000],
           "rx_bw_hz": [200000, 56000000], "tx_bw_hz": [200000, 40000000],
-          "rx_channels": 1, "tx_channels": 1, "adc_bits": 12}],
+          "rx_channels": 1, "tx_channels": 1, "adc_bits": 12,
+          "flash_uid": "10447354119600022000120009f61e2b82", "flash_uid_bits": 136,
+          "flash_uid_state": "read", "flash_source": "pluto-firmware"}],
         power_class="usbc-pd-supply"),
     # the XSDR on PCIe, opened with --sdr-open while nothing held it. The ESN
     # is from the same card's AT25SL321, read the same day by the reader
@@ -53,9 +55,11 @@ SDR_RAW = {
           "usdr_family": "m2_lm7_1", "driver": "usdr", "pcie_dsn": "00-00-00-00-12-34-56-78",
           "pcie_link": "5.0 GT/s x1 (card x2)", "usdr_hwid": "8030012d",
           "flash_jedec": "0x1f4216", "fpga_devid": "0362c093",
-          "flash_uid": "19040203090e9769ffffffffffffffff", "flash_uid_state": "read",
-          "flash_uid_note": "AT25SL321 secured-OTP ESN; security register 0x00: factory "
-                            "lock 0, customer lock 0"}]),
+          "flash_uid": "19040203090e9769", "flash_uid_bits": 64, "flash_uid_state": "read",
+          "flash_uid_note": "AT25SL321 secured-OTP ESN 19040203090e9769ffffffffffffffff "
+                            "(64 bits programmed, the rest erased); security register "
+                            "0x00: factory lock 0, customer lock 0",
+          "flash_source": "usdr-espi"}]),
     # the RTL-SDR Blog V3 on the adsb.im appliance: generic EEPROM, told by
     # its HF path into the Q branch (--sdr-open with ultrafeeder stopped)
     "rpi-sdr-rtlsdr-v3": _doc(

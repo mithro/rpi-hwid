@@ -428,10 +428,23 @@ def usdr_esn(res):
         res["flash_uid_error"] = got.get("error") or "ESN reader gave no ESN"
         return
     scur = int(got["security"], 16)
-    res["flash_uid"] = got["esn"]
+    # The id is the bytes the factory programmed: the field's erased tail
+    # (ff) is where nothing was written. The full 128-bit read stays in the
+    # note, as an FPGA board's flash note keeps the chip's own answer.
+    esn = got["esn"].lower()
+    uid = esn
+    while uid.endswith("ff") and len(uid) > 2:
+        uid = uid[:-2]
+    if uid == "ff" or not uid.strip("0"):
+        res["flash_uid_state"] = "blank"
+        res["flash_uid_note"] = "ESN field read %s: never programmed" % esn
+        return
+    res["flash_uid"] = uid
+    res["flash_uid_bits"] = len(uid) * 4
     res["flash_uid_state"] = "read"
-    res["flash_uid_note"] = ("AT25SL321 secured-OTP ESN; security register 0x%02x: factory "
-                             "lock %d, customer lock %d" % (scur, scur & 1, (scur >> 1) & 1))
+    res["flash_uid_note"] = ("AT25SL321 secured-OTP ESN %s (%d bits programmed, the rest "
+                             "erased); security register 0x%02x: factory lock %d, customer "
+                             "lock %d" % (esn, len(uid) * 4, scur, scur & 1, (scur >> 1) & 1))
 
 # One RTL2832U's direct-sampling inputs, compared: half a second from the I
 # branch (mode 1) and half from the Q branch (mode 2), at 14 MHz, through
@@ -637,6 +650,12 @@ def sdr_verdict(d):
                 "iio_uri": iio["uri"], "hw_model": ctx.get("hw_model"),
                 "hw_model_variant": ctx.get("hw_model_variant"),
                 "hw_serial": ctx.get("hw_serial"), "fw_version": ctx.get("fw_version"),
+                # ADI's board/pluto/S23udc sets hw_serial (and the USB serial)
+                # from the kernel's SPI-NOR-UniqueID: the QSPI flash's own id
+                "flash_uid": ctx.get("hw_serial"),
+                "flash_uid_bits": len(ctx.get("hw_serial") or "") * 4 or None,
+                "flash_uid_state": "read" if ctx.get("hw_serial") else None,
+                "flash_source": "pluto-firmware" if ctx.get("hw_serial") else None,
                 "rf_chip": ctx.get("ad9361-phy,model"),
                 "xo_hz": int(ctx["ad9361-phy,xo_correction"])
                 if (ctx.get("ad9361-phy,xo_correction") or "").isdigit() else None})
@@ -652,7 +671,10 @@ def sdr_verdict(d):
         devices.append({
             "usdr_hwid": opened.get("hwid"), "flash_jedec": opened.get("flash_jedec"),
             "flash_uid": opened.get("flash_uid"),
+            "flash_uid_bits": opened.get("flash_uid_bits"),
             "flash_uid_state": opened.get("flash_uid_state"),
+            "flash_source": "usdr-espi" if opened.get("flash_jedec") else None,
+            "flash_error": opened.get("flash_uid_error"),
             "flash_uid_note": opened.get("flash_uid_note"),
             "flash_uid_error": opened.get("flash_uid_error"),
             "fpga_devid": golden.get("devid"), "usdr_images": {
@@ -675,7 +697,8 @@ SDR_SUMMARY_KEYS = (
     "iio_uri", "hw_model", "hw_model_variant", "hw_serial", "fw_version", "rf_chip",
     "xo_hz", "rx_lo_hz", "tx_lo_hz", "rx_rate_hz", "tx_rate_hz", "rx_bw_hz", "tx_bw_hz",
     "rx_channels", "tx_channels", "adc_bits", "usdr_hwid", "flash_jedec", "fpga_devid",
-    "usdr_error", "tuner", "flash_uid", "flash_uid_state", "flash_uid_note", "rtl_model")
+    "usdr_error", "tuner", "flash_uid", "flash_uid_bits", "flash_uid_state",
+    "flash_uid_note", "flash_error", "flash_source", "rtl_model")
 
 
 def sdr_summary(devices):

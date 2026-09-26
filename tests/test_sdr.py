@@ -279,6 +279,10 @@ def test_the_pluto_is_read_over_its_network_context(pluto_root):
     assert p["rx_channels"] == 1
     assert p["tx_channels"] == 1
     assert p["adc_bits"] == 12
+    # the serial is the QSPI flash's unique id, and is recorded as one
+    assert p["flash_uid"] == "10447354119600022000120009f61e2b82"
+    assert p["flash_uid_state"] == "read"
+    assert p["flash_source"] == "pluto-firmware"
 
 
 def test_the_pluto_is_never_asked_over_usb(pluto_root):
@@ -508,9 +512,14 @@ def test_the_open_read_takes_the_flash_esn(xsdr_root, monkeypatch):
 
     monkeypatch.setattr(sdr, "sdr_sh", fake)
     (x,) = sdr.collect_sdr(open_radios=True)["summary"]
-    assert x["flash_uid"] == "19040203090e9769ffffffffffffffff"
+    # recorded as an FPGA board's flash is: the programmed id, its width,
+    # its state, the chip's own word on it, and how it was read
+    assert x["flash_uid"] == "19040203090e9769"
+    assert x["flash_uid_bits"] == 64
     assert x["flash_uid_state"] == "read"
+    assert x["flash_source"] == "usdr-espi"
     assert "factory lock 0" in x["flash_uid_note"]
+    assert "19040203090e9769ffffffffffffffff" in x["flash_uid_note"]
 
 
 def test_the_esn_reader_is_python35_source():
