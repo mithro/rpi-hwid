@@ -23,6 +23,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent.parent / "tests"))
 
 import conftest  # noqa: E402
+import sdr_fixtures  # noqa: E402
 from rpi_hwid import labels  # noqa: E402
 from rpi_hwid.model import ProbeDocument  # noqa: E402
 
@@ -47,11 +48,14 @@ EXAMPLES = [
     ("usb", "AX88179", "usb-asix"),
     ("usb", "6c:1f:f7:51:2e:a3", "usb-wifi"),
     ("usb", "USB3GIGV1", "usb-linksys"),
+    ("sdr", "ADALM-Pluto", "sdr-pluto"),
+    ("sdr", "KrakenSDR", "sdr-kraken"),
 ]
 
 
 def main() -> None:
     docs = {name: ProbeDocument.from_dict(name, raw) for name, raw in conftest.RAW.items()}
+    docs.update(sdr_fixtures.sdr_docs())        # the radios' hosts, kept out of RAW
     pdf = HERE / "labels.pdf"
     labels.render(docs, pdf, outline=True)
     kinds = set(labels.KINDS)

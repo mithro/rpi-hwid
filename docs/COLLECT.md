@@ -12,7 +12,9 @@ installed on the Pi), in parallel, and writes `<host>.json` per host. The FPGA
 module is appended with `--fpga` for every host, or with `--jtag HOST` and
 `--flash HOST` for the hosts that should drive JTAG; the Tiny Tapeout module with
 `--tinytapeout`, which on a rig stops `fpgas-tt.service` for the length of its
-read unless `--no-stop-service` is given (see [PROBE.md](PROBE.md#a-port-a-service-already-holds)).
+read unless `--no-stop-service` is given (see [PROBE.md](PROBE.md#a-port-a-service-already-holds));
+the SDR module with `--sdr`, which opens no radio, or `--sdr-open HOST` to open a
+free usdr card on that host as well (see [PROBE.md](PROBE.md#software-defined-radios)).
 A login banner before the JSON is skipped.
 
 ```

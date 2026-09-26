@@ -127,6 +127,58 @@ $ rpi-hwid fpga                 # a Pi 5 with an Acorn on its PCIe connector
   fpga   : acorn (PCIe 1e24:021f, 128 KiB + 64 KiB BARs (SQRL Acorn CLE-215+))
 ```
 
+## Software-defined radios
+
+`rpi_hwid.sdr` is a fourth stand-alone module, for the radios on a host's USB and
+PCIe. `rpi-hwid probe --sdr` appends it; `rpi-hwid collect --sdr` appends it on
+every host. Every radio here is normally held by a live service (OpenWebRX, the
+KrakenSDR DoA software, readsb), so by default it opens none of them: it reads
+sysfs, and runs `iio_attr` only against a Pluto's *network* IIO context.
+
+- **RTL2832U** (`0bda:2838`): the EEPROM gives the USB strings and the serial
+  and nothing more. A Blog V4 names itself (`RTLSDRBlog` / `Blog V4`, which
+  librtlsdr checks). A Blog V3 carries the same generic strings as every other
+  dongle: `Realtek`, `RTL2838UHIDIR`, serial `00000001`.
+- **KrakenSDR**: five RTL2832U on one hub (a Microchip USB2517, `0424:2517`),
+  serials 1000–1004. Those serials are Heimdall's convention
+  (`util/kerberos_eeprom_init.sh` writes `serial=$((i+1000))`), so every
+  KrakenSDR reads the same and none can be told from another.
+- **ADALM-Pluto** (`0456:b673`): the USB serial is the unit's own. ADI's
+  firmware sets it, the IIO `hw_serial` and the USB MACs from the kernel's
+  `SPI-NOR-UniqueID`, the QSPI flash's factory unique id (`board/pluto/S23udc`).
+  The network context gives the rest: `hw_model` (`PlutoSDR Rev.B
+  (Z7010-AD9363A)`), the AD936x variant, the reference clock, and the tuning,
+  sampling and bandwidth ranges the driver accepts.
+- **Wavelet Lab usdr cards** (PCIe `10ee:7049` and the rest of the
+  `usdr_pcie_uram` driver's own id table): `7049` is the LMS7002M M.2 class
+  (`M2_LM7_1`), whose members, the XSDR, the XTRX and the SSDR, only the card's
+  HWID register tells apart. These are Xilinx ids, so `rpi_hwid.fpga` leaves
+  them alone rather than calling a radio an unknown FPGA board. The PCIe Device
+  Serial Number is recorded, but on rpi-sdr-xsdr it is `00-00-00-00-12-34-56-78`,
+  the Xilinx core's placeholder.
+
+A usdr card can drop off its link without a word in dmesg. rpi-sdr-xsdr's did,
+some days after the driver brought it up: still listed and bound, its command
+register back to Mem- BusMaster-, the library reading HWID `ffffffff`. The
+module reads the head of config space from sysfs (user-readable, nothing
+opened) and reports "card not answering: reboot the host, or power-cycle it"
+instead of describing a card that is not there.
+
+`--sdr-open` (`collect --sdr-open HOST`) opens a usdr card the way its own
+tools do, with `usdr_dm_sensors` and `usdr_flash`, both read-only. It does so
+only when `fuser` shows nothing holding `/dev/usdrN`, since OpenWebRX opens the
+card whenever a listener connects. That read gives the HWID (0x30 in bits
+23:16 is an XSDR), the configuration flash's JEDEC id and the images in it.
+The golden image's DEVID names the die (`usdr_flash` refuses an image built
+for another); the firmware ids are kept as evidence and never printed.
+
+```
+$ rpi-hwid probe --sdr
+  sdr    : krakensdr (five RTL2832U on hub 1-1 (0424:2517), serials 1000-1004)
+  sdr    : pluto (USB 0456:b673 PlutoSDR (ADALM-PLUTO) at 3-1; IIO context ip:192.168.2.1)
+  sdr    : usdr (PCIe 10ee:7049 at 0001:01:00.0 (usdr_pcie_uram class 4, m2_lm7_1), bound to usdr)
+```
+
 ## Tiny Tapeout boards
 
 `rpi_hwid.tinytapeout` is the same kind of stand-alone module for a Tiny Tapeout
