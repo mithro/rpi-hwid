@@ -62,8 +62,34 @@ class RiscvBoard:
     memory: str
     wired: bool | None
     radio: bool | None
-    isa: str | None               # "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd"
+    isa: str | None               # "RV64GC_Zicntr_Zihpm", see short_isa
     line: str                     # "4 harts  ·  sv39  ·  PCB rev 3  ·  BOM B0"
+
+
+def short_isa(isa: str) -> str:
+    """The ISA string the kernel reports, in the ISA manual's short form.
+
+    The kernel spells out every extension it knows, implied or not
+    ("rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd", 46 characters, too
+    long for the label at a readable size). Only folds the ISA manual
+    defines as equal are made: G is IMAFD with Zicsr and Zifencei, and C
+    implies Zca, plus Zcd with D (and Zcf with F on RV32). What is left is
+    the same set of extensions: "RV64GC_Zicntr_Zihpm"."""
+    parts = [p for p in isa.lower().split("_") if p]
+    if not parts or not parts[0].startswith(("rv32", "rv64", "rv128")):
+        return isa
+    base = parts[0]
+    xlen = base[:4] if not base.startswith("rv128") else base[:5]
+    letters = base[len(xlen):]
+    exts = parts[1:]
+    if "c" in letters:
+        implied = {"zca"} | ({"zcd"} if "d" in letters else set()) \
+            | ({"zcf"} if "f" in letters and xlen == "rv32" else set())
+        exts = [e for e in exts if e not in implied]
+    if set("imafd") <= set(letters) and {"zicsr", "zifencei"} <= set(exts):
+        letters = "g" + "".join(c for c in letters if c not in "imafd")
+        exts = [e for e in exts if e not in ("zicsr", "zifencei")]
+    return "_".join([xlen.upper() + letters.upper()] + [e.capitalize() for e in exts])
 
 
 def soc_name(compatible: list[str]) -> str | None:
@@ -101,7 +127,8 @@ def identify(s: Summary) -> RiscvBoard:
     wired, radio = PORTS.get(board, (None, None))
     return RiscvBoard(
         title=title, short=SHORT.get(board, title), subtitle="  ·  ".join(parts),
-        mark=mark, memory=memory, wired=wired, radio=radio, isa=rv.get("isa"),
+        mark=mark, memory=memory, wired=wired, radio=radio,
+        isa=short_isa(rv["isa"]) if rv.get("isa") else None,
         line="  ·  ".join(line),
     )
 
