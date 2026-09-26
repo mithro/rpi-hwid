@@ -19,6 +19,13 @@ import pytest
 from rpi_hwid import fpga, probe, tinytapeout
 
 
+@pytest.fixture(autouse=True)
+def _no_bus_settle(monkeypatch):
+    """A fake tree's I2C node appears when the stub makes it or never, so
+    no test waits the real settle time for one that will not come."""
+    monkeypatch.setattr(probe, "BUS_SETTLE_S", 0.0, raising=False)
+
+
 def _w(root, rel, content):
     path = root / rel.lstrip("/")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1095,6 +1102,54 @@ def test_a_user_bus_that_is_off_is_brought_up_for_the_scan_and_put_back(fake_roo
     # The ID bus was already up, so it is not taken down with it.
     assert calls.count(["sudo", "dtparam", "-r"]) == 1
     assert "Waveshare PoE HAT (B)" in probe.verdict(d)["summary"]["header"]
+
+
+def test_a_bus_whose_node_is_late_is_waited_for_and_still_put_back(fake_root, monkeypatch):
+    """udev makes /dev/i2c-0 after `dtparam i2c_vc=on` has returned, and on
+    a Pi Zero that is late enough to be missed: rpiz-4's census probe
+    (2026-09-26) looked straight away, found no node, called the bus
+    unreadable -- and, thinking it had brought nothing up, left the overlay
+    loaded, where `dtparam -l` still showed it hours later."""
+    _w(fake_root, "/dev/i2c-1", "")                  # the user bus is already up
+    monkeypatch.setattr(probe, "BUS_SETTLE_S", 5.0)
+    calls = []
+
+    def fake_sh(args, timeout=15):
+        calls.append(args)
+        if args == ["sudo", "dtparam", "-r"]:
+            (fake_root / "dev/i2c-0").unlink()
+        return ""
+
+    def late_udev(seconds):
+        _w(fake_root, "/dev/i2c-0", "")              # the node turns up a moment later
+    monkeypatch.setattr(probe, "sh", fake_sh)
+    monkeypatch.setattr(probe.time, "sleep", late_udev)
+    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
+    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
+
+    d = probe.collect()
+    assert d["header_buses_read"] == {"id": True, "user": True}
+    assert calls.count(["sudo", "dtparam", "-r"]) == 1, "brought up here, so put back here"
+    assert not (fake_root / "dev/i2c-0").exists(), "left as it was found"
+
+
+def test_an_overlay_whose_bus_never_appears_is_still_removed(fake_root, monkeypatch):
+    """The overlay was applied whether or not its node turned up, so taking
+    it back out is this probe's job either way."""
+    _w(fake_root, "/dev/i2c-1", "")
+    calls = []
+
+    def fake_sh(args, timeout=15):
+        calls.append(args)
+        return ""
+    monkeypatch.setattr(probe, "sh", fake_sh)
+    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
+    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
+
+    d = probe.collect()
+    assert d["header_buses_read"] == {"id": False, "user": True}
+    assert ["sudo", "dtparam", "i2c_vc=on"] in calls
+    assert calls.count(["sudo", "dtparam", "-r"]) == 1
 
 
 def test_probe_main_prints_text_and_json(fake_root, capsys, monkeypatch):

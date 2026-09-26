@@ -131,6 +131,7 @@ import re
 import struct
 import subprocess
 import sys
+import time
 import uuid
 import zlib
 
@@ -391,19 +392,28 @@ HEADER_BUSES = {
 }
 
 
+# How long a node may take to appear after its overlay is applied. udev
+# makes /dev/i2c-N after dtparam has returned, and on a Pi Zero late enough
+# that looking straight away missed it (rpiz-4, 2026-09-26).
+BUS_SETTLE_S = 5.0
+
+
 def open_bus(bus, enable=None):
     """Make /dev/i2c-<bus> readable, as (there now, brought up by this call).
 
     The second half is what says to put it back: a bus the board was
-    already carrying is left alone, and only one this brought up is taken
-    down again."""
+    already carrying is left alone, and an overlay this applied is taken
+    out again -- whether or not its node ever turned up."""
     path = ROOT + "/dev/i2c-%d" % bus
     if os.path.exists(path):
         return True, False
     if not enable:
         return False, False
     sh(enable)
-    return os.path.exists(path), os.path.exists(path)
+    deadline = time.time() + BUS_SETTLE_S
+    while not os.path.exists(path) and time.time() < deadline:
+        time.sleep(0.1)
+    return os.path.exists(path), True
 
 
 def id_bus_scan(bus, enable=None):
@@ -415,6 +425,8 @@ def id_bus_scan(bus, enable=None):
     apart from no bus to look at, because only the first rules a HAT out."""
     present, mine = open_bus(bus, enable)
     if not present:
+        if mine:
+            sh(["sudo", "dtparam", "-r"])
         return {}, False
     found = {}
     for addr in range(0x50, 0x58):
@@ -433,6 +445,8 @@ def user_bus_scan(bus, enable=None):
     rather than an EEPROM is invisible on a bus that was never opened."""
     present, mine = open_bus(bus, enable)
     if not present:
+        if mine:
+            sh(["sudo", "dtparam", "-r"])
         return None, False
     devices = i2c_scan(bus)
     if mine:
