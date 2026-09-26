@@ -1547,7 +1547,8 @@ PCIE_SETTLE_S = 5
 
 def fpga_endpoints(pcie):
     """The PCIe slots an FPGA's design answers on."""
-    return [pc["slot"] for pc in pcie or () if pc["id"].startswith(("10ee:", "1e24:"))]
+    return [pc["slot"] for pc in pcie or () if pc["id"].startswith(("10ee:", "1e24:"))
+            and pc["id"] not in USDR_PCIE_IDS]
 
 
 def pcie_command(slot):
@@ -2447,6 +2448,14 @@ def pcileech_probe():
     return ident if ident else {"error": "no 0xab89 magic in the reply: not pcileech gateware"}
 
 
+# Xilinx ids that are Wavelet Lab radios, not FPGA boards: every id in the
+# usdr_pcie_uram driver's own table (wavelet-lab/usdr-lib, usdr_pci_table).
+# rpi-sdr-xsdr's XSDR is 10ee:7049. rpi_hwid.sdr keeps the same list as
+# USDR_PCIE, and a test holds the two together.
+USDR_PCIE_IDS = ("10ee:7031", "10ee:7032", "10ee:7044", "10ee:7045", "10ee:7046",
+                 "10ee:7049", "10ee:9049", "10ee:9034", "10ee:9044", "10ee:7071")
+
+
 def fpga_verdict(d):
     """Name the FPGA board(s) this Pi hosts, from PCIe, USB and JTAG."""
     boards = []
@@ -2497,6 +2506,9 @@ def fpga_verdict(d):
                 board["how"] += "; gateware v%s, FPGA id %s" % (
                     ident["version"], ident.get("fpga_id"))
             boards.append(board)
+        elif pc["id"] in USDR_PCIE_IDS:
+            # a radio, not an FPGA board: rpi_hwid.sdr names it
+            continue
         elif pc["id"].startswith("10ee:") or pc["id"].startswith("1e24:"):
             boards.append({"kind": "unknown-fpga", "how": "PCIe %s, BARs %s" % (pc["id"], sizes),
                            "slot": pc["slot"]})
@@ -2808,7 +2820,8 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     f["soc"] = {}
     if soc:
         for pc in f["pcie"]:
-            if pc["id"].startswith(("10ee:", "1e24:")):
+            # a Wavelet Lab radio is no FPGA board: its BAR is not mapped
+            if pc["slot"] in fpga_endpoints(f["pcie"]):
                 f["soc"][pc["slot"]] = soc_probe(pc["slot"], pcie_board(pc))
     # fpgas-verify reads an Acorn's flash through its SoC without replacing
     # it, and needs no chain to do it: pi-sw2-p48's was read this way while
