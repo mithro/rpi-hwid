@@ -31,7 +31,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from rpi_hwid import probe
+from rpi_hwid import probe, riscv
 from rpi_hwid.revision import decode_revision
 
 # The probe is annotation-free (it has to run on a Pi's python 3.5), so its
@@ -85,7 +85,7 @@ PI_NO_WIRED = frozenset(("Zero", "Zero W", "Zero 2 W", "Compute Module 1"))
 class BoardIdentity:
     """What a board label's header says, and which mark goes beside it."""
 
-    kind: str                  # rpi | opi
+    kind: str                  # rpi | opi | riscv
     short: str                 # "Pi 5", "Orange Pi PC": for --list
     title: str                 # "Raspberry Pi 5", "Orange Pi PC"
     subtitle: str              # the immutable facts under the title
@@ -98,8 +98,11 @@ class BoardIdentity:
 
 def board_kind(s: Summary) -> str:
     """``rpi``, ``opi`` or ``other``, from the probe's own classifier, so
-    the two sides of the wire can never disagree about what a board is."""
-    return _probe_board_kind(s.model, s.compatible.split())
+    the two sides of the wire can never disagree about what a board is.
+    ``riscv`` is the probe's too: it is the harts that make a board RISC-V,
+    and the summary carries a ``riscv`` record only where it found some."""
+    kind = _probe_board_kind(s.model, s.compatible.split())
+    return "riscv" if kind == "other" and s.riscv else kind
 
 
 def identify(s: Summary) -> BoardIdentity | None:
@@ -108,6 +111,13 @@ def identify(s: Summary) -> BoardIdentity | None:
     kind = board_kind(s)
     if kind == "other":
         return None
+    if kind == "riscv":
+        rv = riscv.identify(s)
+        return BoardIdentity(
+            kind="riscv", short=rv.short, title=rv.title, subtitle=rv.subtitle,
+            mark=rv.mark or "", memory=rv.memory, wired=rv.wired, radio=rv.radio,
+            radio_derivable=False,
+        )
     if kind == "rpi":
         rev = decode_revision(s.revision)
         # One old code (0015) covers an A+ that shipped with either memory

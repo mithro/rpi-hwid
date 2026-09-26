@@ -1,6 +1,6 @@
 # Labels
 
-The derived names that go on them, the five layouts, and where the artwork comes
+The derived names that go on them, the six layouts, and where the artwork comes
 from. For the gallery and the command itself, see the [README](../README.md); for
 the data they are made from, see [COLLECT.md](COLLECT.md).
 
@@ -65,13 +65,13 @@ $ rpi-hwid labels --data data/ --out labels.pdf
 
 `--outline` draws the die-cut edges for an alignment print on plain paper;
 `--start N` skips N positions on the first sheet so a partly used sheet can be
-finished; `--only rpi|opi|fpga|tt|usb` limits the kinds, and takes a single FPGA
+finished; `--only rpi|opi|riscv|fpga|tt|usb` limits the kinds, and takes a single FPGA
 board kind (`netv2`, `arty`, `acorn`, `pcileech`, `cynthion`) where one host
 carries more than one board; `--list` prints what
 would be generated and where.
 
 Every label carries only what cannot change, and every identifier that might
-otherwise be typed is also a QR code. The five layouts, cropped from a rendered
+otherwise be typed is also a QR code. The six layouts, cropped from a rendered
 sheet:
 
 ## Raspberry Pi
@@ -127,6 +127,36 @@ up the spine as on a Pi.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/orange-pi-pc.png" alt="Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio" width="49%">
+</p>
+
+## RISC-V boards
+
+The same layout again, for a board whose harts are RISC-V (`--only riscv`).
+The maker's mark is in the raspberry's box — the SiFive symbol on a HiFive
+Unmatched — and the title and subtitle come from the device tree as on an
+Orange Pi: the model without the maker's name, then fitted RAM, SoC and the
+device-tree id. The Unmatched has no HAT header, so its band carries what
+makes it a RISC-V board instead: the RISC-V logo in the left column, the ISA
+beside it, and under that the harts, the MMU mode
+and the board's PCB and BOM revisions from its EEPROM. The ISA is the one the
+kernel reports, in the ISA manual's short form: the kernel spells out every
+extension, implied or not (`rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd`),
+too long to print at a readable size, so only the folds the manual defines as
+equal are made — G for IMAFD with Zicsr and Zifencei, and C for Zca and Zcd —
+giving `RV64GC_Zicntr_Zihpm`, the same extensions.
+
+The spine carries the board's serial from that EEPROM, `SF105SZ212200391` —
+the one SiFive printed on the board — and the eth row its MAC, which comes
+from the same EEPROM. U-Boot also copies the serial into the device tree, so
+the probe reads it twice; the two must agree, as must the EEPROM's MAC and the
+port's, and a label is refused rather than printed with one of two different
+answers. A serial that was not read at all stops the run with the host and
+the command that reads it. The wlan row says `no radio`: the Unmatched's M.2
+E-key slot takes a Wi-Fi card, but a card is not the board.
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/hifive-unmatched-1.png" alt="SiFive HiFive Unmatched A00 (hifive-unmatched-1); serial and MAC from its board EEPROM, RISC-V logo and ISA in the HAT band" width="49%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/hifive-unmatched-2.png" alt="SiFive HiFive Unmatched A00 (hifive-unmatched-2)" width="49%">
 </p>
 
 ## FPGA boards
@@ -233,7 +263,7 @@ place of the RJ45, so the two kinds are told apart across the room as well.
 ## Artwork
 
 The package ships the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax,
-Digilent, SQRL, Great Scott Gadgets and Tiny Tapeout marks (each its owner's trademark, drawn only on that
+Digilent, SQRL, Great Scott Gadgets, SiFive and Tiny Tapeout marks and the RISC-V logo (each its owner's trademark, drawn only on that
 maker's own hardware to identify it) and the public-domain USB trident; see
 [`src/rpi_hwid/artwork/README.md`](../src/rpi_hwid/artwork/README.md) for the
 sources. A `--artwork DIR` overrides any of them and may add a `netv2.svg`. A

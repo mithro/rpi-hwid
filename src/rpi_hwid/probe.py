@@ -572,6 +572,170 @@ def usb_net_adapters(ifaces):
     return out
 
 
+# --- RISC-V -------------------------------------------------------------------
+#
+# A RISC-V board is known by its harts, not by its maker: every hart the
+# kernel runs prints an `isa` line in /proc/cpuinfo, which no other
+# architecture has. The rest of the identity is the board's own.
+#
+# The SiFive HiFive Unmatched keeps its identity in an I2C EEPROM (a 24c02
+# at 0x54 on i2c-0, which the upstream device tree declares read-only and
+# at24 serves as an nvmem device under /sys/bus/i2c/devices/0-0054). The
+# nvmem's name is the kernel's to choose -- 0-00540 by the device, or the
+# device tree's label: Debian 13's 6.12 calls it board-id0 -- so it is found
+# as whichever nvmem that one device carries. U-Boot prints it at every boot, sets
+# serial# and ethaddr from it, and writes serial# into the device tree's
+# /serial-number. The layout is U-Boot's own
+# (board/sifive/unmatched/hifive-platform-i2c-eeprom.c): packed and
+# little-endian, the magic f1 5e 50 45, a format byte, a 16-bit product id,
+# PCB revision, BOM revision (a letter) and BOM variant, the 16-character
+# serial, the manufacturing test status, the MAC, and a CRC-32 of all of
+# that. Checked against both of the fleet's boards on 2026-09-26: the
+# bytes read off them are exactly what that layout rebuilds from U-Boot's
+# own print-out, the CRCs it printed (9709e522 and 946c3551) included.
+#
+# The EEPROM is read only where the device tree says this is an Unmatched,
+# through the kernel's own driver -- never by talking to the bus -- and
+# at24 serves it to root alone, so a plain read that is refused is tried
+# once more through `sudo -n`.
+
+SIFIVE_EEPROM_BOARDS = ("sifive,hifive-unmatched-a00",)
+SIFIVE_EEPROM_DEVICE = "/sys/bus/i2c/devices/0-0054"
+SIFIVE_EEPROM_MAGIC = b"\xf1\x5e\x50\x45"
+SIFIVE_EEPROM_LEN = 37
+SIFIVE_PRODUCTS = {0: "Unknown", 2: "HiFive Unmatched"}
+SIFIVE_TEST_STATUS = {0: "unknown", 1: "pass", 2: "fail"}
+
+
+def riscv_cpu(cpuinfo):
+    """The harts as /proc/cpuinfo describes them: how many, and the first
+    one's ISA string, MMU, microarchitecture and machine ids. None where
+    cpuinfo has no `isa` line, which is every machine that is not RISC-V."""
+    blocks = [b for b in cpuinfo.split("\n\n") if re.search(r"^isa\s*:", b, re.M)]
+    if not blocks:
+        return None
+    out = {"harts": len(blocks)}
+    for key in ("isa", "mmu", "uarch", "mvendorid", "marchid", "mimpid"):
+        m = re.search(r"^%s\s*:\s*(\S+)" % key, blocks[0], re.M)
+        out[key] = m.group(1) if m else None
+    return out
+
+
+def sifive_eeprom_decode(raw):
+    """A SiFive PCB EEPROM's fields, with whether its CRC holds; None when
+    `raw` is too short or does not carry the magic."""
+    if not raw or len(raw) < SIFIVE_EEPROM_LEN or raw[:4] != SIFIVE_EEPROM_MAGIC:
+        return None
+    fmt, pid, pcb, bom, variant = struct.unpack_from("<BHBBB", raw, 4)
+    serial = raw[10:26].split(b"\0")[0].decode("ascii", "replace")
+    status = bytearray(raw)[26]
+    crc = struct.unpack_from("<I", raw, 33)[0]
+    return {
+        "format": fmt, "product_id": "0x%04x" % pid,
+        "product": SIFIVE_PRODUCTS.get(pid, "Unknown"),
+        "pcb_revision": pcb, "bom_revision": chr(bom), "bom_variant": variant,
+        "serial": serial,
+        "manuf_test_status": SIFIVE_TEST_STATUS.get(status, "0x%02x" % status),
+        "mac": ":".join("%02x" % b for b in bytearray(raw[27:33])),
+        "crc": "0x%08x" % crc,
+        "crc_ok": zlib.crc32(raw[:33]) & 0xffffffff == crc,
+    }
+
+
+def sudo_read_bytes(path):
+    """A root-only file's bytes through `sudo -n cat`, or None when sudo
+    will not (no passwordless sudo) or the file cannot be read even so."""
+    try:
+        r = subprocess.run(["sudo", "-n", "cat", path], stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, timeout=15)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def sifive_eeprom(compatible):
+    """(decoded EEPROM, the path it was read from, why it could not be)
+    for a board known to carry one; (None, None, None) for any other."""
+    if not any(c in SIFIVE_EEPROM_BOARDS for c in compatible):
+        return None, None, None
+    found = sorted(glob.glob(ROOT + SIFIVE_EEPROM_DEVICE + "/*/nvmem"))
+    if not found:
+        return None, None, ("no nvmem under %s: is at24 loaded? `ls %s` on the host" % (
+            SIFIVE_EEPROM_DEVICE, SIFIVE_EEPROM_DEVICE))
+    path = found[0]
+    name = path[len(ROOT):]
+    try:
+        with open(path, "rb") as f:
+            raw = f.read(SIFIVE_EEPROM_LEN)
+    except (OSError, IOError):
+        raw = sudo_read_bytes(path)
+    if not raw:
+        return None, name, (
+            "could not read %s, even through sudo -n: run `sudo od -A x -t x1z %s` "
+            "on the host" % (name, name))
+    e = sifive_eeprom_decode(raw[:SIFIVE_EEPROM_LEN])
+    if e is None:
+        return None, name, (
+            "%s does not start with the SiFive magic f15e5045: %s" % (
+                name, " ".join("%02x" % b for b in bytearray(raw[:8]))))
+    return e, name, None
+
+
+def riscv_storage():
+    """The NVMe drives and SD/eMMC cards, with the serials they give
+    (the NVMe controller's; the card's from its CID). A disk is not the
+    board, so this is evidence, never a label's identity."""
+    out = []
+    for p in sorted(glob.glob(ROOT + "/sys/class/nvme/nvme*")):
+        out.append({"kind": "nvme", "name": os.path.basename(p), "model": read(p + "/model"),
+                    "serial": read(p + "/serial"), "firmware": read(p + "/firmware_rev"),
+                    "cid": None})
+    for p in sorted(glob.glob(ROOT + "/sys/class/mmc_host/mmc*/mmc*:*")):
+        out.append({"kind": read(p + "/type") or "mmc", "name": os.path.basename(p),
+                    "model": read(p + "/name"), "serial": read(p + "/serial"),
+                    "firmware": None, "cid": read(p + "/cid")})
+    return out
+
+
+def riscv_collect(cpuinfo, compatible):
+    """Everything RISC-V about this board, or None where it is not one."""
+    cpu = riscv_cpu(cpuinfo)
+    if cpu is None:
+        return None
+    eeprom, path, error = sifive_eeprom(compatible)
+    return {"cpu": cpu, "eeprom": eeprom, "eeprom_path": path, "eeprom_error": error,
+            "storage": riscv_storage()}
+
+
+def riscv_evidence(rv):
+    """The verdict's evidence lines for a RISC-V board."""
+    cpu, ev = rv["cpu"], []
+    ev.append("RISC-V: %d harts %s, mmu %s, uarch %s, mvendorid %s marchid %s mimpid %s" % (
+        cpu["harts"], cpu["isa"], cpu["mmu"], cpu["uarch"], cpu["mvendorid"],
+        cpu["marchid"], cpu["mimpid"]))
+    e = rv.get("eeprom")
+    if e:
+        ev.append("SiFive EEPROM: %s PCB rev %d BOM %s%d serial %s MAC %s test %s, CRC %s %s" % (
+            e["product"], e["pcb_revision"], e["bom_revision"], e["bom_variant"],
+            e["serial"], e["mac"], e["manuf_test_status"], e["crc"],
+            "ok" if e["crc_ok"] else "WRONG"))
+    if rv.get("eeprom_error"):
+        ev.append("SiFive EEPROM: " + rv["eeprom_error"])
+    for s in rv.get("storage") or ():
+        ev.append("storage %s %s serial %s%s%s" % (
+            s["name"], s["model"], s["serial"],
+            " firmware " + s["firmware"] if s["firmware"] else "",
+            " cid " + s["cid"] if s["cid"] else ""))
+    return ev
+
+
+def riscv_summary(rv):
+    """The summary's `riscv` record: the harts and the board EEPROM."""
+    out = dict(rv["cpu"])
+    out.update(eeprom=rv["eeprom"], eeprom_error=rv["eeprom_error"])
+    return out
+
+
 # --- collect ------------------------------------------------------------------
 
 def collect():
@@ -582,7 +746,12 @@ def collect():
     d["board"] = board_kind(d["model"], compatible)
     is_pi = d["board"] == "rpi"
     cpuinfo = read(ROOT + "/proc/cpuinfo") or ""
+    d["riscv"] = riscv_collect(cpuinfo, compatible)
+    if d["riscv"] and d["board"] == "other":
+        d["board"] = "riscv"
     d["serial"] = read(ROOT + "/proc/device-tree/serial-number")
+    if not d["serial"] and d["riscv"] and d["riscv"]["eeprom"]:
+        d["serial"] = d["riscv"]["eeprom"]["serial"]
     m = re.search(r"^Serial\s*:\s*([0-9a-fA-F]+)", cpuinfo, re.M)
     d["cpuinfo_serial"] = m.group(1) if m else None
     # The Allwinner SID: recorded whenever the nvmem is there, and the
@@ -677,6 +846,8 @@ def verdict(d):
         ev.append("Allwinner SID %s -> serial %s%s" % (
             " ".join(d["sid"]), d["sid_serial"],
             "" if d["sid_serial"] == d["serial"] else " (device tree says %s)" % d["serial"]))
+    if d.get("riscv"):
+        ev.extend(riscv_evidence(d["riscv"]))
     if d.get("armbian"):
         a = d["armbian"]
         ev.append("Armbian %s on board id %s (%s)" % (
@@ -768,7 +939,9 @@ def verdict(d):
         # A HAT found above still names the supply; this is only what is left
         # when it did not. An H3 has no PMIC and no firmware to ask.
         power = "no power sensing on this board: nothing on it reports its supply"
-    if not header:
+    if not header and d.get("board") == "riscv":
+        header = ["no HAT header on this board"]
+    elif not header:
         header = ["nothing identifiable on the header" if not unread else
                   "nothing identifiable on the header, and it was not fully read"]
     return {"header": header, "power": power,
@@ -845,6 +1018,8 @@ def summary(d, header, power):
         "fan": (d.get("fan_dt") == "okay") if d["pi5"] else None,
         "max_current_ma": d.get("max_current_ma") if d["pi5"] else None,
         "ext5v_v": d.get("ext5v_v") if d["pi5"] else None,
+        # A RISC-V board's harts and board EEPROM; None on every other board.
+        "riscv": riscv_summary(d["riscv"]) if d.get("riscv") else None,
     }
 
 
