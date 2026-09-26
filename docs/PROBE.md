@@ -202,3 +202,53 @@ The module also carries a table of what the board cannot say: the soldermask and
 silkscreen colours of both the chip carrier and the demo board for each shuttle,
 the demo board revision that shipped with each kit, and the chip's page on
 tinytapeout.com, for the label.
+
+## ESP32s
+
+`rpi_hwid.esp32` is a stand-alone module of the same kind, for ESP32s on the host's
+USB. `rpi-hwid esp32` runs it alone, and `rpi-hwid collect --esp32` appends it.
+It has two depths, because they cost very differently.
+
+**The USB tree** is read from sysfs, and no serial port is opened. Opening one
+asserts DTR and RTS, and that alone resets an ESP32 on most boards and on the
+chip's own USB-Serial-JTAG. The tree gives two things:
+
+- An ESP32 on its own USB-Serial-JTAG (`303a:1001`: the C3, C6, S3, H2 and later)
+  carries its base MAC, the Wi-Fi station MAC burned into eFuse, as the USB serial
+  number. That is an identifier read from the chip, with nothing sent to it.
+- Behind a USB-UART bridge (CP210x, CH340, CH343/CH9102, FTDI) the chip is
+  invisible. The bridge could as well be carrying a radio module or a GPS, so it is
+  listed as a candidate and never as an ESP32, with the bridge's own serial where
+  it has one.
+
+**`--read PORT`** is the disruptive depth. It runs the esptool already installed on
+the host, as a library in a child `python3`, so the module itself stays
+stdlib-only. esptool resets the chip into its ROM bootloader through the port's
+DTR/RTS lines and asks for:
+
+- the chip description, features and crystal;
+- the base MAC;
+- the SPI flash's JEDEC id (`0x9F`) and Read Unique ID (`0x4B`);
+- the eFuse fields that are not secret: MAC, custom MAC, `OPTIONAL_UNIQUE_ID`,
+  the wafer, block and package versions, and the flash and PSRAM capacity and
+  vendor.
+
+Then it resets the chip back into its application. The same port stays open while
+the application boots, so its first lines are kept as evidence that it came back;
+HUPCL is cleared first, so closing the port does not reset the chip again. Nothing
+is written, to flash or to eFuse, and no key block is printed. Only the ports
+named are touched: a port on the host may belong to something else that a reset
+would interrupt. On `collect` the ports are named per host, as
+`--esp32-read HOST=PORT`.
+
+The devices land in the document's `verdict.esp32`, beside the summary rather than
+in it; the USB tree and each read's output are kept as evidence under `esp32`.
+
+```
+$ rpi-hwid esp32                 # rpi5-433mhz: three C3 SuperMinis, a LilyGO, an E22
+  esp32  : e8:3d:c1:8c:5c:88  ESP32 (chip not read)  /dev/ttyACM0 (usb-serial-jtag)
+  esp32  : 44:1b:f6:2e:b3:80  ESP32 (chip not read)  /dev/ttyACM2 (usb-serial-jtag)
+  esp32  : e8:3d:c1:8c:3e:b8  ESP32 (chip not read)  /dev/ttyACM3 (usb-serial-jtag)
+  esp32? : CH9102 bridge 1a86:55d4 serial 591B031339 on /dev/ttyACM1; --read /dev/ttyACM1 would reset it to ask
+  esp32? : CH340 bridge 1a86:7523 serial (none) on /dev/ttyUSB0; --read /dev/ttyUSB0 would reset it to ask
+```
