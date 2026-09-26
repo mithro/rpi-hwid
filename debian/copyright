@@ -114,6 +114,29 @@ License: trademark
  logo SVG with the wordmark paths removed and the viewBox trimmed to the
  symbol, whose paths are untouched; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/ti.svg
+Copyright: Texas Instruments Incorporated
+License: trademark
+ The TI state-of-Texas mark, drawn only on the label of hardware built on a
+ TI chip (a CC1101 radio), to identify it. Copied byte for byte from
+ ti.com's own site icon SVG; see src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/semtech.svg
+Copyright: Semtech Corporation
+License: trademark
+ The Semtech symbol, drawn only on the label of hardware built on a Semtech
+ chip (an SX1278 radio), to identify it. From semtech.com's own header logo
+ SVG with the wordmark paths removed and the viewBox trimmed to the symbol,
+ whose paths are untouched; see src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/ai-thinker.png
+Copyright: Shenzhen Ai-Thinker Technology Co., Ltd.
+License: trademark
+ The Ai-Thinker circle, drawn only on the label of hardware carrying an
+ Ai-Thinker module (a Ra-02), to identify it. Cropped from the header logo
+ of docs.ai-thinker.com, pixels untouched; see
+ src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.
