@@ -1,10 +1,19 @@
 """ESP32 micro labels, from the devices ``rpi_hwid.esp32`` found.
 
-One quarter-sticker label per ESP32 (see ``rpi_hwid.micro``): the Espressif
-mark and the chip as the title, the Wi-Fi and chip glyphs, the silicon
-revision, package and crystal under it, and beside the QR the Bluetooth
-MAC, the flash and the flash's unique id. The base MAC -- the Wi-Fi station
-MAC, burned into eFuse -- is the identifier: in the QR and along the foot.
+One quarter-sticker label per ESP32 (see ``rpi_hwid.micro``). The Espressif
+mark and the chip make the title, with the Wi-Fi and chip glyphs beside it.
+The base MAC -- the Wi-Fi station MAC, burned into eFuse -- is the
+identifier: in the QR and along the foot. Beside the QR, the Bluetooth MAC
+and then the second identifier the chip has:
+
+  * a chip with an OPTIONAL_UNIQUE_ID in eFuse (the C3, measured on three
+    SuperMinis on 2026-09-26) carries those 128 bits, over two rows. The
+    C3's in-package flash answered Read Unique ID with zeroes on all three,
+    so there the flash has none to give, and its size and vendor go in the
+    subtitle instead;
+  * an original ESP32 has no such field, so its external flash is named on
+    a row of its own with the flash's own unique id under it -- an
+    ESP32-CAM's Boya and a devkit's GigaDevice both answered one.
 
 Everything on it was read from the chip, except the Bluetooth MAC, which is
 derived. ESP-IDF hands out the MACs of a chip with four universally
@@ -15,9 +24,11 @@ the S2, the H2 family and the P4. That is the default, which Arduino, Tasmota
 and ESPHome builds keep, and firmware may change it, so the row is kept
 only for the chips that table covers.
 
-A device whose chip was never read gets no label: the error names the host
-and the command that reads it, which resets the chip. The USB tree alone
-yields a MAC and nothing to say what the chip is.
+A device whose chip was never read gets no label: the error names the host,
+the MAC and the commands that read it, which reset the chip. The USB tree
+alone yields a MAC and nothing to say what the chip is. A flash whose
+unique id read back blank is left off rather than printed; a chip whose
+eFuse should hold a unique id but was not read is an error.
 
 Built for extension. ``esp32_label(host, device)`` returns the plain label,
 which a caller -- the ESP32 + 433 MHz radio node labels, say -- can take
@@ -41,12 +52,26 @@ KIND = "esp32"
 
 MARK = "espressif.svg"
 
-# Chips whose default is four universally administered MACs, so that the
-# Bluetooth MAC is base+2. From ESP-IDF's misc_system_api.rst: every target
-# but esp32s2, esp32p4 and the esp32h2 family takes that table. Listed rather
-# than assumed, so that a chip not in the list prints no Bluetooth row
+# Chip families whose default is four universally administered MACs, so that
+# the Bluetooth MAC is base+2. From ESP-IDF's misc_system_api.rst: every
+# target but esp32s2, esp32p4 and the esp32h2 family takes that table. Listed
+# rather than assumed, so that a chip not in the list prints no Bluetooth row
 # instead of a wrong one.
 BT_OFFSET = {"ESP32": 2, "ESP32-S3": 2, "ESP32-C3": 2, "ESP32-C6": 2}
+
+# Families whose eFuse is known to hold an OPTIONAL_UNIQUE_ID, so that a read
+# without one is a failed read rather than a chip that has none. Only the C3
+# is listed, because it is the one read; any chip whose read carries the
+# field prints it.
+CHIP_UID = {"ESP32-C3"}
+
+# JEDEC manufacturer codes rpi_hwid.labels does not name, as flashrom's
+# include/flashchips.h has them (BOYA_BOHONG_ID 0x68): an ESP32-CAM's flash.
+JEDEC_VENDOR = {0x68: "Boya"}
+# ...and parts, with the letters the id cannot settle written as x, as
+# rpi_hwid.labels.JEDEC_PART does: flashrom's GIGADEVICE_GD25Q32 0x4016,
+# "Same as GD25Q32B" -- the devkit on rpi4-esp.
+JEDEC_PART = {0xC84016: "GD25Q32x"}
 
 
 class Esp32NotReadError(labels.IdentifierNotReadError):
@@ -73,6 +98,7 @@ class Esp32Device:
     usb_serial: str | None = None
     tty_links: tuple[str, ...] = ()
     read_error: str | None = None
+    read_errors: Mapping[str, str] | None = None
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> Esp32Device:
@@ -84,7 +110,7 @@ class Esp32Device:
             flash_jedec=d.get("flash_jedec"), flash_uid=d.get("flash_uid"),
             efuse=d.get("efuse") or {}, bridge=d.get("bridge"),
             usb_serial=d.get("usb_serial"), tty_links=tuple(d.get("tty_links") or ()),
-            read_error=d.get("read_error"),
+            read_error=d.get("read_error"), read_errors=d.get("read_errors") or {},
         )
 
     @property
@@ -95,6 +121,20 @@ class Esp32Device:
                 return link
         return self.tty or "?"
 
+    @property
+    def wifi(self) -> bool:
+        # esptool 4 says "WiFi", esptool 5 "Wi-Fi"
+        return any(f.replace("-", "") == "WiFi" for f in self.features)
+
+    @property
+    def chip_uid(self) -> str | None:
+        """OPTIONAL_UNIQUE_ID as 32 hex digits, or None where there is none."""
+        raw = (self.efuse or {}).get("OPTIONAL_UNIQUE_ID")
+        text = re.sub(r"[^0-9a-f]", "", str(raw or "").lower())
+        if len(text) != 32 or len(set(text)) < 2:
+            return None
+        return text
+
 
 def devices(docs: Mapping[str, Any]) -> Iterator[tuple[str, Esp32Device]]:
     """Every (host, device) across the documents, host by host."""
@@ -102,6 +142,13 @@ def devices(docs: Mapping[str, Any]) -> Iterator[tuple[str, Esp32Device]]:
         verdict = docs[host].evidence.get("verdict") or {}
         for d in verdict.get("esp32") or ():
             yield host, Esp32Device.from_dict(d)
+
+
+def family(chip: str) -> str:
+    """'ESP32-C3' for an ESP32-C3; 'ESP32' for every original ESP32, whatever
+    its package (D0WD-V3, D0WDQ6, PICO-D4)."""
+    m = re.match(r"^ESP32-([CSHP]\d+)\b", chip)
+    return f"ESP32-{m.group(1)}" if m else "ESP32"
 
 
 def derived_mac(mac: str, offset: int) -> str:
@@ -112,11 +159,12 @@ def derived_mac(mac: str, offset: int) -> str:
 
 
 def bt_mac(dev: Esp32Device) -> str | None:
-    if not dev.mac or dev.chip not in BT_OFFSET:
+    fam = family(dev.chip or "")
+    if not dev.mac or fam not in BT_OFFSET:
         return None
-    if not any(f in ("BLE", "BT") or f.startswith(("BT", "BLE")) for f in dev.features):
+    if not any(f.startswith(("BT", "BLE")) for f in dev.features):
         return None
-    return derived_mac(dev.mac, BT_OFFSET[dev.chip])
+    return derived_mac(dev.mac, BT_OFFSET[fam])
 
 
 def embedded_flash(features: tuple[str, ...]) -> tuple[str, str] | None:
@@ -134,15 +182,22 @@ def flash_line(dev: Esp32Device) -> str | None:
     inside = embedded_flash(dev.features)
     if inside:
         size, vendor = inside
-        return " ".join(x for x in (vendor, size, "in package") if x)
+        return " ".join(x for x in (size, vendor) if x)
     info = labels.flash_from_jedec(dev.flash_jedec)
-    return labels.flash_text(info)
+    if not info["jedec"]:
+        return None
+    value = int(info["jedec"], 16)
+    # A named part says its vendor already, and at a micro label's width the
+    # vendor's name is what would push the size off the end of the row.
+    part = info["part"] or JEDEC_PART.get(value)
+    what = part or " ".join(x for x in (
+        info["vendor"] or JEDEC_VENDOR.get(value >> 16), info["jedec"]) if x)
+    return " · ".join(x for x in (what, info["size"]) if x)
 
 
-def valid_uid(uid: str | None) -> bool:
-    """A read uid, not the all-ones or all-zeroes of a failed read."""
-    return bool(uid) and bool(re.fullmatch(r"[0-9a-f]{16}", uid or "")) \
-        and len(set(uid or "")) > 1
+def valid_flash_uid(uid: str | None) -> bool:
+    """A read uid, not the all-ones or all-zeroes a flash without one gives."""
+    return bool(re.fullmatch(r"[0-9a-f]{16}", uid or "")) and len(set(uid or "")) > 1
 
 
 def read_command(host: str, dev: Esp32Device) -> str:
@@ -165,30 +220,39 @@ def esp32_label(host: str, dev: Esp32Device) -> MicroLabel:
             f"and flash were never read, and its label has a place for both. Read "
             f"them with `{read_command(host, dev)}` -- note that this resets the "
             f"chip into its bootloader and back.{why}")
-    if not valid_uid(dev.flash_uid):
+    fam = family(dev.chip)
+    chip_uid = dev.chip_uid
+    if fam in CHIP_UID and not chip_uid:
+        stopped = (dev.read_errors or {}).get("efuse")
         raise Esp32NotReadError(
-            f"{host}: the ESP32 {dev.mac} on {dev.port}: its flash's unique id read "
-            f"back as {dev.flash_uid!r}, which is a failed read and not a value. Read it "
-            f"again with `{read_command(host, dev)}` (this resets the chip).")
-    wifi = "WiFi" in dev.features
-    short = dev.chip[len("ESP32-"):] if dev.chip.startswith("ESP32-") else "32"
-    icons = ((Icon("wifi"),) if wifi else ()) + (Icon("chip", short),)
-    # single spaces round the dots, unlike the whole labels' subtitles: at
-    # the micro label's width the doubled ones cost the crystal its line
-    subtitle = " · ".join(x for x in (
-        dev.revision, dev.package,
-        f"{dev.crystal_mhz} MHz xtal" if dev.crystal_mhz else None) if x)
+            f"{host}: the ESP32 {dev.mac} on {dev.port} is an {fam}, whose eFuse holds "
+            f"a unique id, and it was not read"
+            + (f" (the eFuse read stopped: {stopped})" if stopped else "")
+            + f". Read it again with `{read_command(host, dev)}` (this resets the chip).")
+    short = fam[len("ESP32-"):] if fam != "ESP32" else "32"
+    icons = ((Icon("wifi"),) if dev.wifi else ()) + (Icon("chip", short),)
     rows = []
     bt = bt_mac(dev)
     if bt:
         rows.append(MicroRow("BT", bt, mono=True))
     flash = flash_line(dev)
-    if flash:
-        rows.append(MicroRow("flash", flash))
-    rows.append(MicroRow("uid", dev.flash_uid or "", mono=True))
+    # Single spaces round the dots, unlike the whole labels' subtitles: at the
+    # micro label's width the doubled ones cost the line its last fact.
+    if chip_uid:
+        subtitle = " · ".join(x for x in (dev.revision, dev.package, flash) if x)
+        rows += [MicroRow("chip", chip_uid[:16], mono=True),
+                 MicroRow("", chip_uid[16:], mono=True)]
+    else:
+        subtitle = " · ".join(x for x in (
+            dev.revision, dev.package,
+            f"{dev.crystal_mhz} MHz xtal" if dev.crystal_mhz else None) if x)
+        if flash:
+            rows.append(MicroRow("flash", flash))
+        if valid_flash_uid(dev.flash_uid):
+            rows.append(MicroRow("uid", dev.flash_uid or "", mono=True))
     return MicroLabel(
         host=host, title=dev.chip, subtitle=subtitle, mark=MARK, icons=icons,
-        ident_caption="Wi-Fi MAC" if wifi else "MAC", ident=dev.mac, rows=tuple(rows),
+        ident_caption="Wi-Fi MAC" if dev.wifi else "MAC", ident=dev.mac, rows=tuple(rows),
         read_with=read_command(host, dev))
 
 
