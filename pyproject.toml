@@ -82,6 +82,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PT", "TC", "C4", "PIE", "RET"
 "src/rpi_hwid/probe.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
 "src/rpi_hwid/fpga.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
 "src/rpi_hwid/tinytapeout.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
+"src/rpi_hwid/sdr.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
 # The label generator is ported from a proven script and drawn in points and
 # millimetres; its long argument lists read better unwrapped.
 "src/rpi_hwid/labels.py" = ["RUF", "B", "SIM", "C4", "PIE", "RET", "UP031", "UP032"]
@@ -99,7 +100,8 @@ ignore_errors = true
 # the label generator drives reportlab, which ships no stubs. The CLI calls
 # into them, so it may call untyped functions and return what they return.
 [[tool.mypy.overrides]]
-module = ["rpi_hwid.probe", "rpi_hwid.fpga", "rpi_hwid.tinytapeout", "rpi_hwid.labels"]
+module = ["rpi_hwid.probe", "rpi_hwid.fpga", "rpi_hwid.tinytapeout", "rpi_hwid.labels",
+          "rpi_hwid.sdr"]
 ignore_errors = true
 
 [[tool.mypy.overrides]]
