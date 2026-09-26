@@ -211,9 +211,10 @@ NOT_IDENTIFIED = {
     "usdr": ("Its HWID register says which LMS7002M card it is (0x30 in bits 23:16 "
              "is an XSDR): read it with `rpi-hwid collect --sdr-open HOST` (the card "
              "must be free: nothing holding /dev/usdr0)."),
-    "rtl-sdr": ("An RTL2832U's EEPROM strings are the same on most dongles; which tuner "
-                "is behind it is read with `rtl_test -t` on that host (stop whatever "
-                "holds the dongle first) and collect again."),
+    "rtl-sdr": ("An RTL2832U's EEPROM strings are the same on most dongles; its tuner and "
+                "its hardware (a Blog V3's HF path into the Q branch) are read with "
+                "`rpi-hwid collect --sdr-open HOST` while nothing holds the dongle (stop "
+                "readsb or OpenWebRX for it, and start it again after)."),
 }
 
 
