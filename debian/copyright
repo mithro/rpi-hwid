@@ -106,6 +106,34 @@ License: trademark
  it. Copied byte for byte from gf.com's own site icon SVG, GF's
  symbol-only mark; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/minnowboard.svg
+Copyright: MinnowBoard.org Foundation
+License: CC-BY-3.0
+ The MinnowBoard fish, drawn only on the label of a MinnowBoard, to
+ identify it; MinnowBoard is the foundation's trademark. From the site
+ logo in github.com/MinnowBoard-org/website (theme/images/logo.svg), whose
+ LICENSE puts its digital assets under the Creative Commons Attribution
+ 3.0 licence, https://creativecommons.org/licenses/by/3.0/; the wordmark
+ removed and the viewBox trimmed to the fish, no path touched. See
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/adi-engineering.png
+Copyright: ADI Engineering
+License: trademark
+ The ADI Engineering mark, drawn only on the label of hardware ADI
+ Engineering made (the MinnowBoard Turbot), to identify it. From
+ adiengineering.com's own header logo as the Internet Archive captured it,
+ its white ink refilled with ADI's own blue and its alpha untouched; see
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/circuitco.png
+Copyright: CircuitCo
+License: trademark
+ The CircuitCo wordmark, drawn only on the label of hardware CircuitCo
+ made (the MinnowBoard MAX), to identify it. From circuitco.com's own logo
+ as the Internet Archive captured it, cropped to the wordmark without its
+ tagline; see src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.
