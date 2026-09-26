@@ -13,6 +13,7 @@ import struct
 import subprocess
 import termios
 import threading
+from typing import ClassVar
 
 import pytest
 
@@ -1104,33 +1105,100 @@ def test_a_user_bus_that_is_off_is_brought_up_for_the_scan_and_put_back(fake_roo
     assert "Waveshare PoE HAT (B)" in probe.verdict(d)["summary"]["header"]
 
 
-def test_a_bus_whose_node_is_late_is_waited_for_and_still_put_back(fake_root, monkeypatch):
+def zero_bonnet_tree(root):
+    """rpiz-4 as read on 2026-09-26: a Zero W wearing Waveshare's
+    PoE-ETH-USB-HUB-HAT, whose RTL8152 sits on port 4 of the bonnet's
+    1a40:0101 hub, with neither header bus enabled in its config.txt."""
+    _w(root, "/proc/device-tree/model", "Raspberry Pi Zero W Rev 1.1\0")
+    _w(root, "/proc/device-tree/compatible", "raspberrypi,model-zero-w\0brcm,bcm2835\0")
+    _w(root, "/proc/device-tree/serial-number", "00000000162f616c\0")
+    _w(root, "/proc/meminfo", "MemTotal:         437132 kB\n")
+    _w(root, "/proc/cpuinfo", "processor\t: 0\nRevision\t: 9000c1\n"
+                              "Serial\t\t: 00000000162f616c\n")
+    for dev, vidpid in (("usb1", "1d6b:0002"), ("1-1", "1a40:0101"), ("1-1.4", "0bda:8152")):
+        vid, pid = vidpid.split(":")
+        _w(root, f"/sys/bus/usb/devices/{dev}/idVendor", vid + "\n")
+        _w(root, f"/sys/bus/usb/devices/{dev}/idProduct", pid + "\n")
+    _iface(root, "wlan0", "b8:27:eb:7a:34:39", "brcmfmac", bus="sdio")
+    _w(root, "/sys/class/net/eth0/address", "00:e0:4c:36:45:90\n")
+    dev = root / "sys/devices/platform/soc/20980000.usb/usb1/1-1/1-1.4/1-1.4:1.0"
+    dev.mkdir(parents=True)
+    (root / "sys/class/net/eth0/device").symlink_to(dev)
+    (root / "sys/bus/usb/drivers/r8152").mkdir(parents=True)
+    (dev / "driver").symlink_to(root / "sys/bus/usb/drivers/r8152")
+
+
+class SlowUdev:
+    """dtparam and udev as a Pi Zero behaves: `dtparam i2c_vc=on` returns
+    before udev has made /dev/i2c-0, which only turns up once time passes
+    (a sleep, or the probe having finished); `i2c_arm=on` made /dev/i2c-1
+    in time on rpiz-4, so it appears at once. `dtparam -r` takes the last
+    overlay out, as the real one does, and `-l` lists what is loaded."""
+
+    LATE: ClassVar[dict[str, int]] = {"i2c_vc=on": 0}
+    PROMPT: ClassVar[dict[str, int]] = {"i2c_arm=on": 1}
+
+    def __init__(self, root):
+        self.root, self.overlays, self.pending, self.calls = root, [], [], []
+
+    def node(self, bus):
+        return self.root / f"dev/i2c-{bus}"
+
+    def sh(self, args, timeout=15):
+        self.calls.append(list(args))
+        if args[:2] != ["sudo", "dtparam"]:
+            return "throttled=0x0" if args == ["vcgencmd", "get_throttled"] else ""
+        param = args[2]
+        if param == "-l":
+            if not self.overlays:
+                return "No overlays loaded"
+            return "Overlays (in load order):\n" + "\n".join(
+                f"{i}:  dtparam  {o}" for i, o in enumerate(self.overlays))
+        if param == "-r":
+            gone = self.overlays.pop()
+            bus = {**self.LATE, **self.PROMPT}[gone]
+            self.pending = [b for b in self.pending if b != bus]
+            if self.node(bus).exists():
+                self.node(bus).unlink()
+            return ""
+        self.overlays.append(param)
+        if param in self.LATE:
+            self.pending.append(self.LATE[param])
+        else:
+            _w(self.root, f"/dev/i2c-{self.PROMPT[param]}", "")
+        return ""
+
+    def settle(self, seconds=None):
+        """Time passes, and udev makes whatever it was going to."""
+        for bus in self.pending:
+            _w(self.root, f"/dev/i2c-{bus}", "")
+        self.pending = []
+
+
+def test_a_bus_whose_node_is_late_is_waited_for_and_still_put_back(tmp_path, monkeypatch):
     """udev makes /dev/i2c-0 after `dtparam i2c_vc=on` has returned, and on
     a Pi Zero that is late enough to be missed: rpiz-4's census probe
     (2026-09-26) looked straight away, found no node, called the bus
     unreadable -- and, thinking it had brought nothing up, left the overlay
     loaded, where `dtparam -l` still showed it hours later."""
-    _w(fake_root, "/dev/i2c-1", "")                  # the user bus is already up
+    zero_bonnet_tree(tmp_path)
+    udev = SlowUdev(tmp_path)
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
     monkeypatch.setattr(probe, "BUS_SETTLE_S", 5.0)
-    calls = []
-
-    def fake_sh(args, timeout=15):
-        calls.append(args)
-        if args == ["sudo", "dtparam", "-r"]:
-            (fake_root / "dev/i2c-0").unlink()
-        return ""
-
-    def late_udev(seconds):
-        _w(fake_root, "/dev/i2c-0", "")              # the node turns up a moment later
-    monkeypatch.setattr(probe, "sh", fake_sh)
-    monkeypatch.setattr(probe.time, "sleep", late_udev)
+    monkeypatch.setattr(probe, "sh", udev.sh)
+    monkeypatch.setattr("time.sleep", udev.settle)
     monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
     monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
 
     d = probe.collect()
+    v = probe.verdict(d)
     assert d["header_buses_read"] == {"id": True, "user": True}
-    assert calls.count(["sudo", "dtparam", "-r"]) == 1, "brought up here, so put back here"
-    assert not (fake_root / "dev/i2c-0").exists(), "left as it was found"
+    assert not any("could not be read" in e for e in v["evidence"])
+    assert v["summary"]["header"] == ["Waveshare PoE-ETH-USB-HUB-HAT"]
+    udev.settle()                                    # and after the probe has gone
+    assert udev.overlays == [], "left as it was found"
+    assert not udev.node(0).exists()
+    assert not udev.node(1).exists()
 
 
 def test_an_overlay_whose_bus_never_appears_is_still_removed(fake_root, monkeypatch):
