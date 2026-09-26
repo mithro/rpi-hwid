@@ -124,6 +124,30 @@ def probe_host(
     return Result(host, False, error=last or "no user could log in")
 
 
+def esp32_reads(hosts: Sequence[str], pairs: Sequence[str]) -> dict[str, list[str]]:
+    """`--esp32-read HOST=PORT` pairs as host -> ports, keyed on the host
+    exactly as it was given for collection. HOST may be written with or
+    without its ``user@``; a HOST that is not being collected is an error,
+    because a read that silently does nothing looks just like one that found
+    nothing to read."""
+    def bare(h: str) -> str:
+        return h.split("@", 1)[-1]
+
+    out: dict[str, list[str]] = {}
+    for pair in pairs:
+        h, sep, port = pair.partition("=")
+        if not sep or not h or not port:
+            raise ValueError(f"--esp32-read wants HOST=PORT, not {pair!r}")
+        matches = [x for x in hosts if x == h] or [x for x in hosts if bare(x) == bare(h)]
+        if len(matches) != 1:
+            raise ValueError(
+                f"--esp32-read {pair}: {h} is not one of the hosts being collected "
+                f"({', '.join(hosts)})" if not matches else
+                f"--esp32-read {pair}: {h} matches more than one host ({', '.join(matches)})")
+        out.setdefault(matches[0], []).append(port)
+    return out
+
+
 def collect(
     hosts: Sequence[str],
     out_dir: Path,
@@ -153,10 +177,7 @@ def collect(
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    reads: dict[str, list[str]] = {}
-    for pair in esp32_read:
-        h, _, port = pair.partition("=")
-        reads.setdefault(h, []).append(port)
+    reads = esp32_reads(hosts, esp32_read)
 
     def one(host: str) -> Result:
         return probe_host(host, users, jump, fpga or host in jtag_hosts,
