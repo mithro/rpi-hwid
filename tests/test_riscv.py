@@ -1,0 +1,253 @@
+"""RISC-V device-tree boards: the probe's side (a fake FU740 tree) and the
+label's side (which board, what its header says, what refuses to print).
+
+The fleet's two RISC-V boards are SiFive HiFive Unmatched A00s. Their
+identity lives in an I2C EEPROM U-Boot prints at every boot; the bytes used
+here are rebuilt from that print-out and are right to the bit, because
+U-Boot also prints the EEPROM's CRC-32 and the rebuilt bytes reproduce it
+(9709e522 on hifive-unmatched-1, 946c3551 on hifive-unmatched-2) -- which
+only one value of the one field it does not print, the manufacturing test
+status, manages."""
+
+from __future__ import annotations
+
+import struct
+import zlib
+
+import pytest
+
+from rpi_hwid import probe
+
+
+def sifive_eeprom_bytes(serial, mac, test_status=1, pcb=3, bom="B", variant=0, pad=256):
+    """A SiFive PCB EEPROM (format v1) as U-Boot's
+    board/sifive/unmatched/hifive-platform-i2c-eeprom.c lays it out: packed,
+    little-endian, the CRC-32 over everything before it. `pad` is the
+    24c02's 256 bytes, the rest erased (0xff)."""
+    body = (b"\xf1\x5e\x50\x45" + bytes([1]) + struct.pack("<H", 2)
+            + bytes([pcb, ord(bom), variant]) + serial.encode("ascii")
+            + bytes([test_status]) + bytes.fromhex(mac.replace(":", "")))
+    blob = body + struct.pack("<I", zlib.crc32(body))
+    return blob + b"\xff" * (pad - len(blob))
+
+
+UNMATCHED_1 = sifive_eeprom_bytes("SF105SZ212200391", "70:b3:d5:92:f8:de")
+UNMATCHED_2 = sifive_eeprom_bytes("SF105SZ212200532", "70:b3:d5:92:f8:83")
+
+
+def test_rebuilt_eeproms_carry_the_crcs_u_boot_printed():
+    """The fixture is only as good as this: the CRC U-Boot printed on
+    2026-07-04 is reproduced, so every byte it covers is the board's."""
+    assert UNMATCHED_1[33:37] == struct.pack("<I", 0x9709E522)
+    assert UNMATCHED_2[33:37] == struct.pack("<I", 0x946C3551)
+
+
+def test_decode_sifive_eeprom():
+    e = probe.sifive_eeprom_decode(UNMATCHED_1)
+    assert e == {
+        "format": 1, "product_id": "0x0002", "product": "HiFive Unmatched",
+        "pcb_revision": 3, "bom_revision": "B", "bom_variant": 0,
+        "serial": "SF105SZ212200391", "manuf_test_status": "pass",
+        "mac": "70:b3:d5:92:f8:de", "crc": "0x9709e522", "crc_ok": True,
+    }
+
+
+def test_decode_refuses_what_is_not_a_sifive_eeprom():
+    assert probe.sifive_eeprom_decode(b"\xff" * 256) is None
+    assert probe.sifive_eeprom_decode(b"") is None
+    assert probe.sifive_eeprom_decode(UNMATCHED_1[:20]) is None
+
+
+def test_a_corrupt_eeprom_says_its_crc_is_wrong():
+    bad = bytearray(UNMATCHED_1)
+    bad[20] ^= 0x01                       # one bit of the serial
+    e = probe.sifive_eeprom_decode(bytes(bad))
+    assert e["crc_ok"] is False
+    assert e["crc"] == "0x9709e522"
+
+
+def test_riscv_cpu_from_cpuinfo():
+    cpu = probe.riscv_cpu(UNMATCHED_CPUINFO)
+    assert cpu == {
+        "harts": 4, "isa": "rv64imafdc_zicntr_zicsr_zifencei_zihpm", "mmu": "sv39",
+        "uarch": "sifive,bullet0", "mvendorid": "0x489", "marchid": "0x8000000000000007",
+        "mimpid": "0x20181004",
+    }
+    assert probe.riscv_cpu("processor\t: 0\nmodel name\t: ARMv7 Processor rev 5 (v7l)\n") is None
+
+
+# /proc/cpuinfo of a Debian 13 (6.12) kernel on the Unmatched: the four U74
+# application harts, 1-4 (hart 0, the S7 monitor core, is not Linux's).
+UNMATCHED_CPUINFO = "".join(
+    f"processor\t: {n}\nhart\t\t: {n + 1}\n"
+    "isa\t\t: rv64imafdc_zicntr_zicsr_zifencei_zihpm\n"
+    "mmu\t\t: sv39\nuarch\t\t: sifive,bullet0\nmvendorid\t: 0x489\n"
+    "marchid\t\t: 0x8000000000000007\nmimpid\t\t: 0x20181004\n"
+    "hart isa\t: rv64imafdc_zicntr_zicsr_zifencei_zihpm\n\n" for n in range(4))
+
+
+def _w(root, rel, content):
+    path = root / rel.lstrip("/")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if isinstance(content, bytes):
+        path.write_bytes(content)
+    else:
+        path.write_text(content)
+    return path
+
+
+def _unmatched_tree(root, eeprom=UNMATCHED_1, serial="SF105SZ212200391"):
+    """hifive-unmatched-1: the device tree U-Boot hands the kernel, the
+    board EEPROM behind at24 on i2c-0 at 0x54, the GEM on macb, an NVMe and
+    an SD card on mmc_spi."""
+    _w(root, "/proc/device-tree/model", "SiFive HiFive Unmatched A00\0")
+    _w(root, "/proc/device-tree/compatible",
+       "sifive,hifive-unmatched-a00\0sifive,fu740-c000\0sifive,fu740\0")
+    if serial is not None:
+        _w(root, "/proc/device-tree/serial-number", serial + "\0")
+    _w(root, "/proc/cpuinfo", UNMATCHED_CPUINFO)
+    _w(root, "/proc/meminfo", "MemTotal:       16306200 kB\n")
+    if eeprom is not None:
+        _w(root, "/sys/bus/nvmem/devices/0-00540/nvmem", eeprom)
+    _w(root, "/sys/class/net/end0/address", "70:b3:d5:92:f8:de\n")
+    gem = root / "sys/devices/platform/soc/10090000.ethernet"
+    gem.mkdir(parents=True)
+    (root / "sys/class/net/end0/device").symlink_to(gem)
+    (root / "sys/bus/platform/drivers/macb").mkdir(parents=True)
+    (gem / "driver").symlink_to(root / "sys/bus/platform/drivers/macb")
+    _w(root, "/sys/class/nvme/nvme0/model", "WDC WDS500G2B0C-00PXH0              \n")
+    _w(root, "/sys/class/nvme/nvme0/serial", "21052Z800123        \n")
+    _w(root, "/sys/class/nvme/nvme0/firmware_rev", "211070WD\n")
+    card = "/sys/class/mmc_host/mmc0/mmc0:0000"
+    _w(root, card + "/name", "SD32G\n")
+    _w(root, card + "/serial", "0x12345678\n")
+    _w(root, card + "/cid", "03534453443332478012345678016a00\n")
+    _w(root, card + "/type", "SD\n")
+
+
+@pytest.fixture
+def rv_root(tmp_path, monkeypatch):
+    _unmatched_tree(tmp_path)
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    calls = []
+
+    def fake_sh(args, timeout=15):
+        calls.append(args)
+        return ""
+    monkeypatch.setattr(probe, "sh", fake_sh)
+    monkeypatch.setattr(probe, "sudo_read_bytes", lambda path: calls.append(path))
+    return tmp_path, calls
+
+
+def test_collect_hifive_unmatched(rv_root):
+    _root, calls = rv_root
+    d = probe.collect()
+    assert d["board"] == "riscv"
+    assert d["model"] == "SiFive HiFive Unmatched A00"
+    assert d["serial"] == "SF105SZ212200391"
+    assert d["revision"] is None
+    assert d["pi5"] is False
+    assert calls == [], "the EEPROM was readable, so no sudo; nothing Pi-only either"
+    rv = d["riscv"]
+    assert rv["cpu"]["isa"] == "rv64imafdc_zicntr_zicsr_zifencei_zihpm"
+    assert rv["eeprom"]["serial"] == "SF105SZ212200391"
+    assert rv["eeprom"]["crc_ok"] is True
+    assert rv["eeprom_path"] == "/sys/bus/nvmem/devices/0-00540/nvmem"
+    assert rv["eeprom_error"] is None
+    assert rv["storage"] == [
+        {"kind": "nvme", "name": "nvme0", "model": "WDC WDS500G2B0C-00PXH0",
+         "serial": "21052Z800123", "firmware": "211070WD", "cid": None},
+        {"kind": "SD", "name": "mmc0:0000", "model": "SD32G", "serial": "0x12345678",
+         "firmware": None, "cid": "03534453443332478012345678016a00"},
+    ]
+    ifaces = {i["name"]: i for i in d["interfaces"]}
+    assert ifaces["end0"]["onboard"] is True
+    assert ifaces["end0"]["kind"] == "eth"
+    v = probe.verdict(d)
+    assert v["header"] == ["no HAT header on this board"]
+    assert any(e.startswith("RISC-V: 4 harts rv64imafdc") for e in v["evidence"])
+    assert any("SiFive EEPROM: HiFive Unmatched PCB rev 3 BOM B0 serial SF105SZ212200391"
+               in e for e in v["evidence"])
+    assert any(e.startswith("storage nvme0 WDC WDS500G2B0C-00PXH0 serial 21052Z800123")
+               for e in v["evidence"])
+    s = v["summary"]
+    assert s["serial"] == "SF105SZ212200391"
+    assert s["compatible"] == "sifive,hifive-unmatched-a00 sifive,fu740-c000 sifive,fu740"
+    assert s["memory"] == "16 GB"
+    assert s["macs"] == [{"kind": "eth", "mac": "70:b3:d5:92:f8:de", "signal": "driver"}]
+    assert s["riscv"] == {
+        "harts": 4, "isa": "rv64imafdc_zicntr_zicsr_zifencei_zihpm", "mmu": "sv39",
+        "uarch": "sifive,bullet0", "mvendorid": "0x489", "marchid": "0x8000000000000007",
+        "mimpid": "0x20181004",
+        "eeprom": probe.sifive_eeprom_decode(UNMATCHED_1), "eeprom_error": None,
+    }
+
+
+def test_a_root_only_eeprom_is_read_through_sudo(rv_root, monkeypatch):
+    root, _calls = rv_root
+    path = root / "sys/bus/nvmem/devices/0-00540/nvmem"
+    path.chmod(0o000)
+    asked = []
+
+    def sudo(p):
+        asked.append(p)
+        return UNMATCHED_1
+    monkeypatch.setattr(probe, "sudo_read_bytes", sudo)
+    try:
+        d = probe.collect()
+    finally:
+        path.chmod(0o644)
+    assert asked == [str(path)]
+    assert d["riscv"]["eeprom"]["serial"] == "SF105SZ212200391"
+
+
+def test_an_unreadable_eeprom_is_said_with_the_command_that_reads_it(rv_root):
+    root, _calls = rv_root
+    path = root / "sys/bus/nvmem/devices/0-00540/nvmem"
+    path.chmod(0o000)
+    try:
+        d = probe.collect()        # sudo_read_bytes is stubbed to give nothing
+    finally:
+        path.chmod(0o644)
+    rv = d["riscv"]
+    assert rv["eeprom"] is None
+    assert rv["eeprom_error"] == (
+        "could not read /sys/bus/nvmem/devices/0-00540/nvmem, even through sudo -n: "
+        "run `sudo od -A x -t x1z /sys/bus/nvmem/devices/0-00540/nvmem` on the host")
+    assert d["serial"] == "SF105SZ212200391", "the device tree still has it"
+
+
+def test_the_eeprom_serial_stands_in_for_a_device_tree_without_one(tmp_path, monkeypatch):
+    _unmatched_tree(tmp_path, serial=None)
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    monkeypatch.setattr(probe, "sh", lambda args, timeout=15: "")
+    d = probe.collect()
+    assert d["serial"] == "SF105SZ212200391"
+
+
+def test_the_eeprom_is_only_looked_for_on_a_board_known_to_have_one(tmp_path, monkeypatch):
+    """0x54 on i2c-0 is the Unmatched's EEPROM; on any other board it is
+    whatever that board put there, and nothing is read from it."""
+    _unmatched_tree(tmp_path)
+    _w(tmp_path, "/proc/device-tree/compatible", "starfive,visionfive-2-v1.3b\0starfive,jh7110\0")
+    _w(tmp_path, "/proc/device-tree/model", "StarFive VisionFive 2 v1.3B\0")
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    monkeypatch.setattr(probe, "sh", lambda args, timeout=15: "")
+    d = probe.collect()
+    assert d["board"] == "riscv", "a RISC-V hart makes it a RISC-V board"
+    assert d["riscv"]["eeprom"] is None
+    assert d["riscv"]["eeprom_path"] is None
+    assert d["riscv"]["eeprom_error"] is None
+
+
+def test_an_arm_board_has_no_riscv_record(tmp_path, monkeypatch):
+    _w(tmp_path, "/proc/device-tree/model", "Xunlong Orange Pi PC\0")
+    _w(tmp_path, "/proc/device-tree/compatible", "xunlong,orangepi-pc\0allwinner,sun8i-h3\0")
+    _w(tmp_path, "/proc/cpuinfo", "processor\t: 0\nmodel name\t: ARMv7 Processor rev 5 (v7l)\n")
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    monkeypatch.setattr(probe, "sh", lambda args, timeout=15: "")
+    d = probe.collect()
+    assert d["board"] == "opi"
+    assert d["riscv"] is None
+    assert "riscv" not in probe.verdict(d)["summary"] or \
+        probe.verdict(d)["summary"]["riscv"] is None
