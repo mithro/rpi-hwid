@@ -5,7 +5,7 @@ name: Tiny Tapeout board data
 # labels are printed from this file, so drift is silent otherwise: a shuttle
 # gains a colour, or one is corrected, and the labels keep the old one.
 #
-# Deliberately NOT a job in ci.yml. That workflow completing green on main is
+# Deliberately NOT a job in deb.yml. That workflow completing green on main is
 # what triggers publish-pypi.yml, so a check that reaches out to Google would
 # put every release at the mercy of someone editing a spreadsheet, or of
 # docs.google.com having a bad afternoon. Here a red run says "the data needs

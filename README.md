@@ -1,7 +1,7 @@
 # rpi-hwid — Raspberry Pi hardware identity
 
 [![PyPI](https://img.shields.io/pypi/v/rpi-hwid)](https://pypi.org/project/rpi-hwid/)
-[![CI](https://github.com/mithro/rpi-hwid/actions/workflows/ci.yml/badge.svg)](https://github.com/mithro/rpi-hwid/actions/workflows/ci.yml)
+[![Debian packages](https://github.com/mithro/rpi-hwid/actions/workflows/deb.yml/badge.svg)](https://github.com/mithro/rpi-hwid/actions/workflows/deb.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 What is this Raspberry Pi wearing, what powers it, and what is soldered to it?
@@ -130,13 +130,24 @@ uv tool install 'rpi-hwid[labels]'     # everything, including the label generat
 pip install rpi-hwid                   # probe, collector, names: no dependencies at all
 ```
 
-Or as a Debian package on Raspberry Pi OS or Debian bookworm, trixie or sid, from
-the signed apt repository at https://mith.ro/rpi-hwid/ (the page has the
-three-line setup for each suite):
+Or as a Debian package on Raspberry Pi OS or Debian, from the signed apt
+repository at https://mith.ro/rpi-hwid/. There is one per suite (bookworm,
+trixie, forky and sid), and the package is `Architecture: all`, so it installs
+on any Raspberry Pi. Put your suite's name in place of `trixie` below
+(Raspberry Pi OS uses Debian's codenames):
 
 ```sh
+sudo install -d -m0755 /etc/apt/keyrings
+curl -fsSL https://mith.ro/rpi-hwid/rpi-hwid.gpg | sudo tee /etc/apt/keyrings/rpi-hwid.gpg > /dev/null
+echo "deb [signed-by=/etc/apt/keyrings/rpi-hwid.gpg] https://mith.ro/rpi-hwid/trixie/ ./" \
+  | sudo tee /etc/apt/sources.list.d/rpi-hwid.list
+sudo apt update
 sudo apt install python3-rpi-hwid      # provides the rpi-hwid command
 ```
+
+The repository's signing key is
+`9C51 CAE0 CF1C 4C08 A63C  8A6A 2599 D5E0 285B 902F`
+(`gpg --show-keys /etc/apt/keyrings/rpi-hwid.gpg` shows it).
 
 Nothing needs installing on the Pi being probed. The probe is one dependency-free
 file that runs on any `python3` 3.5 or later, so it can be sent over ssh on stdin:
