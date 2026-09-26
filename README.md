@@ -198,6 +198,8 @@ rpi-hwid fpga [--json] [--jtag] [--flash]             on a Pi: which FPGA board?
 rpi-hwid tinytapeout [--json] [--no-repl]             on a Pi: which Tiny Tapeout board?
 rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] HOST…
                                                       over ssh: one JSON per host
+rpi-hwid tasmota --sheet CSV --site NAME=OCTET --out DIR
+                                                      over HTTP, read-only: Tasmota plugs
 rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
 rpi-hwid name --netv2 DNA… | --arty SERIAL…           the derived board names
 rpi-hwid revision CODE…                               decode Pi revision codes
