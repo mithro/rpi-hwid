@@ -391,6 +391,41 @@ COMPUTE_MODULE_1 = _doc(
 )
 
 
+# The fleet's two MinnowBoards, x86 boards with no device tree, as the probe
+# read them on 2026-09-26: an ADI Engineering MinnowBoard Turbot, and a
+# CircuitCo MinnowBoard MAX that is called minnow-turbot-1 but whose firmware
+# and E3825 say it is the MAX. Both give their Ethernet MAC as their DMI
+# serial, and both the same product_uuid, which is a firmware constant.
+def _pc(model, serial, mac, cpu, mem_kb, dmi):
+    doc = _doc(model, serial, None, [], "undetermined", [],
+               [{"kind": "eth", "mac": mac, "signal": "serial-mac"}], [], None, None, None,
+               memory="2 GB")
+    dmi = dict(dmi, board_serial=serial, product_serial=serial, chassis_serial="",
+               product_uuid="00000000-6462-4524-006a-9b7737e315cf", bios_vendor="Intel Corp.",
+               unread=[])
+    doc.update(board="x86", mem_kb=mem_kb, dmi=dmi, cpu={"model": cpu, "threads": 2})
+    doc["interfaces"][0].update(name="eth0", driver="r8169", signal="serial-mac")
+    doc["verdict"]["header"] = ["no HAT header on this board"]
+    doc["verdict"]["summary"].update(dmi=dmi, cpu=cpu)
+    return doc
+
+
+MINNOW_TURBOT = _pc(
+    "ADI MinnowBoard Turbot", "0008A209EFED", "00:08:a2:09:ef:ed",
+    "Intel(R) Atom(TM) CPU  E3826  @ 1.46GHz", 1920488,
+    {"sys_vendor": "ADI", "product_name": "Minnowboard Turbot D0 PLATFORM",
+     "product_version": "D0", "board_vendor": "ADI", "board_name": "MinnowBoard Turbot",
+     "board_version": "REV A", "bios_version": "MNW2MAX1.X64.0094.R01.1612052239",
+     "bios_date": "12/05/2016"})
+MINNOW_MAX = _pc(
+    "Circuitco MinnowBoard MAX", "001320FE4164", "00:13:20:fe:41:64",
+    "Intel(R) Atom(TM) CPU  E3825  @ 1.33GHz", 1936836,
+    {"sys_vendor": "Circuitco", "product_name": "MinnowBoard MAX B3 PLATFORM",
+     "product_version": "B3", "board_vendor": "Circuitco", "board_name": "MinnowBoard MAX",
+     "board_version": "REV A", "bios_version": "MNW2MAX1.X64.0077.R01.1501291247",
+     "bios_date": "01/29/2015"})
+
+
 RAW = {
     "rpi5-netv2": PI5_NETV2,
     "rpib-serial": MODEL_B,
@@ -405,6 +440,8 @@ RAW = {
     "pi-sw2-p33": TT_FPGA_HOST,
     "pi-sw2-p37": LINKSYS_HOST,
     "rpi5-433mhz": WIFI_HOST,
+    "minnow-turbot-1": MINNOW_MAX,
+    "minnow-turbot-2": MINNOW_TURBOT,
 }
 
 
