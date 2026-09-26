@@ -62,7 +62,7 @@ class RiscvBoard:
     memory: str
     wired: bool | None
     radio: bool | None
-    isa: str | None               # "rv64imafdc_zicntr_zicsr_zifencei_zihpm"
+    isa: str | None               # "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd"
     line: str                     # "4 harts  ·  sv39  ·  PCB rev 3  ·  BOM B0"
 
 
