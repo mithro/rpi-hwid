@@ -481,3 +481,61 @@ def test_the_open_read_takes_the_flash_esn(xsdr_root, monkeypatch):
 def test_the_esn_reader_is_python35_source():
     compile(sdr.USDR_ESN_READER, "usdr_esn_reader", "exec")
     assert "f\"" not in sdr.USDR_ESN_READER
+
+
+# `rtl_eeprom` on rpi-sdr-rtlsdr-v3, ultrafeeder stopped, 2026-09-26
+V3_EEPROM = KRAKEN_EEPROM.replace("Found 5 device(s)", "Found 1 device(s)").replace(
+    "Serial number:\t\t1000", "Serial number:\t\t00000001")
+
+
+def _v3_root(tmp_path, monkeypatch, ds):
+    _usb(tmp_path, "1-1", "2109", "3431", product="USB2.0 Hub", bcd="0421")
+    d = _usb(tmp_path, "1-1.2", "0bda", "2838", "Realtek", "RTL2838UHIDIR", "00000001")
+    (d / "busnum").write_text("1\n")
+    (d / "devnum").write_text("3\n")
+    monkeypatch.setattr(sdr, "SDR_ROOT", str(tmp_path))
+
+    def fake(args, timeout=15):
+        if args[:3] == ["sudo", "-n", "fuser"]:
+            return 1, "", ""
+        if args[:2] == ["rtl_eeprom", "-d"]:
+            return 0, "", V3_EEPROM
+        if args[:2] == ["python3", "-c"]:
+            assert args[2] == sdr.RTL_DS_READER
+            return 0, ds + "\n", ""
+        return 127, "", "not here"
+
+    monkeypatch.setattr(sdr, "sdr_sh", fake)
+
+
+def test_a_v3_is_told_by_its_hf_path(tmp_path, monkeypatch):
+    # the measurement at 14 MHz: I 0.46, Q 2.32
+    _v3_root(tmp_path, monkeypatch, '{"i_rms": 0.46, "q_rms": 2.32}')
+    (r,) = sdr.collect_sdr(open_radios=True)["summary"]
+    assert r["tuner"] == "Rafael Micro R820T"
+    assert r["rtl_model"] == "rtl-sdr-blog-v3"
+
+
+def test_a_dongle_with_no_hf_path_is_not_a_v3(tmp_path, monkeypatch):
+    _v3_root(tmp_path, monkeypatch, '{"i_rms": 0.46, "q_rms": 0.5}')
+    (r,) = sdr.collect_sdr(open_radios=True)["summary"]
+    assert "rtl_model" not in r
+
+
+def test_a_krakens_channels_are_never_streamed(kraken_root, monkeypatch):
+    for port in ("2", "3", "4", "5", "6"):
+        (kraken_root / "sys/bus/usb/devices" / ("1-1." + port) / "busnum").write_text("1\n")
+        (kraken_root / "sys/bus/usb/devices" / ("1-1." + port) / "devnum").write_text("3\n")
+    calls = []
+
+    def fake(args, timeout=15):
+        calls.append(args)
+        if args[:3] == ["sudo", "-n", "fuser"]:
+            return 1, "", ""
+        if args[:2] == ["rtl_eeprom", "-d"]:
+            return 0, "", KRAKEN_EEPROM
+        return 127, "", "not here"
+
+    monkeypatch.setattr(sdr, "sdr_sh", fake)
+    sdr.collect_sdr(open_radios=True)
+    assert not [c for c in calls if c[:2] == ["python3", "-c"]]
