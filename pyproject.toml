@@ -119,7 +119,7 @@ warn_return_any = false
 
 # ...and so do the ESP32 micro labels, which also use its flash tables.
 [[tool.mypy.overrides]]
-module = "rpi_hwid.esp32_micro"
+module = ["rpi_hwid.esp32_micro", "rpi_hwid.esp32_433_micro"]
 disallow_untyped_calls = false
 warn_return_any = false
 
