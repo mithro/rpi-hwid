@@ -282,6 +282,17 @@ def record(host, key, r):
         ident = r.flash_uid if r.flash_uid_state == "read" else None
         ident_caption = "flash ESN  (AT25SL321 secured OTP)"
         if ident:
+            # The label prints the bytes that were programmed; the erased
+            # tail (ff) is the part of the 128-bit field nobody wrote, and
+            # the document keeps all of it.
+            full = ident
+            while ident.lower().endswith("ff") and len(ident) > 2:
+                ident = ident[:-2]
+            if ident != full:
+                prov.append(("identity, erased", f"read: ESN {full}: the {len(ident) * 4} "
+                                                 "bits printed are the programmed ones; "
+                                                 f"the last {(len(full) - len(ident)) * 4} "
+                                                 "read erased (ff)"))
             prov.append(("identity", "read: the configuration flash's secured-OTP ESN, "
                                      f"{r.flash_uid_note}; Renesas DS-AT25SL321-112 Rev. K "
                                      "8.41 and Table 17 (\"128-bit ESN (Electrical Serial "
