@@ -125,7 +125,7 @@ def test_the_xsdr_is_keyed_on_its_flash_esn():
     assert x.title == "XSDR"
     assert x.maker == "Wavelet Lab"
     assert x.ident == "19040203090e9769"         # the programmed half; the rest is erased
-    assert "last 64 read erased" in dict(x.provenance)["identity, erased"]
+    assert x.ident_caption == "flash uid"
     assert "XC7A50T" in x.subtitle
     assert (x.rx_channels, x.tx_channels) == (2, 2)
     prov = dict(x.provenance)
@@ -142,3 +142,18 @@ def test_the_v3_prints_its_shared_serial_as_not_unique():
     assert "not unique" in v.shared_caption
     assert v.rx_aux == ((500_000, 24_000_000),)
     assert dict(v.provenance)["model"].startswith("read: tuner Rafael Micro R820T")
+
+
+def test_the_xsdr_flash_reads_as_an_fpga_boards_does():
+    """The same part-and-size line an FPGA label prints, from the same
+    JEDEC decoding, and the uid in its own row."""
+    x = records()["rpi-sdr-xsdr"]
+    assert x.flash == labels.flash_text(labels.flash_from_jedec("0x1f4216"))
+    assert x.flash == "Atmel AT25SL321  \u00b7  4 MiB"
+    assert x.flash_uid == "19040203090e9769"
+
+
+def test_the_pluto_flash_uid_is_its_serial():
+    p = records()["rpi-sdr-pluto"]
+    assert p.flash_uid == p.ident
+    assert p.flash is None          # the part was never read, so no part row

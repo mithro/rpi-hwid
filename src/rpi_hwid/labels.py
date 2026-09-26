@@ -1107,6 +1107,9 @@ JEDEC_PART = {
     # Micron's N25Q128 and its second generation, the MT25QL128: pi3's Arty.
     # The extended id tells them apart (MICRON_GENERATION below).
     0x20BA18: "N25Q128/MT25QL128",
+    # Adesto (now Renesas) AT25SL321, filed under Atmel's JEP106 code as
+    # Linux's spi-nor atmel.c files it: rpi-sdr-xsdr's XSDR
+    0x1F4216: "AT25SL321",
     0xEF4016: "W25Q32xx",      # BV, FV and JV-IQ; the Cynthion's
     0xEF4017: "W25Q64xx",      # BV, CV and FV; pi-sw1-p38's PCILeech card
     0xEF4018: "W25Q128xx",     # BV, FV and JV-IQ
