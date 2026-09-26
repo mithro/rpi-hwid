@@ -51,7 +51,7 @@ EXAMPLES = [
                      MicroRow("uid", "5e0a1c2b3d4e5f60", mono=True))),
     MicroLabel(host="bench-1", title="USB bridge", subtitle="CP2102N  ·  10c4:ea60",
                ident_caption="USB serial", ident="0a1b2c3d4e5f6071",
-               icons=(Icon("usb"),),
+               mark="usb.svg",   # the public-domain trident, in the mark slot
                rows=(MicroRow("port", "1-1.3"),)),
     MicroLabel(host="bench-2", title="Radio node", subtitle="433 MHz",
                ident_caption="MAC", ident="02:00:5e:10:00:21",
