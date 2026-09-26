@@ -69,15 +69,18 @@ def parse_bringup(text):
             continue
         line = raw[i:].strip()
         chip = re.search(r"\b(CC1101|SX127[0-9])\b", line)
-        if not chip:
+        version = re.search(r"\b(?:VERSION|RegVersion) (0x[0-9A-Fa-f]{2})", line)
+        # a line that names the chip without its version register is the
+        # driver saying how it set the chip up ("SX1278 FSK weather RX: ..."),
+        # not the chip answering
+        if not chip or not version:
             continue
         absent = bool(re.search(r"\bno (CC1101|SX127[0-9])\b", line))
         partnum = re.search(r"\bPARTNUM (0x[0-9A-Fa-f]{2})", line)
-        version = re.search(r"\b(?:VERSION|RegVersion) (0x[0-9A-Fa-f]{2})", line)
         out.append({
             "line": line, "chip": chip.group(1), "present": not absent,
             "partnum": partnum.group(1) if partnum else None,
-            "version": version.group(1) if version else None,
+            "version": version.group(1),
             "pins": {} if absent else dict((k, int(v)) for k, v in PIN_RE.findall(line)),
         })
     return out
