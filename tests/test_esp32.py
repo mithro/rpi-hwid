@@ -200,6 +200,191 @@ def test_the_module_is_a_plain_python35_script():
     compile(esp32.READ_SCRIPT, "READ_SCRIPT", "exec")
 
 
+# --- the read script, against a fake esptool ------------------------------------
+#
+# Enough of esptool, espefuse and pyserial for READ_SCRIPT to run in a real
+# child python: the flash answers 0x4B from a fixed 64-bit uid and, like
+# esptool 4.7 and 5.2, refuses to read more than 32 bits back at once.
+
+FAKE_ESPTOOL = '''
+import os
+__version__ = os.environ.get("FAKE_VERSION", "4.7.0")
+from . import cmds
+'''
+FAKE_CMDS = '''
+import os
+UID = bytes.fromhex("c1a2b3d4e5f60718")
+LOG = os.environ["FAKE_LOG"]
+
+def log(s):
+    with open(LOG, "a") as f:
+        f.write(s + "\\n")
+
+class FatalError(RuntimeError):
+    pass
+
+class Port:
+    name = "fake"
+    def __init__(self):
+        self.sent = False
+    def fileno(self):
+        raise OSError("not a tty")
+    def read(self, n):
+        if self.sent:
+            return b""
+        self.sent = True
+        return b"ESP-ROM:esp32c3-api1-20210207\\nrst:0x15 (USB_UART_CHIP_RESET)\\n"
+    def close(self):
+        log("close")
+
+class ESP:
+    CHIP_NAME = "ESP32-C3"
+    def __init__(self):
+        self._port = Port()
+    def get_chip_description(self):
+        return "ESP32-C3 (QFN32) (revision v0.4)"
+    def get_chip_features(self):
+        return ["WiFi", "BLE", "Embedded Flash 4MB (XMC)"]
+    def get_crystal_freq(self):
+        return 40
+    def read_mac(self):
+        return (0xe8, 0x3d, 0xc1, 0x8c, 0x3e, 0xb8)
+    def flash_spi_attach(self, arg):
+        pass
+    def flash_id(self):
+        return 0x164020
+    def run_spiflash_command(self, cmd, data=b"", read_bits=0):
+        if read_bits > 32:
+            raise FatalError("Reading more than 32 bits back from a SPI flash "
+                             "operation is unsupported")
+        if os.environ.get("FAKE_UID") == "broken":
+            raise FatalError("SPI command did not complete in time")
+        skip = len(data) - 4
+        return int.from_bytes(UID[skip:skip + 4], "little")
+    def hard_reset(self):
+        log("hard_reset")
+
+def detect_chip(port, baud, mode):
+    log("detect " + mode)
+    if os.environ.get("FAKE_CONNECT") == "fail":
+        raise FatalError("Failed to connect to Espressif device")
+    return ESP()
+'''
+FAKE_FIELDS = '''
+class F:
+    def __init__(self, name, v):
+        self.name, self.v = name, v
+    def get(self):
+        return self.v
+
+class EspEfuses:
+    def __init__(self, esp, skip_connect=False):
+        self.f = [F("MAC", "e8:3d:c1:8c:3e:b8 (OK)"), F("BLOCK_KEY0", "secret"),
+                  F("OPTIONAL_UNIQUE_ID", "00112233445566778899aabbccddeeff"),
+                  F("WAFER_VERSION_MINOR_LO", 4)]
+    def __iter__(self):
+        return iter(self.f)
+'''
+FAKE_SERIAL = '''
+import os
+class Serial:
+    def __init__(self, port, baud, timeout=None):
+        self.log("open")
+    def log(self, s):
+        with open(os.environ["FAKE_LOG"], "a") as f:
+            f.write(s + "\\n")
+    def __setattr__(self, k, v):
+        if k in ("rts", "dtr"):
+            self.log("%s=%s" % (k, v))
+        object.__setattr__(self, k, v)
+    def fileno(self):
+        raise OSError("not a tty")
+    def read(self, n):
+        return b""
+    def close(self):
+        pass
+'''
+
+
+@pytest.fixture
+def fake_esptool(tmp_path, monkeypatch):
+    lib = tmp_path / "lib"
+    for rel, text in (("esptool/__init__.py", FAKE_ESPTOOL), ("esptool/cmds.py", FAKE_CMDS),
+                      ("espefuse/__init__.py", ""), ("espefuse/efuse/__init__.py", ""),
+                      ("espefuse/efuse/esp32c3/__init__.py", ""),
+                      ("espefuse/efuse/esp32c3/fields.py", FAKE_FIELDS),
+                      ("serial/__init__.py", FAKE_SERIAL)):
+        (lib / rel).parent.mkdir(parents=True, exist_ok=True)
+        (lib / rel).write_text(text)
+    log = tmp_path / "log"
+    monkeypatch.setenv("PYTHONPATH", str(lib))
+    monkeypatch.setenv("FAKE_LOG", str(log))
+    monkeypatch.setenv("RPI_HWID_ESP32_LISTEN", "0.2")
+    monkeypatch.setattr(esp32, "esptool_pythons", lambda: [sys.executable])
+    return log
+
+
+def test_the_read_joins_the_flash_uid_from_two_32_bit_halves(fake_esptool):
+    result, error, _text = esp32.run_read("/dev/ttyACM3")
+    assert error is None
+    assert result["flash_uid"] == "c1a2b3d4e5f60718"
+    assert result["flash_jedec"] == "0x204016"
+    assert result["chip_description"] == "ESP32-C3 (QFN32) (revision v0.4)"
+    assert result["efuse"]["OPTIONAL_UNIQUE_ID"] == "00112233445566778899aabbccddeeff"
+    assert "BLOCK_KEY0" not in result["efuse"], "no key block is ever printed"
+    assert result["errors"] == {"hupcl": "OSError: not a tty"}
+    assert "USB_UART_CHIP_RESET" in result["boot_after"]
+    assert fake_esptool.read_text().splitlines() == [
+        "detect default_reset", "hard_reset", "close"]
+
+
+def test_esptool_5_gets_its_own_spelling_of_the_reset_mode(fake_esptool, monkeypatch):
+    monkeypatch.setenv("FAKE_VERSION", "5.2.0")
+    _result, error, _ = esp32.run_read("/dev/ttyUSB1")
+    assert error is None
+    assert fake_esptool.read_text().splitlines()[0] == "detect default-reset"
+
+
+def test_a_failed_step_keeps_the_rest_and_still_resets(fake_esptool, monkeypatch):
+    monkeypatch.setenv("FAKE_UID", "broken")
+    result, error, _ = esp32.run_read("/dev/ttyACM3")
+    assert error is None
+    assert "flash_uid" not in result
+    assert result["errors"]["flash_uid"].startswith("FatalError: SPI command")
+    assert result["mac"] == "e8:3d:c1:8c:3e:b8"
+    assert result["efuse"]["MAC"].startswith("e8:3d")
+    assert "hard_reset" in fake_esptool.read_text()
+
+
+def test_a_failed_connect_still_pulses_the_reset(fake_esptool, monkeypatch):
+    monkeypatch.setenv("FAKE_CONNECT", "fail")
+    result, _error, _ = esp32.run_read("/dev/ttyACM3")
+    assert result["errors"]["connect"].startswith("FatalError: Failed to connect")
+    assert fake_esptool.read_text().splitlines()[1:] == [
+        "open", "dtr=False", "rts=True", "rts=False"]
+
+
+def test_apply_read_keeps_what_was_read_and_says_what_was_not():
+    d = esp32.device_from_usb(
+        {"path": "3-1.4", "vidpid": "303a:1001", "manufacturer": "Espressif",
+         "product": "USB JTAG/serial debug unit", "serial": "E8:3D:C1:8C:3E:B8",
+         "bcd_device": "0101", "speed": "12", "tty": ["/dev/ttyACM3"]}, {})
+    esp32.apply_read(d, dict(READ, flash_uid=None,
+                             errors={"flash_uid": "FatalError: no"}))
+    assert d["chip"] == "ESP32-C3"
+    assert d["flash_uid"] is None
+    assert d["read_errors"] == {"flash_uid": "FatalError: no"}
+
+
+def test_the_error_line_is_the_one_that_says_what_went_wrong():
+    text = ("Detecting chip type... ESP32-C3\nConnecting...Traceback (most recent call last):\n"
+            "  File \"<string>\", line 15, in <module>\n"
+            "esptool.util.FatalError: Reading more than 32 bits back\n\n"
+            "Detecting chip type... ESP32-C3\n")
+    assert esp32.error_line(text) == "esptool.util.FatalError: Reading more than 32 bits back"
+    assert esp32.error_line("") == "no output"
+
+
 def test_the_collector_embeds_the_module_and_reads_only_what_it_is_told():
     from rpi_hwid.collect import probe_source
 
@@ -229,6 +414,44 @@ def test_collect_hands_each_host_its_own_ports(monkeypatch, tmp_path):
                     "b": (True, ("/dev/ttyUSB1",)), "c": (False, ())}
 
 
+def test_a_read_names_its_host_with_or_without_the_user(monkeypatch, tmp_path):
+    """`--esp32-read host=PORT` for a host given as `tim@host` did nothing at
+    all on 2026-09-26: the reads were silently dropped."""
+    from rpi_hwid import collect
+
+    seen = {}
+
+    def fake(host, users, jump, fpga, jtag, flash, tinytapeout=False, take_port=True,
+             esp32=False, esp32_read=()):
+        seen[host] = tuple(esp32_read)
+        return collect.Result(host, False, error="not really")
+
+    monkeypatch.setattr(collect, "probe_host", fake)
+    collect.collect(["tim@rpi5", "rpi4"], tmp_path, workers=1,
+                    esp32_read=("rpi5=/dev/ttyACM0", "tim@rpi4=/dev/ttyUSB1"))
+    assert seen == {"tim@rpi5": ("/dev/ttyACM0",), "rpi4": ("/dev/ttyUSB1",)}
+
+
+def test_a_read_for_a_host_not_being_collected_is_an_error(tmp_path):
+    from rpi_hwid import collect
+
+    with pytest.raises(ValueError, match="nosuchhost"):
+        collect.collect(["rpi5"], tmp_path, esp32_read=("nosuchhost=/dev/ttyACM0",))
+    with pytest.raises(ValueError, match="HOST=PORT"):
+        collect.collect(["rpi5"], tmp_path, esp32_read=("rpi5",))
+
+
+def test_the_read_runs_under_a_python_that_has_esptool(monkeypatch, tmp_path):
+    """rpi4-esp has no system esptool but Tim's own venv at ~/.venvs/esptool."""
+    venv = tmp_path / ".venvs/esptool/bin"
+    venv.mkdir(parents=True)
+    (venv / "python3").symlink_to(sys.executable)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    found = esp32.esptool_pythons()
+    assert found[0] == sys.executable
+    assert str(venv / "python3") in found
+
+
 def test_the_esp32_command(sysfs, capsys):
     from rpi_hwid.cli import main as cli_main
 
@@ -238,3 +461,14 @@ def test_the_esp32_command(sysfs, capsys):
     assert "would reset it" in out
     assert cli_main(["esp32", "--json"]) == 0
     assert len(json.loads(capsys.readouterr().out)["devices"]) == 3
+
+
+def test_collect_refuses_an_unmatched_read_before_probing_anything(tmp_path, monkeypatch,
+                                                                   capsys):
+    from rpi_hwid import collect
+    from rpi_hwid.cli import main as cli_main
+
+    monkeypatch.setattr(collect, "probe_host", lambda *a, **k: pytest.fail("probed"))
+    assert cli_main(["collect", "--out", str(tmp_path), "--esp32-read",
+                     "rpi5=/dev/ttyACM0", "tim@rpi4"]) == 2
+    assert "rpi5 is not one of the hosts being collected" in capsys.readouterr().err
