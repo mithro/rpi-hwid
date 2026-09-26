@@ -1759,7 +1759,7 @@ def usb_records(docs):
 
 # --- assembly -----------------------------------------------------------------
 
-KINDS = ("fpga", "tt", "rpi", "opi", "riscv", "x86", "usb")
+KINDS = ("fpga", "tt", "rpi", "opi", "riscv", "x86", "usb", "sdr")
 # A host can carry more than one FPGA board -- rpi5-netv2 has a NeTV2 and a
 # Cynthion -- so "fpga" is not fine enough to print one sticker. Naming a kind
 # selects that board alone; "fpga" still means all of them.
@@ -1792,7 +1792,8 @@ def all_labels(docs, only, pinned_names=None, order=None):
     for record_kind, records in (
             ("fpga", fpga_records(docs, pinned_names) if any_fpga else ()),
             ("tt", tinytapeout_records(docs) if "tt" in only else ()),
-            ("usb", usb_records(docs) if "usb" in only else ())):
+            ("usb", usb_records(docs) if "usb" in only else ()),
+            ("sdr", sdr_records(docs) if "sdr" in only else ())):
         for r in records:
             if record_kind == "fpga":
                 if wanted_fpga and r.kind not in wanted_fpga:
@@ -1825,6 +1826,8 @@ def all_labels(docs, only, pinned_names=None, order=None):
                 ident = r.ident or r.serial or ""
                 row = (r.kind, f"{r.name or r.model} {ident}".strip(),
                        draw_fpga, r)
+            elif record_kind == "sdr":
+                row = sdr_row(r)
             elif record_kind == "tt":
                 row = ("tt", f"{r.headline} {r.usb_serial or ''}".strip(), draw_tinytapeout, r)
             else:
@@ -1855,6 +1858,21 @@ def all_labels(docs, only, pinned_names=None, order=None):
     # Micro labels, four to a sticker, after every whole one (rpi_hwid.micro).
     from rpi_hwid import micro
     yield from micro.sticker_rows(docs, only)
+
+
+def sdr_records(docs):
+    """The radios' records (rpi_hwid.sdr_labels, which draws with this
+    module and so is imported late)."""
+    from rpi_hwid import sdr_labels
+    return sdr_labels.sdr_records(docs)
+
+
+def sdr_row(r):
+    from rpi_hwid import sdr_labels
+    why = sdr_labels.unreadable(r)
+    if why:
+        raise IdentifierNotReadError(why)
+    return ("sdr", "%s %s" % (r.title, r.ident or r.shared), sdr_labels.draw_sdr, r)
 
 
 def label_origin(index):
