@@ -445,7 +445,9 @@ def listing(micros: Sequence[MicroLabel], start: int = 0
 # A device that gets micro labels brings its own module, named ``*_micro``
 # in this package, with a ``KIND`` (what ``rpi-hwid labels --only`` calls
 # it) and ``micro_labels(docs) -> list[MicroLabel]`` over the collected
-# documents. They are found by name, so adding one touches no shared file.
+# documents, and may name in ``REPLACES`` a kind whose label it supersedes
+# for the devices it labels. They are found by name, so adding one touches
+# no shared file.
 
 
 def provider_modules() -> list[str]:
@@ -477,10 +479,16 @@ def sticker_rows(docs: Any, only: set[str]) -> list[StickerRow]:
     `only`: one row per sticker of four, kind "micro", its title every
     label's on it. They come after every whole label, so the quarters of a
     sticker are never left empty between two hosts' whole labels."""
-    micros: list[MicroLabel] = []
-    for kind, mod in sorted(providers().items()):
-        if kind in only:
-            micros += mod.micro_labels(docs)
+    wanted = {kind: mod for kind, mod in sorted(providers().items()) if kind in only}
+    made = {kind: mod.micro_labels(docs) for kind, mod in wanted.items()}
+    # A module may say it REPLACES another kind: printed together, a device
+    # both label -- the same host and identifier -- gets only its label.
+    for kind, mod in wanted.items():
+        base = getattr(mod, "REPLACES", None)
+        if base in made:
+            taken = {(m.host, m.ident) for m in made[kind]}
+            made[base] = [m for m in made[base] if (m.host, m.ident) not in taken]
+    micros: list[MicroLabel] = [m for kind in wanted for m in made[kind]]
     rows: list[StickerRow] = []
     for group in pack(micros):
         present = [m for m in group if m is not None]
