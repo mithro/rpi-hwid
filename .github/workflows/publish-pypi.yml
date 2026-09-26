@@ -24,10 +24,15 @@ on:
 jobs:
   build:
     # workflow_run fires on EVERY completion (failure and cancelled included);
-    # only a successful run is a release. Dependent jobs inherit the skip.
+    # only a successful run is a release. `branches: [main]` matches the
+    # triggering run's branch NAME, which a pull request from a fork's own
+    # `main` has too, and the checkout below would then publish that pull
+    # request's commit. So a pull request's run is excluded explicitly.
+    # Dependent jobs inherit the skip.
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event != 'pull_request')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
