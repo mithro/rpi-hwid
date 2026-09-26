@@ -297,7 +297,7 @@ def test_board_record_carries_the_riscv_band(docs):
     assert b.serial == "SF105SZ212200391"
     assert b.macs == (("eth", "70:b3:d5:92:f8:de"),)
     assert b.wlan_note == "no radio"
-    assert b.isa == "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd"
+    assert b.isa == "RV64GC_Zicntr_Zihpm"
     assert b.riscv_line == "4 harts  ·  sv39  ·  PCB rev 3  ·  BOM B0"
 
 
@@ -330,3 +330,20 @@ def test_soc_name():
                            "sifive,fu740"]) == "FU740"
     assert riscv.soc_name(["starfive,visionfive-2-v1.3b", "starfive,jh7110"]) == "jh7110"
     assert riscv.soc_name([]) is None
+
+
+@pytest.mark.parametrize(("isa", "short"), [
+    # the Unmatched's, as its 6.12 kernel reports it: G is IMAFD plus Zicsr
+    # and Zifencei, and C with D already implies Zca and Zcd
+    ("rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd", "RV64GC_Zicntr_Zihpm"),
+    # an older kernel's spelling of the same harts: without the two Z
+    # extensions named there is no G to fold into
+    ("rv64imafdc", "RV64IMAFDC"),
+    ("rv64imafdc_zicsr_zifencei", "RV64GC"),
+    # no F or D: no G, and Zca stays implied by C but nothing else does
+    ("rv64imac_zicsr_zifencei_zca", "RV64IMAC_Zicsr_Zifencei"),
+    ("rv64imafdcv_zicsr_zifencei_zba_zbb", "RV64GCV_Zba_Zbb"),
+    ("", ""),
+])
+def test_isa_is_shortened_only_where_the_spec_makes_it_equivalent(isa, short):
+    assert riscv.short_isa(isa) == short
