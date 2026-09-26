@@ -106,6 +106,25 @@ License: trademark
  it. Copied byte for byte from gf.com's own site icon SVG, GF's
  symbol-only mark; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/sifive.svg
+Copyright: SiFive, Inc.
+License: trademark
+ The SiFive symbol, drawn only on the label of hardware SiFive made, to
+ identify it. From the header logo sifive.com serves inline, with the
+ wordmark subpaths dropped and the viewBox trimmed to the symbol; the
+ symbol's path data is untouched. See src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/risc-v.svg
+Copyright: RISC-V International
+License: trademark
+ The RISC-V logo (the stacked colour lockup), a registered trademark of
+ RISC-V International, drawn only on the label of a board whose processor
+ implements the RISC-V ISA, to say so. Copied byte for byte from the
+ official logo files on RISC-V International's brand guidelines page,
+ https://riscv.org/about/brand-guidelines/, which permit free use for
+ non-commercial projects that follow the guidelines (official files only,
+ never recreated); see src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.
