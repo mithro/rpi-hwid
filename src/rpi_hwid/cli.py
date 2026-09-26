@@ -10,6 +10,8 @@
                                                           on a Pi: which ESP32s are on USB?
     rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--no-stop-service] HOST…
                                                           over ssh: one JSON per host
+    rpi-hwid tasmota --sheet CSV --site NAME=OCTET --out DIR
+                                                          over HTTP, read-only: Tasmota plugs
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
     rpi-hwid name --netv2 DNA… | --arty SERIAL… | --cynthion UID…
                                                           the derived board names
@@ -261,6 +263,9 @@ def main(argv: list[str] | None = None) -> int:
                         "it drives (disruptive)")
     p.set_defaults(func=cmd_esp32)
 
+    sub.add_parser("tasmota", help="read Tasmota devices over HTTP, read-only "
+                                   "(rpi-hwid tasmota -h)", add_help=False)
+
     sub.add_parser("labels", help="print-ready labels from collected data (rpi-hwid labels -h)",
                    add_help=False)
 
@@ -281,6 +286,10 @@ def main(argv: list[str] | None = None) -> int:
         from rpi_hwid import labels
 
         return int(labels.main(argv[1:]))
+    if argv and argv[0] == "tasmota":
+        from rpi_hwid import tasmota
+
+        return tasmota.main(argv[1:])
     args = ap.parse_args(argv)
     return int(args.func(args))
 

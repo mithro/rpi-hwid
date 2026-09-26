@@ -308,3 +308,63 @@ def test_collect_writes_one_document_per_answering_device(tmp_path):
     assert sorted(p.stem for p in tmp_path.glob("*.json")) == sorted(
         h for h in DEVICES if h != "ir-ac-remote")
     assert not next(r for r in results if r.host == "ir-ac-remote").ok
+
+
+def _sheet_for_fixtures():
+    head = ("Name,Device ID,MAC Address,IP,Type,Connection,Site,Physical Location,Machine,"
+            "Human Name,Mon?,Hardware,Controls,Notes / Comments\n")
+    rows = []
+    for host, d in DEVICES.items():
+        mac = d["status"]["StatusNET"]["Mac"]
+        ip = d["ip"].replace("10.1.", "10.X.", 1)
+        rows.append(f"tasmota-{mac.replace(':', '')[6:]}-0001,,{mac},{ip},DHCP,Wi-Fi 2.4G,"
+                    f"Welland,,{host},,1,,,\n")
+    rows.append("tasmota-B0A9D0-2512,,24:EC:4A:B0:A9:D0,10.X.91.9,DHCP,Wi-Fi 2.4G,Monarto,,"
+                "au-plug-9,,1,Athom Plug V3,,\n")
+    return head + "".join(rows)
+
+
+def test_the_command_reads_the_sheet_and_reports_every_device(tmp_path, monkeypatch, capsys):
+    from rpi_hwid.cli import main as cli_main
+
+    sheet = tmp_path / "iot.csv"
+    sheet.write_text(_sheet_for_fixtures())
+    fakes = {DEVICES[h]["ip"]: FakeDevice(h, broken={"Status 0"} if h == "ir-ac-remote"
+                                          else ()) for h in DEVICES}
+    monkeypatch.setattr(tasmota, "urllib_fetch", lambda url, t, h: fakes[
+        urllib.parse.urlsplit(url).hostname](url, t, h))
+    monkeypatch.delenv(tasmota.ENV_PASSWORD, raising=False)
+    out = tmp_path / "data"
+    rc = cli_main(["tasmota", "--sheet", str(sheet), "--site", "welland=1", "--out", str(out)])
+    text = capsys.readouterr().out
+    assert rc == 1                      # one device did not answer
+    assert "au-plug-29: Athom Plug V3 7c:2c:67:d7:c0:e8" in text
+    assert "ir-ac-remote: FAILED (no answer to Status 0 from 10.1.90.15" in text
+    assert "au-plug-9: SKIPPED (site Monarto was not asked for" in text
+    assert "3 of 4 device(s) written to" in text
+    assert len(list(out.glob("*.json"))) == 3
+
+
+def test_the_command_can_be_limited_to_some_hosts(tmp_path, monkeypatch, capsys):
+    from rpi_hwid.cli import main as cli_main
+
+    sheet = tmp_path / "iot.csv"
+    sheet.write_text(_sheet_for_fixtures())
+    fake = FakeDevice("us-plug-1")
+    monkeypatch.setattr(tasmota, "urllib_fetch", fake)
+    rc = cli_main(["tasmota", "--sheet", str(sheet), "--site", "welland=1",
+                   "--out", str(tmp_path / "d"), "us-plug-1"])
+    assert rc == 0
+    assert "1 of 1 device(s) written" in capsys.readouterr().out
+    assert {urllib.parse.urlsplit(u).hostname for u in fake.urls} == {"10.1.91.250"}
+    with pytest.raises(SystemExit):
+        cli_main(["tasmota", "--sheet", str(sheet), "--site", "welland=1",
+                  "--out", str(tmp_path / "d"), "no-such-plug"])
+
+
+def test_the_sheet_url_can_come_from_gdoc2netcfg_config(tmp_path):
+    cfg = tmp_path / "gdoc2netcfg.toml"
+    cfg.write_text('[site]\nname = "welland"\nsite_octet = 1\n'
+                   '[sheets]\niot = "https://docs.google.com/x/pub?output=csv"\n')
+    assert tasmota.gdoc2netcfg_source(cfg) == (
+        "https://docs.google.com/x/pub?output=csv", {"welland": 1})
