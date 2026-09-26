@@ -134,6 +134,55 @@ class TinyTapeoutBoard:
 
 
 @dataclass(frozen=True)
+class SdrDevice:
+    """A software-defined radio the host carries, as ``rpi_hwid.sdr`` read
+    it: identity where the device has one, and what it said of its own
+    capabilities. Nothing here is derived from a datasheet; that happens
+    on the label side, and is marked there."""
+
+    kind: str                      # krakensdr | rtl-sdr | pluto | usdr
+    vidpid: str | None = None
+    usb_serial: str | None = None
+    manufacturer: str | None = None
+    product: str | None = None
+    channel_serials: tuple[str, ...] = ()   # a KrakenSDR's five, in channel order
+    hub: str | None = None                 # the KrakenSDR's own hub, vid:pid
+    pcie_id: str | None = None
+    pcie_subsystem: str | None = None
+    usdr_family: str | None = None         # m2_lm7_1: the LMS7002M M.2 cards
+    driver: str | None = None
+    pcie_dsn: str | None = None
+    pcie_link: str | None = None
+    iio_uri: str | None = None
+    hw_model: str | None = None
+    hw_model_variant: str | None = None
+    hw_serial: str | None = None
+    fw_version: str | None = None
+    rf_chip: str | None = None             # ad9363a, as the IIO context names it
+    xo_hz: int | None = None
+    rx_lo_hz: tuple[int, int] | None = None     # (min, max), as the driver accepts
+    tx_lo_hz: tuple[int, int] | None = None
+    rx_rate_hz: tuple[int, int] | None = None
+    tx_rate_hz: tuple[int, int] | None = None
+    rx_bw_hz: tuple[int, int] | None = None
+    tx_bw_hz: tuple[int, int] | None = None
+    rx_channels: int | None = None
+    tx_channels: int | None = None
+    adc_bits: int | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> SdrDevice:
+        def pair(v: Any) -> tuple[int, int] | None:
+            return (int(v[0]), int(v[1])) if v else None
+
+        fields_ = dict(d)
+        fields_["channel_serials"] = tuple(d.get("channel_serials", ()))
+        for k in ("rx_lo_hz", "tx_lo_hz", "rx_rate_hz", "tx_rate_hz", "rx_bw_hz", "tx_bw_hz"):
+            fields_[k] = pair(d.get(k))
+        return cls(**fields_)
+
+
+@dataclass(frozen=True)
 class Summary:
     """The probe's fixed-shape verdict for one board: a Raspberry Pi, or
     another single-board computer the probe knows (an Orange Pi PC), which
@@ -152,6 +201,7 @@ class Summary:
     tinytapeout: tuple[TinyTapeoutBoard, ...] = ()
     macs: tuple[Mac, ...] = ()
     usb_net: tuple[UsbNetAdapter, ...] = ()
+    sdr: tuple[SdrDevice, ...] = ()
     rtc_battery: bool | None = None
     fan: bool | None = None
     max_current_ma: int | None = None
@@ -173,17 +223,22 @@ class Summary:
             tinytapeout=tuple(TinyTapeoutBoard(**b) for b in d.get("tinytapeout", ())),
             macs=tuple(Mac(**m) for m in d.get("macs", ())),
             usb_net=tuple(UsbNetAdapter(**u) for u in d.get("usb_net", ())),
+            sdr=tuple(SdrDevice.from_dict(r) for r in d.get("sdr", ())),
             rtc_battery=d.get("rtc_battery"), fan=d.get("fan"),
             max_current_ma=d.get("max_current_ma"), ext5v_v=d.get("ext5v_v"),
         )
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
-        for key in ("header", "fpga", "tinytapeout", "macs", "usb_net"):
+        for key in ("header", "fpga", "tinytapeout", "macs", "usb_net", "sdr"):
             d[key] = list(d[key])
         # nested tuples too, or the document does not round-trip through JSON
         for board in d["fpga"]:
             board["dna_sources"] = list(board["dna_sources"])
+        for radio in d["sdr"]:
+            for k, v in radio.items():
+                if isinstance(v, tuple):
+                    radio[k] = list(v)
         return d
 
 

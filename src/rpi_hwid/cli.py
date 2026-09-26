@@ -6,7 +6,7 @@
                                                           on a Pi: which FPGA board?
     rpi-hwid tinytapeout [--json] [--no-repl] [--no-stop-service]
                                                           on a Pi: which Tiny Tapeout board?
-    rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--no-stop-service] HOST…
+    rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--sdr] [--no-stop-service] HOST…
                                                           over ssh: one JSON per host
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
     rpi-hwid name --netv2 DNA… | --arty SERIAL… | --cynthion UID…
@@ -53,6 +53,10 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
         tinytapeout.merge_tinytapeout(
             doc, tinytapeout.collect_tinytapeout(take_port=not args.no_stop_service))
+    if args.sdr:
+        from rpi_hwid import sdr
+
+        sdr.merge_sdr(doc, sdr.collect_sdr())
     if args.json:
         print(json.dumps(doc, indent=1))
         return 0
@@ -71,6 +75,10 @@ def cmd_probe(args: argparse.Namespace) -> int:
         from rpi_hwid import tinytapeout
 
         tinytapeout.describe(v["tinytapeout"])
+    if "sdr" in v:
+        from rpi_hwid import sdr
+
+        sdr.sdr_describe(v["sdr"])
     for i in doc["interfaces"]:
         if i["onboard"]:
             print(f"  onboard: {i['kind']:6s} {i['mac']}  {i['driver']}")
@@ -110,7 +118,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         args.hosts, args.out, users=tuple(args.users.split(",")), jump=args.jump,
         fpga=args.fpga, jtag_hosts=tuple(args.jtag or ()), flash_hosts=tuple(args.flash or ()),
         workers=args.workers, tinytapeout=args.tinytapeout,
-        take_port=not args.no_stop_service,
+        take_port=not args.no_stop_service, sdr=args.sdr,
     )
     failed = 0
     for r in results:
@@ -118,9 +126,11 @@ def cmd_collect(args: argparse.Namespace) -> int:
             s = r.doc.summary
             boards = ", ".join(b.identity or b.kind for b in s.fpga)
             tts = ", ".join(b.shuttle or b.chip or "?" for b in s.tinytapeout)
+            radios = ", ".join(x.kind for x in s.sdr)
             print(f"  {r.host}: {s.model}; header {list(s.header) or 'bare'}; "
                   f"power {s.power_class}" + (f"; fpga {boards}" if boards else "")
-                  + (f"; tinytapeout {tts}" if tts else ""))
+                  + (f"; tinytapeout {tts}" if tts else "")
+                  + (f"; sdr {radios}" if radios else ""))
         else:
             failed += 1
             print(f"  {r.host}: FAILED ({r.error})")
@@ -162,6 +172,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="also identify an Arty's SPI flash (reloads the FPGA)")
     p.add_argument("--tinytapeout", action="store_true",
                    help="also look for a Tiny Tapeout demo board (reads its REPL)")
+    p.add_argument("--sdr", action="store_true",
+                   help="also look for a software-defined radio (opens none)")
     p.add_argument("--no-stop-service", action="store_true",
                    help=NO_STOP_SERVICE_HELP)
     p.set_defaults(func=cmd_probe)
@@ -206,6 +218,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="append the Tiny Tapeout module on every host")
     p.add_argument("--no-stop-service", action="store_true",
                    help=NO_STOP_SERVICE_HELP)
+    p.add_argument("--sdr", action="store_true",
+                   help="append the SDR module on every host (reads sysfs and a Pluto's "
+                        "network IIO context; opens no radio)")
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_collect)
 
