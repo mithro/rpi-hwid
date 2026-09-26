@@ -164,13 +164,32 @@ module reads the head of config space from sysfs (user-readable, nothing
 opened) and reports "card not answering: reboot the host, or power-cycle it"
 instead of describing a card that is not there.
 
-`--sdr-open` (`collect --sdr-open HOST`) opens a usdr card the way its own
-tools do, with `usdr_dm_sensors` and `usdr_flash`, both read-only. It does so
-only when `fuser` shows nothing holding `/dev/usdrN`, since OpenWebRX opens the
-card whenever a listener connects. That read gives the HWID (0x30 in bits
-23:16 is an XSDR), the configuration flash's JEDEC id and the images in it.
-The golden image's DEVID names the die (`usdr_flash` refuses an image built
-for another); the firmware ids are kept as evidence and never printed.
+`--sdr-open` (`collect --sdr-open HOST`) opens the radios nothing holds:
+`fuser` must show no holder of the device node first, since OpenWebRX, readsb
+and Heimdall keep theirs open while they run.
+
+On a usdr card it runs `usdr_dm_sensors` and `usdr_flash`, both read-only.
+They give the HWID (0x30 in bits 23:16 is an XSDR), the configuration flash's
+JEDEC id and the images in it. The golden image's DEVID names the die, because
+`usdr_flash` refuses an image built for another. The firmware ids are kept as
+evidence and never printed.
+
+The XSDR's flash is an AT25SL321 (`1f 42 16`), which has no Read Unique ID
+command. Its datasheet (Renesas DS-AT25SL321-112 Rev. K, §8.41, Table 17) puts
+a "128-bit ESN (Electrical Serial Number)" in a separate secured OTP area. It
+is reached by Enter Secured OTP (B1h), a normal read, then Exit (C1h), and the
+security register's bit 0 says whether the factory locked it. `--sdr-open`
+reads it through libusdr's own espi core, in a root subprocess of its own. It
+sends only that volatile mode switch (no write-enable, program or erase) and
+checks afterwards that the main array reads back unchanged. rpi-sdr-xsdr's
+reads `19 04 02 03 09 0e 97 69`, then eight erased bytes, with the factory
+lock clear. It is the only per-unit value the card has, so the label keys on
+it and names its source.
+
+On an RTL2832U it runs `rtl_eeprom -d SERIAL`, which without a write flag only
+reads. That gives the tuner librtlsdr found (an R820T2 answers as "Rafael
+Micro R820T") and the EEPROM's fields, which on the fleet's six dongles are
+the generic defaults throughout.
 
 ```
 $ rpi-hwid probe --sdr

@@ -186,8 +186,9 @@ quoted. The record's `provenance` says which, with the page. A radio the probe
 could not identify that far is refused, not printed vaguely.
 
 Identity follows the FPGA rule, with one addition for hardware that has none.
-A unit with its own identifier (a Pluto's serial, its QSPI flash's factory
-unique id) is keyed on it. If that identifier exists but was never read, the
+A unit with its own identifier is keyed on it: a Pluto's serial, which is its
+QSPI flash's factory unique id, or an XSDR's configuration-flash ESN, read
+from the AT25SL321's secured OTP by `--sdr-open`. If that identifier exists but was never read, the
 label is refused, naming the host and the command. Hardware whose serial every
 unit shares prints that serial along the foot, marked *not unique*, and the
 QR's square says the same, because a code there would claim an identity the
@@ -197,6 +198,7 @@ KrakenSDR, and an RTL2832U dongle ships as `00000001`.
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-pluto.png" alt="ADALM-Pluto, keyed on its QSPI flash unique id" width="32%">
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-kraken.png" alt="KrakenSDR: five coherent RX channels and a noise source, no unique id" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-xsdr.png" alt="Wavelet Lab XSDR: 2x2 MIMO, keyed on its configuration flash ESN" width="32%">
 </p>
 
 ## Tiny Tapeout boards

@@ -50,6 +50,7 @@ EXAMPLES = [
     ("usb", "USB3GIGV1", "usb-linksys"),
     ("sdr", "ADALM-Pluto", "sdr-pluto"),
     ("sdr", "KrakenSDR", "sdr-kraken"),
+    ("sdr", "XSDR", "sdr-xsdr"),
 ]
 
 
