@@ -274,6 +274,13 @@ finally:
             out["errors"]["hupcl"] = "%s: %s" % (type(exc).__name__, exc)
         buf = b""
         t0 = time.time()
+        try:
+            # esptool's port may block until a whole read is filled, and an
+            # application that prints little would then hold the read open
+            # for good (E8:3D:C1:8C:5C:88, 2026-09-26)
+            ser.timeout = 0.2
+        except Exception as exc:
+            out["errors"]["timeout"] = "%s: %s" % (type(exc).__name__, exc)
         while time.time() - t0 < listen:
             try:
                 buf += ser.read(4096)
@@ -341,8 +348,9 @@ def run_read(port, timeout=120):
         r = subprocess.run([python, "-u", "-c", READ_SCRIPT, port],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return None, "timed out after %d s" % timeout, ""
+    except subprocess.TimeoutExpired as exc:
+        text = (exc.output or b"").decode("utf-8", "replace")
+        return None, "timed out after %d s: %s" % (timeout, error_line(text)), text
     except OSError as exc:
         return None, str(exc), ""
     text = r.stdout.decode("utf-8", "replace")

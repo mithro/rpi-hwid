@@ -225,11 +225,15 @@ class FatalError(RuntimeError):
 
 class Port:
     name = "fake"
+    timeout = None
     def __init__(self):
         self.sent = False
     def fileno(self):
         raise OSError("not a tty")
     def read(self, n):
+        if self.timeout is None and os.environ.get("FAKE_QUIET"):
+            import time
+            time.sleep(60)      # a quiet app and a blocking port: read never fills
         if self.sent:
             return b""
         self.sent = True
@@ -336,6 +340,19 @@ def test_the_read_joins_the_flash_uid_from_two_32_bit_halves(fake_esptool):
     assert "USB_UART_CHIP_RESET" in result["boot_after"]
     assert fake_esptool.read_text().splitlines() == [
         "detect default_reset", "hard_reset", "close"]
+
+
+def test_a_quiet_application_does_not_hold_the_read_open(fake_esptool, monkeypatch):
+    """E8:3D:C1:8C:5C:88 runs an app that prints little, and esptool's port
+    blocked until 4096 bytes came: the read timed out and lost everything."""
+    import time
+
+    monkeypatch.setenv("FAKE_QUIET", "1")
+    t0 = time.time()
+    result, error, _ = esp32.run_read("/dev/ttyACM0", timeout=30)
+    assert error is None
+    assert result["flash_uid"] == "c1a2b3d4e5f60718"
+    assert time.time() - t0 < 20
 
 
 def test_esptool_5_gets_its_own_spelling_of_the_reset_mode(fake_esptool, monkeypatch):
