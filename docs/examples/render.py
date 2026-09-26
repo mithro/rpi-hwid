@@ -55,6 +55,7 @@ EXAMPLES = [
     ("sdr", "ADALM-Pluto", "sdr-pluto"),
     ("sdr", "KrakenSDR", "sdr-kraken"),
     ("sdr", "XSDR", "sdr-xsdr"),
+    ("sdr", "RTL-SDR V3", "sdr-rtlsdr-v3"),
 ]
 
 
