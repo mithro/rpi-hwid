@@ -169,6 +169,39 @@ of `--jtag`. It is printed and never keyed on: a name derived from it could not
 be recovered without taking the board offline again. If a board is ever left in
 Apollo mode, `rpi-hwid fpga --recover-cynthion` is the way home.
 
+## Software-defined radios
+
+The FPGA label's layout, with the radio drawn rather than written. The
+identity's QR sits top left. Beside it are the maker's mark, the radio's name,
+and its chip and die. Across the middle is a frequency-coverage bar on a log
+scale from 100 kHz to 10 GHz: receive is solid, transmit hatched, and a
+direct-sampling path grey. Under it is one antenna glyph per channel, with an
+arrow in for receive and out for transmit. Channels that share one clock get
+a bracket, and a KrakenSDR's calibration noise source gets its own glyph. Beside
+the glyphs are the rate, the ADC and the clock. The identity runs along the foot.
+
+Each fact is either what the radio said of itself (a Pluto reports its ranges,
+rates, channels, ADC width and reference clock) or its maker's documentation,
+quoted. The record's `provenance` says which, with the page. A radio the probe
+could not identify that far is refused, not printed vaguely.
+
+Identity follows the FPGA rule, with one addition for hardware that has none.
+A unit with its own identifier is keyed on it: a Pluto's serial, which is its
+QSPI flash's factory unique id, or an XSDR's configuration-flash ESN, read
+from the AT25SL321's secured OTP by `--sdr-open`. If that identifier exists but was never read, the
+label is refused, naming the host and the command. Hardware whose serial every
+unit shares prints that serial along the foot, marked *not unique*, and the
+QR's square says the same, because a code there would claim an identity the
+sticker does not have. A KrakenSDR's five channels are 1000–1004 on every
+KrakenSDR, and an RTL2832U dongle ships as `00000001`.
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-pluto.png" alt="ADALM-Pluto, keyed on its QSPI flash unique id" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-kraken.png" alt="KrakenSDR: five coherent RX channels and a noise source, no unique id" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-xsdr.png" alt="Wavelet Lab XSDR: 2x2 MIMO, keyed on its configuration flash ESN" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-rtlsdr-v3.png" alt="RTL-SDR Blog V3: R820T2 plus the HF direct-sampling path, serial not unique" width="32%">
+</p>
+
 ## Tiny Tapeout boards
 
 The shuttle is the headline, with ASIC or FPGA breakout and the PDK under it, and
@@ -233,7 +266,7 @@ place of the RJ45, so the two kinds are told apart across the room as well.
 ## Artwork
 
 The package ships the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax,
-Digilent, SQRL, Great Scott Gadgets and Tiny Tapeout marks (each its owner's trademark, drawn only on that
+Digilent, SQRL, Great Scott Gadgets, KrakenRF, Analog Devices, Wavelet Lab and Tiny Tapeout marks (each its owner's trademark, drawn only on that
 maker's own hardware to identify it) and the public-domain USB trident; see
 [`src/rpi_hwid/artwork/README.md`](../src/rpi_hwid/artwork/README.md) for the
 sources. A `--artwork DIR` overrides any of them and may add a `netv2.svg`. A

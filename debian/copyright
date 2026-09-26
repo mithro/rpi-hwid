@@ -106,6 +106,32 @@ License: trademark
  it. Copied byte for byte from gf.com's own site icon SVG, GF's
  symbol-only mark; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/krakenrf.png
+Copyright: KrakenRF Inc.
+License: trademark
+ The KrakenRF mark and KRAKENRF wordmark, drawn only on the label of a
+ KrakenSDR, which KrakenRF made, to identify it. From krakenrf.com's own
+ header logo, with the wordmark (white, for a dark header) inked black for
+ white label stock; the shapes are untouched; see
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/analog-devices.svg
+Copyright: Analog Devices, Inc.
+License: trademark
+ The Analog Devices mark and wordmark, drawn only on the label of an
+ ADALM-Pluto, which Analog Devices made, to identify it. From Wikimedia
+ Commons File:Analog_Devices_Logo.svg (public domain as a simple
+ geometric/typographic logo, trademarked; sourced there from ADI's
+ corporate logo guidelines), without the claim line; see
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/wavelet-lab.png
+Copyright: Wavelet Lab
+License: trademark
+ The Wavelet Lab "W" mark, drawn only on the label of an XSDR, which
+ Wavelet Lab made, to identify it. From the Wavelet Lab GitHub organisation
+ avatar, trimmed; see src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.
