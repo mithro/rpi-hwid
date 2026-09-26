@@ -34,7 +34,7 @@ DEFAULT_USERS = (getpass.getuser(), "pi")
 
 def probe_source(
     fpga: bool = False, jtag: bool = False, flash: bool = False, tinytapeout: bool = False,
-    take_port: bool = True,
+    take_port: bool = True, esp32: bool = False, esp32_read: Sequence[str] = (),
 ) -> str:
     """The script to feed to ``python3 -`` on a host.
 
@@ -45,7 +45,7 @@ def probe_source(
     """
     pkg = resources.files("rpi_hwid")
     probe = pkg.joinpath("probe.py").read_text()
-    if not fpga and not tinytapeout:
+    if not fpga and not tinytapeout and not esp32:
         return probe
     extra = ""
     glue = "\n\n_doc = collect()\n_doc['verdict'] = verdict(_doc)\n"
@@ -58,6 +58,11 @@ def probe_source(
         # script a host is sent reads the same as it always has otherwise.
         call = "collect_tinytapeout()" if take_port else "collect_tinytapeout(take_port=False)"
         glue += f"merge_tinytapeout(_doc, {call})\n"
+    if esp32:
+        # the ESP32 module: the USB tree, and a reset-and-read of the ports
+        # named for this host only
+        extra += "\n" + pkg.joinpath("esp32.py").read_text()
+        glue += f"merge_esp32(_doc, collect_esp32({list(esp32_read)!r}))\n"
     glue += "print(json.dumps(_doc, indent=1))\n"
     return "RPI_HWID_EMBEDDED = True\n" + probe + extra + glue
 
@@ -83,9 +88,11 @@ def probe_host(
     timeout: int = 180,
     tinytapeout: bool = False,
     take_port: bool = True,
+    esp32: bool = False,
+    esp32_read: Sequence[str] = (),
 ) -> Result:
     """Run the probe on one host; `host` may carry its own ``user@``."""
-    source = probe_source(fpga, jtag, flash, tinytapeout, take_port)
+    source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32, esp32_read)
     args = ["--json"]
     if "@" in host:
         user_list: Sequence[str] = [host.split("@", 1)[0]]
@@ -128,6 +135,8 @@ def collect(
     workers: int = 4,
     tinytapeout: bool = False,
     take_port: bool = True,
+    esp32: bool = False,
+    esp32_read: Sequence[str] = (),
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
@@ -138,13 +147,22 @@ def collect(
     a demo board is running). `take_port` False leaves a service that holds
     a demo board's port running, where the module would otherwise stop it for
     the read -- only fpgas-tt.service, and only on a Raspberry Pi.
+    `esp32` appends the ESP32 module for every host (the USB tree only, from
+    sysfs); `esp32_read` is HOST=PORT pairs, the ports whose chip may be reset
+    and read on that host.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    reads: dict[str, list[str]] = {}
+    for pair in esp32_read:
+        h, _, port = pair.partition("=")
+        reads.setdefault(h, []).append(port)
 
     def one(host: str) -> Result:
         return probe_host(host, users, jump, fpga or host in jtag_hosts,
                           host in jtag_hosts, host in flash_hosts, tinytapeout=tinytapeout,
-                          take_port=take_port)
+                          take_port=take_port, esp32=esp32 or host in reads,
+                          esp32_read=reads.get(host, ()))
 
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
