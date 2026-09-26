@@ -199,6 +199,7 @@ KrakenSDR, and an RTL2832U dongle ships as `00000001`.
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-pluto.png" alt="ADALM-Pluto, keyed on its QSPI flash unique id" width="32%">
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-kraken.png" alt="KrakenSDR: five coherent RX channels and a noise source, no unique id" width="32%">
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-xsdr.png" alt="Wavelet Lab XSDR: 2x2 MIMO, keyed on its configuration flash ESN" width="32%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/sdr-rtlsdr-v3.png" alt="RTL-SDR Blog V3: R820T2 plus the HF direct-sampling path, serial not unique" width="32%">
 </p>
 
 ## Tiny Tapeout boards

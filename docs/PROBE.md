@@ -191,6 +191,19 @@ reads. That gives the tuner librtlsdr found (an R820T2 answers as "Rafael
 Micro R820T") and the EEPROM's fields, which on the fleet's six dongles are
 the generic defaults throughout.
 
+A Blog V3 carries the same generic EEPROM, so it is told by its hardware. Its
+datasheet says the V3 "has direct sampling mode implemented in hardware
+already", with HF diplexed off the SMA into the RTL2832U's Q branch, where
+"on typical R820T RTL-SDR dongles one can enable direct sampling mode by
+soldering a wire to the Q-branch pins". So for a lone R820T dongle the open
+read also takes half a second from each direct-sampling input at 14 MHz,
+through librtlsdr in a process of its own. A Q branch whose signal stands at
+least three times clear of the I branch's ADC noise makes it a V3. On
+rpi-sdr-rtlsdr-v3 the ratio was I 0.46 to Q 2.32, with Q rising with
+frequency (1.14, 1.76, 2.32 at 1, 7.1 and 14 MHz) while I stayed flat. A
+KrakenSDR's channels are never streamed this way: rpi-sdr-kraken negotiates
+only 15 W of USB-PD and browns out under load.
+
 ```
 $ rpi-hwid probe --sdr
   sdr    : krakensdr (five RTL2832U on hub 1-1 (0424:2517), serials 1000-1004)
