@@ -21,13 +21,14 @@ identifier someone might need to type is also a QR code, in a monospace
 face with a slashed zero where one is installed.
 
 Records come straight from ``rpi-hwid collect`` output (or ``probe --json``
-files): one board label per document (a Raspberry Pi or an Orange Pi, the
-same layout with the maker's mark and the model decoding swapped, see
-``rpi_hwid.boards``), one FPGA label per board the probe found, one Tiny
-Tapeout label per demo board, one adapter label per removable USB network
-adapter. Artwork: the package ships the Raspberry Pi raspberry, the Orange
-Pi orange, the Alphamax, Digilent, SQRL, Great Scott Gadgets and Tiny
-Tapeout marks and the public-domain USB trident (see artwork/README.md, each mark
+files): one board label per document (a Raspberry Pi, an Orange Pi or a
+RISC-V board, the same layout with the maker's mark and the model decoding
+swapped, see ``rpi_hwid.boards`` and ``rpi_hwid.riscv``), one FPGA label
+per board the probe found, one Tiny Tapeout label per demo board, one
+adapter label per removable USB network adapter. Artwork: the package ships
+the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax, Digilent,
+SQRL, Great Scott Gadgets, SiFive and Tiny Tapeout marks, the RISC-V logo
+and the public-domain USB trident (see artwork/README.md, each mark
 drawn only on its owner's hardware); ``--artwork DIR`` overrides any of
 them and may add
 ``netv2.svg``, and a label whose mark is missing sets the maker's name in
