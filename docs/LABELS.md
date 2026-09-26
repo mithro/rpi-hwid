@@ -319,6 +319,50 @@ For a label that builds on this one (an ESP32 with a 433 MHz radio, say),
 `esp32_micro.esp32_label(host, device)` returns the plain `MicroLabel` for
 `dataclasses.replace` to add to.
 
+## ESP32 433 MHz radio nodes
+
+An ESP32 wired to a 433 MHz radio board by
+[esp32-to-433mhz](https://github.com/mithro/esp32-to-433mhz), whose radio
+`rpi-hwid esp32 --radio PORT` (or `collect --esp32-radio HOST=PORT`) has read,
+gets the ESP32 label with the radio added (`--only esp32-433`):
+
+- **Header:** an antenna glyph with the band, `433`, after the Wi-Fi and chip
+  glyphs.
+- **Radio line:** under the chip's unique id, the chip maker's mark (TI for the
+  CC1101, Semtech for the SX1278), the board maker's where there is one
+  (Ai-Thinker for the Ra-02), then the chip and the board: `CC1101 ·
+  E07-M1101D`, `CC1101 · D-Sun`, `SX1278 · Ra-02`.
+
+The room is the Bluetooth MAC's row, the one value on the ESP32 label that was
+not read (it is the Wi-Fi MAC plus two). Both rows of the chip's unique id stay.
+
+The board is named by the pins the node's firmware found the chip on at boot,
+because each board puts its signals on different header positions; the maps are
+esp32-to-433mhz's. A radio chip has no serial number; its version register
+(CC1101 `VERSION`, SX1278 `RegVersion`) is a silicon revision, kept in the
+document but not printed. Nor is the carrier: the firmware sees the same pins
+whether the radio sits in the adapter PCB or on jumper wires, and the adapter's
+revision is only in its silkscreen.
+
+Printed with the plain ESP32 kind, a radio node gets this label instead of the
+plain one. A node with no radio fitted (the reference board below) gets the
+plain label only.
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-433-sticker.png" alt="Three micro labels from real reads on rpi5-433mhz: the reference ESP32-C3 with no radio (the plain ESP32 label), the SX1278 node (Semtech and Ai-Thinker marks, SX1278 · Ra-02) and the blue CC1101 node (TI mark, CC1101 · E07-M1101D)" width="98%">
+</p>
+
+These are the three C3 SuperMinis on rpi5-433mhz, read on 2026-09-26
+(`tests/esp32_433_devices.json`); `docs/examples/render_esp32_433.py`
+regenerates the image. What is not read is refused:
+
+- A node whose radio read failed is an error.
+- So is one read without its pins, and one whose chip answered on pins that no
+  known board uses.
+
+Each error names the host and how to read the radio again. Reading it resets the
+node.
+
 ## Artwork
 
 The package ships the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax,

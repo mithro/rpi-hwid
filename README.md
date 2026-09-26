@@ -196,7 +196,8 @@ rpi-hwid probe [--json] [--fpga] [--jtag] [--flash] [--tinytapeout]
                                                       on a Pi: what is this?
 rpi-hwid fpga [--json] [--jtag] [--flash]             on a Pi: which FPGA board?
 rpi-hwid tinytapeout [--json] [--no-repl]             on a Pi: which Tiny Tapeout board?
-rpi-hwid esp32 [--json] [--read PORT…]               on a Pi: which ESP32s are on its USB?
+rpi-hwid esp32 [--json] [--read PORT…] [--radio PORT…]
+                                                      on a Pi: which ESP32s are on its USB?
 rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] HOST…
                                                       over ssh: one JSON per host
 rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
