@@ -260,7 +260,11 @@ def record(host, key, r):
                                  "board/pluto/S23udc both set from the kernel's "
                                  "SPI-NOR-UniqueID"))
     elif key == "krakensdr":
-        shared = "–".join((r.channel_serials[0], r.channel_serials[-1]))
+        if r.tuner:
+            prov.append(("tuner, read", f"read: rtl_eeprom on all five channels: {r.tuner} "
+                                        "(librtlsdr's name for R820T and R820T2 alike: the "
+                                        "two answer the same chip id)"))
+        shared ="–".join((r.channel_serials[0], r.channel_serials[-1]))
         shared_caption = "channel serials  ·  the same on every KrakenSDR: not unique"
     elif key == "rtl-sdr-blog-v3":
         if r.usb_serial in SHARED_SERIALS:
