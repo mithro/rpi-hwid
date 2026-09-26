@@ -231,6 +231,22 @@ License: trademark
  of docs.ai-thinker.com, pixels untouched; see
  src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/athom.png
+Copyright: Athom (AthomTech)
+License: trademark
+ The "athom" wordmark, drawn only on the label of hardware Athom made, to
+ identify it. From the og:image of athom.tech, cropped to the wordmark and
+ with its grey deepened for print (the shapes untouched); see
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/sonoff.png
+Copyright: Shenzhen Sonoff Technologies Co., Ltd.
+License: trademark
+ The SONOFF wordmark, drawn only on the label of hardware Sonoff made, to
+ identify it. From the og:image of sonoff.tech, cropped to the mark with
+ its white ground made transparent (the shapes untouched); see
+ src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.
