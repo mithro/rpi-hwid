@@ -161,6 +161,9 @@ class SdrLabel:
     shared: str | None = None         # a serial every unit carries, printed as such
     shared_caption: str = ""
     provenance: tuple[tuple[str, str], ...] = ()
+    # the configuration flash, as an FPGA label prints it
+    flash: str | None = None           # "Atmel AT25SL321  ·  4 MiB"
+    flash_uid: str | None = None
 
 
 def mhz(hz: int) -> str:
@@ -224,7 +227,7 @@ def record(host, key, r):
     rx, tx, rx_aux = m.rx, m.tx, m.rx_aux
     rx_ch, tx_ch, bits, rate = m.rx_channels, m.tx_channels, m.adc_bits, m.rate
     chip, clock, extra = m.chip, m.clock, m.extra
-    ident = shared = None
+    ident = shared = flash = flash_uid = None
     ident_caption, shared_caption = "serial", ""
     if key == "pluto":
         # the radio's own word, over the datasheet's, wherever it gave one
@@ -258,6 +261,7 @@ def record(host, key, r):
         extra = "  ·  ".join(x for x in (extra, variant) if x)
         ident = r.hw_serial or r.usb_serial
         ident_caption = "serial  (QSPI flash unique id)"
+        flash_uid = r.flash_uid
         prov.append(("identity", "read: USB iSerial and IIO hw_serial, which ADI's "
                                  "board/pluto/S23udc both set from the kernel's "
                                  "SPI-NOR-UniqueID"))
@@ -279,20 +283,14 @@ def record(host, key, r):
         else:
             ident, ident_caption = r.usb_serial, "USB serial  (EEPROM)"
     elif key == "xsdr":
-        ident = r.flash_uid if r.flash_uid_state == "read" else None
-        ident_caption = "flash ESN  (AT25SL321 secured OTP)"
+        # keyed on the flash uid, as an FPGA board with no die id is
+        ident = flash_uid = r.flash_uid if r.flash_uid_state == "read" else None
+        ident_caption = "flash uid"
+        flash = lb.flash_text(lb.flash_from_jedec(r.flash_jedec))
+        if flash:
+            prov.append(("flash", f"read: JEDEC {r.flash_jedec} through usdr's espi core, "
+                                  "decoded by rpi_hwid.labels.flash_from_jedec"))
         if ident:
-            # The label prints the bytes that were programmed; the erased
-            # tail (ff) is the part of the 128-bit field nobody wrote, and
-            # the document keeps all of it.
-            full = ident
-            while ident.lower().endswith("ff") and len(ident) > 2:
-                ident = ident[:-2]
-            if ident != full:
-                prov.append(("identity, erased", f"read: ESN {full}: the {len(ident) * 4} "
-                                                 "bits printed are the programmed ones; "
-                                                 f"the last {(len(full) - len(ident)) * 4} "
-                                                 "read erased (ff)"))
             prov.append(("identity", "read: the configuration flash's secured-OTP ESN, "
                                      f"{r.flash_uid_note}; Renesas DS-AT25SL321-112 Rev. K "
                                      "8.41 and Table 17 (\"128-bit ESN (Electrical Serial "
@@ -306,13 +304,16 @@ def record(host, key, r):
                 prov.append(("FPGA", f"read: the golden image's DEVID {r.fpga_devid}, "
                                      "which usdr_flash checks against the die"))
     facts = ("  ·  ".join(x for x in (rate, f"{bits}-bit") if x), clock or "")
+    if flash:
+        # the flash row takes the second line, so the clock joins the first
+        facts = ("  ·  ".join(x for x in (rate, f"{bits}-bit", clock) if x), "")
     return SdrLabel(
         kind=key, host=host, maker=m.maker, mark=m.mark, title=m.title,
         subtitle="  ·  ".join(x for x in (chip, extra) if x), rx=tuple(rx),
         rx_aux=tuple(rx_aux), tx=tuple(tx), rx_channels=rx_ch, tx_channels=tx_ch,
         facts=facts, coherent=m.coherent, noise_source=m.noise_source, ident=ident,
         ident_caption=ident_caption, shared=shared, shared_caption=shared_caption,
-        provenance=tuple(prov))
+        provenance=tuple(prov), flash=flash, flash_uid=flash_uid)
 
 
 def unreadable(r: SdrLabel) -> str | None:
@@ -565,8 +566,14 @@ def draw_sdr(lab, r):
     fx = pad + used + 2 * lb.mm
     fw = lb.LABEL_W - pad - fx
     lab.fit(fx, y + 0.2 * lb.mm, r.facts[0], lb.SANS_BOLD, 7, fw, min_size=5)
-    lab.fit(fx, y + 0.2 * lb.mm + 7 * 0.72 + 1.0 * lb.mm, r.facts[1], lb.SANS, 6.5, fw,
-            min_size=5)
+    y2 = y + 0.2 * lb.mm + 7 * 0.72 + 1.0 * lb.mm
+    if r.flash:
+        # the FPGA label's flash row: the part and its size set flush right,
+        # the grey caption after them
+        cap_x = lb.LABEL_W - pad - lab.width("flash", lb.SANS, lb.CAPTION)
+        lab.captioned_after(fx, cap_x, y2, "flash", r.flash, lb.SANS, 6.5, min_size=5)
+    else:
+        lab.fit(fx, y2, r.facts[1], lb.SANS, 6.5, fw, min_size=5)
 
     # the foot: the identifier, or the shared serial and why it identifies nothing
     size = 8

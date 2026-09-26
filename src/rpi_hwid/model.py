@@ -174,9 +174,14 @@ class SdrDevice:
     usdr_error: str | None = None          # why the card could not be read: not answering
     fpga_devid: str | None = None          # the IDCODE its golden image was built for
     flash_jedec: str | None = None         # its configuration flash
+    # The configuration flash, in FpgaBoard's own fields and meanings, so a
+    # radio's flash reads the same as an FPGA board's wherever it is used.
     flash_uid: str | None = None           # that flash's factory serial, where it has one
-    flash_uid_state: str | None = None     # read | none
+    flash_uid_bits: int | None = None
+    flash_uid_state: str | None = None     # read | blank | none
     flash_uid_note: str | None = None      # why, where the chip itself says so
+    flash_error: str | None = None         # what stopped a read that was tried
+    flash_source: str | None = None        # usdr-espi | pluto-firmware
     tuner: str | None = None               # an RTL2832U's tuner, as librtlsdr names it
     rtl_model: str | None = None           # which RTL2832U dongle, where evidence says
 
