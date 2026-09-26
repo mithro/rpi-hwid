@@ -7,9 +7,11 @@ and its E3825 is the MAX's part; the Turbot's is the E3826)."""
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
-from rpi_hwid import probe
+from rpi_hwid import boards, labels, probe, x86
 
 
 def _w(root, rel, content):
@@ -245,3 +247,110 @@ def test_the_document_loads_into_the_model(turbot):
     assert s.dmi is not None
     assert s.dmi["board_name"] == "MinnowBoard Turbot"
     assert s.to_dict()["dmi"]["board_serial"] == "0008A209EFED"
+
+
+# --- the label ------------------------------------------------------------------
+
+def test_a_turbot_is_named_from_its_dmi(docs):
+    ident = boards.identify(docs["minnow-turbot-2"].summary)
+    assert ident is not None
+    assert ident.kind == "x86"
+    assert ident.title == "MinnowBoard Turbot"
+    assert ident.subtitle == "2 GB  ·  Intel Atom E3826  ·  rev D0"
+    assert ident.mark == "minnowboard.svg"
+    assert (ident.maker, ident.maker_mark) == ("ADI Engineering", "adi-engineering.png")
+    # one Gigabit port and no radio: Silicom's Turbot datasheet, and the
+    # MAX's page on minnowboard.org
+    assert (ident.wired, ident.radio) == (True, False)
+
+
+def test_a_max_carries_circuitcos_mark(docs):
+    ident = boards.identify(docs["minnow-turbot-1"].summary)
+    assert ident is not None
+    assert ident.title == "MinnowBoard MAX"
+    assert ident.subtitle == "2 GB  ·  Intel Atom E3825  ·  rev B3"
+    assert (ident.maker, ident.maker_mark) == ("CircuitCo", "circuitco.png")
+
+
+def test_another_pc_degrades_to_its_own_words(docs):
+    """A board this package has no table entry for is still labelled, from
+    what its firmware says, with no mark and no claim about its radio."""
+    s = docs["minnow-turbot-2"].summary
+    dmi = dict(s.dmi, board_vendor="Supermicro", board_name="X11SSH-F",
+               sys_vendor="Supermicro", product_version="0123456789")
+    ident = boards.identify(replace(s, dmi=dmi,
+                                    cpu="Intel(R) Xeon(R) CPU E3-1230 v6 @ 3.50GHz"))
+    assert ident is not None
+    assert ident.title == "X11SSH-F"
+    assert ident.subtitle == "2 GB  ·  Intel Xeon E3-1230 v6"
+    assert ident.mark == ""
+    assert (ident.maker, ident.maker_mark) == ("Supermicro", None)
+    assert (ident.wired, ident.radio) == (None, None)
+
+
+@pytest.mark.parametrize(("raw", "short"), [
+    ("Intel(R) Atom(TM) CPU  E3826  @ 1.46GHz", "Intel Atom E3826"),
+    ("Intel(R) Core(TM) i5-8250U CPU @ 1.60GHz", "Intel Core i5-8250U"),
+    ("AMD Ryzen 7 5800X 8-Core Processor", "AMD Ryzen 7 5800X 8-Core"),
+    (None, None),
+])
+def test_cpu_names_lose_their_marks_and_clock(raw, short):
+    assert x86.cpu_short(raw) == short
+
+
+def test_board_record_for_a_turbot(docs):
+    b = labels.board_record(docs["minnow-turbot-2"])
+    assert b.kind == "x86"
+    assert b.serial == "0008A209EFED"
+    assert b.macs == (("eth", "00:08:a2:09:ef:ed"),)
+    assert b.wlan_note == "no radio"
+    assert b.maker == "ADI Engineering"
+    assert b.maker_mark == "adi-engineering.png"
+
+
+def test_x86_labels_come_out_with_the_rest(docs):
+    rows = [(h, k, t) for h, k, t, _d, _r in labels.all_labels(docs, {"x86"})]
+    assert rows == [("minnow-turbot-1", "x86", "MinnowBoard MAX 2 GB 001320FE4164"),
+                    ("minnow-turbot-2", "x86", "MinnowBoard Turbot 2 GB 0008A209EFED")]
+    assert "x86" in labels.KINDS
+
+
+def test_a_serial_that_was_not_read_is_fatal(docs):
+    doc = docs["minnow-turbot-2"]
+    dmi = dict(doc.summary.dmi, board_serial=None, product_serial=None,
+               unread=["product_serial", "board_serial"])
+    doc.summary = replace(doc.summary, serial="", dmi=dmi)
+    with pytest.raises(labels.IdentifierNotReadError) as excinfo:
+        list(labels.all_labels({"minnow-turbot-2": doc}, {"x86"}))
+    msg = str(excinfo.value)
+    assert msg.startswith("minnow-turbot-2:")
+    assert "sudo cat /sys/class/dmi/id/board_serial" in msg
+
+
+def test_a_pc_whose_firmware_has_no_serial_still_gets_a_label(docs, tmp_path):
+    """No serial in the firmware is a fact about the board, not a failed
+    read: the MAC still identifies it, and the spine says there is none."""
+    doc = docs["minnow-turbot-2"]
+    dmi = dict(doc.summary.dmi, board_serial="To be filled by O.E.M.",
+               product_serial="To be filled by O.E.M.")
+    doc.summary = replace(doc.summary, serial="", dmi=dmi)
+    (row,) = labels.all_labels({"h": doc}, {"x86"})
+    assert row[4].serial == ""
+    n, _sheets = labels.render({"h": doc}, tmp_path / "x.pdf", only=("x86",))
+    assert n == 1
+
+
+def test_the_label_draws_every_mark_it_names(docs, tmp_path, monkeypatch):
+    """The fish in the header box and the maker's mark in the band, each
+    from the package's own artwork."""
+    drawn = []
+    real = labels.mark_in_box
+
+    def spy(lab, path, *a, **k):
+        drawn.append(path.rsplit("/", 1)[1])
+        return real(lab, path, *a, **k)
+    monkeypatch.setattr(labels, "mark_in_box", spy)
+    labels.render({"t": docs["minnow-turbot-2"], "m": docs["minnow-turbot-1"]},
+                  tmp_path / "x.pdf", only=("x86",))
+    assert drawn == ["minnowboard.svg", "circuitco.png", "minnowboard.svg",
+                     "adi-engineering.png"]
