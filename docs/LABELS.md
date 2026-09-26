@@ -230,6 +230,55 @@ place of the RJ45, so the two kinds are told apart across the room as well.
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/usb-linksys.png" alt="Linksys USB3GIGV1 USB 3.0 gigabit adapter" width="32%">
 </p>
 
+## Micro labels, four to a sticker
+
+A module the size of a thumbnail or a mains plug has no room for a whole
+63.5 × 38.1 mm sticker, so `rpi_hwid.micro` lays out a label a quarter that
+size: 31.75 × 19.05 mm, two across and two down. It prints on the same L7160
+stock and in the same grid, with a dotted guide between the four to cut
+along. The synthetic records in `docs/examples/render_micro.py` fill every
+slot once:
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/micro-4up.png" alt="One sticker cut into four micro labels, synthetic data: a Wi-Fi module with a chip glyph, a USB bridge, a 433 MHz radio node with an extra section, a wired device whose QR opens a page" width="98%">
+</p>
+
+It is the board label's layout, shrunk. The maker's mark and a bold title
+run across the top, with glyphs at the right: the Wi-Fi arcs, the USB trident
+and the RJ45 jack are the whole labels' own, and a chip package lettered with
+its die and an antenna naming its band are drawn for the micro layout. The
+primary identifier is a QR on the left and, again, the largest thing on the
+label, in monospace along the whole foot. Beside the QR are a subtitle and up
+to three captioned rows, and under the rows is room for a section the caller
+draws itself.
+
+The same rules apply as on every other label. A micro label with no
+identifier raises when it is constructed, naming the host (and the command
+that reads it, when the caller says). A row with no value is refused rather
+than printed blank. A monospace row is taken to be an identifier someone
+might type, so it is never elided: a value that will not fit whole at 4 pt
+is an error, not an ellipsis. Too many rows is an error too, not a silent
+drop.
+
+The layout knows nothing about any particular device. A device module adds
+itself by being named `rpi_hwid/<something>_micro.py` and defining a `KIND`
+and `micro_labels(docs)`, which returns `MicroLabel`s from the collected
+documents. `rpi-hwid labels` then prints them, four to a sticker, after
+every whole label, and `--only KIND` selects them. `render_micro` writes a
+sheet of nothing but micro labels, and `pack` and `draw_quad` do the same job
+in pieces.
+
+```python
+from rpi_hwid.micro import Icon, MicroLabel, MicroRow, render_micro
+
+render_micro([MicroLabel(
+    host="bench-1", title="Wi-Fi module", subtitle="rev 1.0  ·  4 MiB flash",
+    mark=None, icons=(Icon("wifi"), Icon("chip", "C3")),
+    ident_caption="Wi-Fi MAC", ident="02:00:5e:10:00:01",
+    rows=(MicroRow("BT", "02:00:5e:10:00:03", mono=True),),
+)], "micro.pdf", outline=True)
+```
+
 ## Artwork
 
 The package ships the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax,

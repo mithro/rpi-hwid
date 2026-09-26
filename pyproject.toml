@@ -102,6 +102,12 @@ ignore_errors = true
 module = ["rpi_hwid.probe", "rpi_hwid.fpga", "rpi_hwid.tinytapeout", "rpi_hwid.labels"]
 ignore_errors = true
 
+# The micro-label layout draws with rpi_hwid.labels' helpers, which are untyped.
+[[tool.mypy.overrides]]
+module = "rpi_hwid.micro"
+disallow_untyped_calls = false
+warn_return_any = false
+
 [[tool.mypy.overrides]]
 module = "rpi_hwid.cli"
 disallow_untyped_calls = false
