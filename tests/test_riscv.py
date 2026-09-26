@@ -16,7 +16,8 @@ import zlib
 
 import pytest
 
-from rpi_hwid import probe
+from rpi_hwid import boards, labels, probe, riscv
+from rpi_hwid.model import ProbeDocument
 
 
 def sifive_eeprom_bytes(serial, mac, test_status=1, pcb=3, bom="B", variant=0, pad=256):
@@ -249,5 +250,64 @@ def test_an_arm_board_has_no_riscv_record(tmp_path, monkeypatch):
     d = probe.collect()
     assert d["board"] == "opi"
     assert d["riscv"] is None
-    assert "riscv" not in probe.verdict(d)["summary"] or \
-        probe.verdict(d)["summary"]["riscv"] is None
+    assert probe.verdict(d)["summary"]["riscv"] is None
+
+
+# --- the label's side ---------------------------------------------------------
+
+def _doc(host, raw):
+    return ProbeDocument.from_dict(host, raw)
+
+
+def test_identify_the_unmatched(docs):
+    s = docs["hifive-unmatched-1"].summary
+    assert boards.board_kind(s) == "riscv"
+    ident = boards.identify(s)
+    assert ident.kind == "riscv"
+    assert ident.title == "HiFive Unmatched A00"
+    assert ident.short == "HiFive Unmatched"
+    assert ident.subtitle == "16 GB  ·  FU740  ·  dt hifive-unmatched-a00"
+    assert ident.mark == "sifive.svg"
+    assert ident.wired is True
+    assert ident.radio is False
+
+
+def test_board_record_carries_the_riscv_band(docs):
+    b = labels.board_record(docs["hifive-unmatched-1"])
+    assert b.kind == "riscv"
+    assert b.serial == "SF105SZ212200391"
+    assert b.macs == (("eth", "70:b3:d5:92:f8:de"),)
+    assert b.wlan_note == "no radio"
+    assert b.isa == "rv64imafdc_zicntr_zicsr_zifencei_zihpm"
+    assert b.riscv_line == "4 harts  ·  sv39  ·  PCB rev 3  ·  BOM B0"
+
+
+def test_an_unread_serial_refuses_the_label_naming_host_and_command(docs):
+    raw = docs["hifive-unmatched-1"].evidence
+    raw["verdict"]["summary"]["serial"] = None
+    raw["verdict"]["summary"]["riscv"]["eeprom"] = None
+    raw["verdict"]["summary"]["riscv"]["eeprom_error"] = (
+        "could not read /sys/bus/nvmem/devices/0-00540/nvmem, even through sudo -n: "
+        "run `sudo od -A x -t x1z /sys/bus/nvmem/devices/0-00540/nvmem` on the host")
+    doc = _doc("hifive-unmatched-1", raw)
+    with pytest.raises(labels.IdentifierNotReadError) as exc:
+        labels.board_record(doc)
+    msg = str(exc.value)
+    assert msg.startswith("hifive-unmatched-1:")
+    assert "sudo od -A x -t x1z /sys/bus/nvmem/devices/0-00540/nvmem" in msg
+
+
+def test_the_eeprom_and_the_device_tree_must_agree(docs):
+    """Two readings of one serial that differ is not something to pick
+    between on a sticker."""
+    raw = docs["hifive-unmatched-1"].evidence
+    raw["verdict"]["summary"]["serial"] = "SF105SZ212200532"
+    with pytest.raises(ValueError, match="SF105SZ212200391"):
+        labels.board_record(_doc("hifive-unmatched-1", raw))
+
+
+def test_soc_name():
+    assert riscv.soc_name(["sifive,hifive-unmatched-a00", "sifive,fu740-c000",
+                           "sifive,fu740"]) == "FU740"
+    assert riscv.soc_name(["starfive,visionfive-2-v1.3b", "starfive,jh7110"]) == "jh7110"
+    assert riscv.soc_name([]) is None
