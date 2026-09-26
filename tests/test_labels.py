@@ -708,6 +708,7 @@ def test_all_labels_order_and_count(docs):
     # Host by host in sorted order, and within a host the board first, then
     # what is attached to it: FPGA, Tiny Tapeout, then the USB adapters.
     assert rows == [
+        ("minnow-turbot-1", "x86"), ("minnow-turbot-2", "x86"),
         ("pi-sw1-p10", "rpi"),
         ("pi-sw2-p22", "opi"),
         ("pi-sw2-p33", "rpi"), ("pi-sw2-p33", "tt"),
@@ -866,6 +867,8 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "7070c78090a6d6d8", "00000000110aeed6", "0000000067bdbf54",
         # pi-sw2-p48, the live Acorn CLE-215+ read 2026-09-21
         "0cd35697db04a4ab", "88:a2:9e:45:85:77", "0x0054b48664b04854",
+        # the MinnowBoards: DMI serial, which is their MAC, and the MAC
+        "001320FE4164", "00:13:20:fe:41:64", "0008A209EFED", "00:08:a2:09:ef:ed",
     }
     # b8:27:eb:5f:bb:83 is deliberately absent: it is what the Broadcom rule
     # derives from the Model B's serial, and that board has no radio to

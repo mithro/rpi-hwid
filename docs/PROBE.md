@@ -101,6 +101,39 @@ and the Armbian release, where the board has one, is recorded as evidence
 only: the fleet's Orange Pi netboots the pool's Raspbian armhf root and so
 carries none.
 
+## x86 boards
+
+A PC has no device tree, so where there is none the probe reads the firmware's
+DMI/SMBIOS strings from `/sys/class/dmi/id` instead, and the board is `x86`. The
+serials and the product UUID there are root-only: a plain read is tried first,
+then `sudo -n cat`, and a field neither could read is listed in `dmi.unread`
+rather than passed off as absent. The model is the DMI board vendor and name; the
+serial the first of the board, product and chassis serials that is not a firmware
+placeholder (`To be filled by O.E.M.`, `Default string` and the like). The CPU's
+model name comes from cpuinfo, and every disk's serial is recorded — a SATA
+disk's from VPD page 0x80, an NVMe drive's from its controller, an SD card's or
+eMMC's from its CID register.
+
+```
+$ ssh tim@minnow-turbot-2 'python3 -' < src/rpi_hwid/probe.py
+ADI MinnowBoard Turbot  serial 0008A209EFED
+  header  : no HAT header on this board
+  evidence: DMI: board ADI MinnowBoard Turbot REV A, system ADI Minnowboard Turbot D0 PLATFORM D0, BIOS MNW2MAX1.X64.0094.R01.1612052239 12/05/2016; 2 GB (MemTotal 1920488 kB)
+  evidence: DMI serials: board 0008A209EFED, product 0008A209EFED, chassis ; product uuid 00000000-6462-4524-006a-9b7737e315cf
+  evidence: CPU: Intel(R) Atom(TM) CPU  E3826  @ 1.46GHz, 2 threads
+  evidence: storage sda StorFly VSF302XC serial 54812-4198
+  power   : no power sensing on this board: nothing on it reports its supply
+  onboard : eth    00:08:a2:09:ef:ed  r8169 (serial-mac)
+```
+
+That is the fleet's MinnowBoard Turbot on 2026-09-26. Its neighbour
+minnow-turbot-1 is, whatever its name, a CircuitCo MinnowBoard MAX (`Circuitco
+MinnowBoard MAX`, an Atom E3825 where the Turbot has an E3826). On both, the DMI
+serial is the Ethernet MAC without its colons, so a wired port on the PCI bus
+whose MAC it is gets the signal `serial-mac`; one the serial does not name is
+still taken as the board's own, on the bus alone (`pci`). Both boards report the
+same product UUID, which is therefore recorded but never used as an identity.
+
 ## FPGA boards
 
 `rpi_hwid.fpga` is kept apart from the Pi probe because few people have an FPGA

@@ -65,7 +65,7 @@ $ rpi-hwid labels --data data/ --out labels.pdf
 
 `--outline` draws the die-cut edges for an alignment print on plain paper;
 `--start N` skips N positions on the first sheet so a partly used sheet can be
-finished; `--only rpi|opi|fpga|tt|usb` limits the kinds, and takes a single FPGA
+finished; `--only rpi|opi|x86|fpga|tt|usb` limits the kinds, and takes a single FPGA
 board kind (`netv2`, `arty`, `acorn`, `pcileech`, `cynthion`) where one host
 carries more than one board; `--list` prints what
 would be generated and where.
@@ -127,6 +127,37 @@ up the spine as on a Pi.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/orange-pi-pc.png" alt="Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio" width="49%">
+</p>
+
+## x86 boards
+
+The same layout again, for a PC that describes itself through DMI/SMBIOS rather
+than a device tree — the fleet's two MinnowBoards. The board's project mark (the
+MinnowBoard fish) takes the raspberry's box; the title is the DMI board name and
+the subtitle the fitted RAM, the CPU and the platform revision the firmware
+reports (`rev D0` on a Turbot, `rev B3` on a MAX). A PC has no HAT header, so
+that band carries the board's maker instead, mark and name: ADI Engineering for
+the Turbot, CircuitCo for the MAX, from the DMI vendor string. The serial up the
+spine is the firmware's DMI serial, which on both MinnowBoards is the Ethernet
+MAC without its colons; the wlan row says `no radio`, since neither board has
+one.
+
+The BIOS version, the product UUID and the disks' serials are in the document
+but not on the label: a firmware update changes the first, the second is the
+same `00000000-6462-4524-006a-9b7737e315cf` on both boards (a firmware constant),
+and the disk is an mSATA or SATA drive that can be swapped. A board the tables in
+`rpi_hwid.x86` do not know is still labelled, in its firmware's own words, with
+an empty mark box and `none found` where no radio or wired port was seen.
+
+The DMI serials are root-only. The probe reads them through `sudo -n cat`, and a
+serial that neither could read is fatal at label time, naming the host and the
+command that reads it — the same rule as an FPGA's Device DNA. A firmware that
+simply has no serial (`To be filled by O.E.M.`) still gets a label, with the
+spine saying so; the MAC identifies the board.
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/minnowboard-turbot.png" alt="ADI Engineering MinnowBoard Turbot; the DMI serial is its eth MAC, no radio" width="49%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/minnowboard-max.png" alt="CircuitCo MinnowBoard MAX; the DMI serial is its eth MAC, no radio" width="49%">
 </p>
 
 ## FPGA boards
