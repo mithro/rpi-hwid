@@ -391,6 +391,31 @@ COMPUTE_MODULE_1 = _doc(
 )
 
 
+def _unmatched(serial, mac, crc):
+    """A SiFive HiFive Unmatched A00, the fleet's RISC-V boards. The EEPROM
+    fields are the ones U-Boot printed at boot on 2026-07-04, and the CRC it
+    printed beside them is reproduced by those fields (tests/test_riscv.py)."""
+    eeprom = {"format": 1, "product_id": "0x0002", "product": "HiFive Unmatched",
+              "pcb_revision": 3, "bom_revision": "B", "bom_variant": 0, "serial": serial,
+              "manuf_test_status": "pass", "mac": mac, "crc": crc, "crc_ok": True}
+    rv = {"harts": 4, "isa": "rv64imafdc_zicntr_zicsr_zifencei_zihpm", "mmu": "sv39",
+          "uarch": "sifive,bullet0", "mvendorid": "0x489", "marchid": "0x8000000000000007",
+          "mimpid": "0x20181004", "eeprom": eeprom, "eeprom_error": None}
+    doc = _doc("SiFive HiFive Unmatched A00", serial, None, [], "undetermined", [],
+               [{"kind": "eth", "mac": mac, "signal": "driver"}], [], None, None, None,
+               compatible="sifive,hifive-unmatched-a00 sifive,fu740-c000 sifive,fu740",
+               memory="16 GB")
+    doc["board"] = "riscv"
+    doc["interfaces"][0].update(name="end0", driver="macb")
+    doc["verdict"]["header"] = ["no HAT header on this board"]
+    doc["verdict"]["summary"]["riscv"] = rv
+    return doc
+
+
+UNMATCHED_1 = _unmatched("SF105SZ212200391", "70:b3:d5:92:f8:de", "0x9709e522")
+UNMATCHED_2 = _unmatched("SF105SZ212200532", "70:b3:d5:92:f8:83", "0x946c3551")
+
+
 RAW = {
     "rpi5-netv2": PI5_NETV2,
     "rpib-serial": MODEL_B,
@@ -405,6 +430,8 @@ RAW = {
     "pi-sw2-p33": TT_FPGA_HOST,
     "pi-sw2-p37": LINKSYS_HOST,
     "rpi5-433mhz": WIFI_HOST,
+    "hifive-unmatched-1": UNMATCHED_1,
+    "hifive-unmatched-2": UNMATCHED_2,
 }
 
 

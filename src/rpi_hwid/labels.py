@@ -53,7 +53,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-from rpi_hwid import boards, tt_boards
+from rpi_hwid import boards, riscv, tt_boards
 from rpi_hwid import names as naming
 from rpi_hwid import tinytapeout as tt_data
 from rpi_hwid.collect import load_collected
@@ -717,6 +717,11 @@ def draw_board(lab, b):
     # the same way it reads a Pi's, so the two labels say the same thing.
     y = PAD + max(logo_h, title_h) + 0.8 * mm
     band_top = y
+    if b.kind == "riscv":
+        # No HAT header: the band carries what makes the board RISC-V, the
+        # RISC-V mark in the left column and the ISA beside it, then the
+        # harts and the board's PCB and BOM revisions.
+        return draw_riscv_band(lab, b, x, tx, y, qr, col_w, hat_rows, qr_gap)
     if b.header:
         lab.captioned(x, tx, y, "HAT", "; ".join(b.header), SANS, 7, col_w)
     else:
@@ -726,8 +731,25 @@ def draw_board(lab, b):
         uuid_y = y + (3.4 * mm - 6.5 * 0.72) / 2
         lab.captioned(x, tx, uuid_y, "uuid", b.hat_uuid, MONO_REGULAR, 6.5, col_w,
                       min_size=5)
-    y = band_top + hat_rows
+    draw_board_macs(lab, b, x, tx, band_top + hat_rows, qr, col_w, qr_gap)
 
+
+def draw_riscv_band(lab, b, x, tx, y, qr, col_w, hat_rows, qr_gap):
+    """A RISC-V board's band, where a Pi's HAT rows are: the RISC-V
+    International mark fitted into the left column, the ISA string and the
+    harts line on the right; then the MAC rows as on any board."""
+    path = artwork(riscv.RISCV_MARK)
+    if path:
+        mark_in_box(lab, path, x, y, qr, hat_rows - 0.6 * mm)
+    lab.captioned(x, tx, y, "" if path else "ISA", b.isa or "",
+                  MONO_REGULAR, 6.5, col_w, min_size=4.5)
+    if b.riscv_line:
+        lab.fit(tx, y + 3.4 * mm, b.riscv_line, SANS, 6.5, col_w)
+    draw_board_macs(lab, b, x, tx, y + hat_rows, qr, col_w, qr_gap)
+
+
+def draw_board_macs(lab, b, x, tx, y, qr, col_w, qr_gap):
+    """A board label's two MAC rows from `y` down: eth then wlan."""
     # MAC bands: eth then wlan, always both, fixed height
     macs = dict(b.macs)
     if "eth" not in macs:
@@ -1292,7 +1314,7 @@ class BoardLabel:
     """What a board label prints, from one document: the header from
     ``rpi_hwid.boards``, the identifiers from the summary."""
 
-    kind: str                        # rpi | opi
+    kind: str                        # rpi | opi | riscv
     short: str                       # "Pi 5", "Orange Pi PC"
     title: str
     subtitle: str
@@ -1309,6 +1331,10 @@ class BoardLabel:
     # that cannot answer is never drawn as one that answered "no".
     fan: bool | None = None
     rtc_battery: bool | None = None
+    # RISC-V only: the ISA string and the line under it (harts, MMU, the
+    # board's PCB and BOM revisions), drawn where a Pi's HAT rows are.
+    isa: str | None = None
+    riscv_line: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1387,6 +1413,24 @@ def board_record(doc):
     if ident is None:                 # not a board this package labels
         return None
     macs = [(m.kind, m.mac) for m in s.macs if m.kind in ("eth", "wlan")]
+    rv = None
+    if ident.kind == "riscv":
+        problem = riscv.serial_problem(doc.host, s)
+        if problem and problem[0] == "unread":
+            raise IdentifierNotReadError(problem[1])
+        if problem:
+            raise ValueError(problem[1])
+        # The board EEPROM's MAC is the board's own, set by its maker; the
+        # port must be wearing it, and where the port was not seen it is
+        # still the board's.
+        own = riscv.eeprom_mac(s)
+        eth = [mac for kind, mac in macs if kind == "eth"]
+        if own and eth and own not in eth:
+            raise ValueError("%s: the board EEPROM gives MAC %s and the wired port "
+                             "wears %s" % (doc.host, own, ", ".join(eth)))
+        if own and not eth:
+            macs.append(("eth", own))
+        rv = riscv.identify(s)
     wlan_note = None
     if not any(k == "wlan" for k, _ in macs):
         # Whether a radio exists is asked before its MAC is worked out: the
@@ -1409,6 +1453,7 @@ def board_record(doc):
         eth_note="no wired port" if ident.wired is False else None,
         wlan_note=wlan_note,
         fan=s.fan, rtc_battery=s.rtc_battery,
+        isa=rv.isa if rv else None, riscv_line=rv.line if rv else None,
     )
 
 
@@ -1562,7 +1607,7 @@ def usb_records(docs):
 
 # --- assembly -----------------------------------------------------------------
 
-KINDS = ("fpga", "tt", "rpi", "opi", "usb")
+KINDS = ("fpga", "tt", "rpi", "opi", "riscv", "usb")
 # A host can carry more than one FPGA board -- rpi5-netv2 has a NeTV2 and a
 # Cynthion -- so "fpga" is not fine enough to print one sticker. Naming a kind
 # selects that board alone; "fpga" still means all of them.
@@ -1633,7 +1678,7 @@ def all_labels(docs, only, pinned_names=None, order=None):
 
     rank = {host: i for i, host in enumerate(order or ())}
     for host in sorted(sorted(docs), key=lambda h: rank.get(h, len(rank))):
-        if only & {"rpi", "opi"}:
+        if only & {"rpi", "opi", "riscv"}:
             # A board that cannot be named is one label lost, not the sheet:
             # every board is asked for at once, so an unreadable revision
             # code used to take the whole print run with it. What is attached
@@ -1691,7 +1736,7 @@ def main(argv=None):
     ap.add_argument("--data", required=True, type=Path, help="directory of probe JSON documents")
     ap.add_argument("--out", default="hardware-labels.pdf", type=Path)
     ap.add_argument("--only", action="append", choices=list(ONLY_CHOICES),
-                    metavar="KIND", help="rpi|opi|fpga|tt|usb, or one FPGA board kind "
+                    metavar="KIND", help="rpi|opi|riscv|fpga|tt|usb, or one FPGA board kind "
                                          "(%s)" % "|".join(FPGA_KINDS))
     ap.add_argument("--start", type=int, default=0,
                     help="leave the first N positions of the first sheet blank")

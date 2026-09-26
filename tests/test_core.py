@@ -1516,7 +1516,8 @@ def test_load_collected(data_dir):
     assert set(docs) == {"rpi5-netv2", "pi-sw1-p10", "pi3", "rpiz-serial",
                          "pi-sw2-p47", "pi-sw2-p48",
                          "pi-sw2-p22", "rpi4-tt", "pi-sw2-p33", "pi-sw2-p37", "rpi5-433mhz",
-                         "rpib-serial", "rpicm1-serial"}
+                         "rpib-serial", "rpicm1-serial",
+                         "hifive-unmatched-1", "hifive-unmatched-2"}
     assert docs["pi-sw2-p22"].summary.compatible == "xunlong,orangepi-pc allwinner,sun8i-h3"
     assert docs["pi-sw2-p22"].summary.memory == "1 GB"
     assert docs["pi-sw2-p22"].summary.revision == ""
