@@ -67,15 +67,39 @@ def test_the_bring_up_line_names_the_chip_and_its_pins():
     }]
 
 
+# /dev/radio-sx1278-ra02's bring-up, 2026-09-26: the second line names the
+# chip too, but it is the driver's configuration, not the chip answering.
+SX_BOOT = (
+    "00:00:00.079 Project cc1101-node - esp32-433mhz-sx1278 Version "
+    "15.5.0(cc1101-node)-3.3.8(2026-09-09T01:38:31)\r\n"
+    "00:00:00.138 CC1: SX1278 present, RegVersion 0x12, SCK=3 MISO=7 MOSI=4 NSS=1 RST=10 "
+    "DIO0=6\r\n"
+    "00:00:00.139 CC1: SX1278 FSK weather RX: 433.92 MHz 17.241 kbps sync 0x2DD4, fixed len "
+    "30\r\n"
+)
+SX_ANSWERS = (
+    '09:21:17.122 MQT: stat/esp32-433mhz-sx1278/RESULT = {"Radio":{"Config":"sx1278",'
+    '"Active":"sx1278"}}\r\n'
+    '09:21:17.222 MQT: stat/esp32-433mhz-sx1278/RESULT = {"CcStatus":{"Present":0,'
+    '"PARTNUM":"0x00","VERSION":"0x00","MARCSTATE":"0x00","Mode":"weather"}}\r\n'
+    '09:21:17.322 MQT: stat/esp32-433mhz-sx1278/RESULT = {"SxStatus":{"Present":1,'
+    '"VERSION":"0x12","Active":1,"Mode":"weather","WeatherRx":1}}\r\n'
+)
+
+
 def test_an_sx1278_bring_up_line():
-    # the firmware's own format string, xdrv_95_cc1101.ino
-    got = esp32_radio.parse_bringup(
-        "00:00:00.170 CC1: SX1278 present, RegVersion 0x12, SCK=3 MISO=7 MOSI=4 NSS=1 RST=10 "
-        "DIO0=6\r\n")
-    assert got[0]["chip"] == "SX1278"
-    assert got[0]["present"] is True
-    assert got[0]["version"] == "0x12"
-    assert got[0]["pins"] == {"SCK": 3, "MISO": 7, "MOSI": 4, "NSS": 1, "RST": 10, "DIO0": 6}
+    (got,) = esp32_radio.parse_bringup(SX_BOOT)
+    assert got["chip"] == "SX1278"
+    assert got["present"] is True
+    assert got["version"] == "0x12"
+    assert got["pins"] == {"SCK": 3, "MISO": 7, "MOSI": 4, "NSS": 1, "RST": 10, "DIO0": 6}
+
+
+def test_the_sx1278_found_keeps_its_pins():
+    got = esp32_radio.summarise(SX_BOOT, SX_ANSWERS)
+    assert (got["chip"], got["present"], got["version"], got["partnum"]) == (
+        "SX1278", True, "0x12", None)
+    assert got["pins"]["NSS"] == 1
 
 
 def test_a_board_with_no_radio_says_so():
