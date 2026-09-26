@@ -276,6 +276,30 @@ def test_collect_hands_each_host_its_own_radio_ports(monkeypatch, tmp_path):
                     "b": (True, (), ("/dev/ttyACM2",))}
 
 
+def test_the_esp32_command_reads_the_radios_it_is_told(monkeypatch, capsys):
+    from rpi_hwid import esp32
+    from rpi_hwid.cli import main as cli_main
+
+    monkeypatch.setattr(esp32, "collect_esp32", lambda ports=(): {
+        "usb": [], "reads": [], "candidates": [],
+        "devices": [{"tty": "/dev/ttyACM3", "mac": "e8:3d:c1:8c:3e:b8", "transport": "x",
+                     "chip_description": None, "read_error": None}]})
+    asked = []
+
+    def fake(ports):
+        asked.extend(ports)
+        return [{"port": ports[0], "tty": "/dev/ttyACM3", "error": None, "boot": "",
+                 "answers": "", "radio": esp32_radio.summarise(BLUE_BOOT, BLUE_ANSWERS)}]
+
+    monkeypatch.setattr(esp32_radio, "collect_radios", fake)
+    assert cli_main(["esp32", "--radio", "/dev/radio-cc1101-blue"]) == 0
+    assert asked == ["/dev/radio-cc1101-blue"]
+    assert "CC1101 version 0x14 partnum 0x00" in capsys.readouterr().out
+    assert cli_main(["esp32", "--json", "--radio", "/dev/radio-cc1101-blue"]) == 0
+    got = json.loads(capsys.readouterr().out)
+    assert got["devices"][0]["radio"]["chip"] == "CC1101"
+
+
 def test_a_radio_read_for_a_host_not_being_collected_is_an_error(tmp_path):
     from rpi_hwid import collect
 
