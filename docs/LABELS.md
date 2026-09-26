@@ -137,8 +137,13 @@ Unmatched — and the title and subtitle come from the device tree as on an
 Orange Pi: the model without the maker's name, then fitted RAM, SoC and the
 device-tree id. The Unmatched has no HAT header, so its band carries what
 makes it a RISC-V board instead: the RISC-V logo in the left column, the ISA
-string the kernel reports beside it, and under that the harts, the MMU mode
-and the board's PCB and BOM revisions from its EEPROM.
+beside it, and under that the harts, the MMU mode
+and the board's PCB and BOM revisions from its EEPROM. The ISA is the one the
+kernel reports, in the ISA manual's short form: the kernel spells out every
+extension, implied or not (`rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd`),
+too long to print at a readable size, so only the folds the manual defines as
+equal are made — G for IMAFD with Zicsr and Zifencei, and C for Zca and Zcd —
+giving `RV64GC_Zicntr_Zihpm`, the same extensions.
 
 The spine carries the board's serial from that EEPROM, `SF105SZ212200391` —
 the one SiFive printed on the board — and the eth row its MAC, which comes
@@ -150,7 +155,8 @@ the command that reads it. The wlan row says `no radio`: the Unmatched's M.2
 E-key slot takes a Wi-Fi card, but a card is not the board.
 
 <p>
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/hifive-unmatched.png" alt="SiFive HiFive Unmatched A00; serial and MAC from its board EEPROM, RISC-V logo and ISA in the HAT band" width="49%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/hifive-unmatched-1.png" alt="SiFive HiFive Unmatched A00 (hifive-unmatched-1); serial and MAC from its board EEPROM, RISC-V logo and ISA in the HAT band" width="49%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/hifive-unmatched-2.png" alt="SiFive HiFive Unmatched A00 (hifive-unmatched-2)" width="49%">
 </p>
 
 ## FPGA boards
