@@ -8,7 +8,7 @@
                                                           on a Pi: which Tiny Tapeout board?
     rpi-hwid esp32 [--json] [--read PORT…] [--radio PORT…] [--gps PORT…]
                                                           on a Pi: which ESP32s are on USB?
-    rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--no-stop-service] HOST…
+    rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--sdr] [--no-stop-service] HOST…
                                                           over ssh: one JSON per host
     rpi-hwid tasmota --sheet CSV --site NAME=OCTET --out DIR
                                                           over HTTP, read-only: Tasmota plugs
@@ -62,6 +62,10 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
         tinytapeout.merge_tinytapeout(
             doc, tinytapeout.collect_tinytapeout(take_port=not args.no_stop_service))
+    if args.sdr:
+        from rpi_hwid import sdr
+
+        sdr.merge_sdr(doc, sdr.collect_sdr())
     if args.json:
         print(json.dumps(doc, indent=1))
         return 0
@@ -80,6 +84,10 @@ def cmd_probe(args: argparse.Namespace) -> int:
         from rpi_hwid import tinytapeout
 
         tinytapeout.describe(v["tinytapeout"])
+    if "sdr" in v:
+        from rpi_hwid import sdr
+
+        sdr.sdr_describe(v["sdr"])
     for i in doc["interfaces"]:
         if i["onboard"]:
             print(f"  onboard: {i['kind']:6s} {i['mac']}  {i['driver']}")
@@ -173,7 +181,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         esp32=args.esp32, esp32_read=tuple(args.esp32_read or ()),
         esp32_radio=tuple(args.esp32_radio or ()),
         force_offline_hosts=tuple(sorted(offline)),
-        esp32_gps=tuple(args.esp32_gps or ()),
+        esp32_gps=tuple(args.esp32_gps or ()), sdr=args.sdr,
     )
     failed = 0
     for r in results:
@@ -183,11 +191,13 @@ def cmd_collect(args: argparse.Namespace) -> int:
             tts = ", ".join(b.shuttle or b.chip or "?" for b in s.tinytapeout)
             esps = ", ".join(d.get("mac") or "?" for d in
                              r.doc.evidence.get("verdict", {}).get("esp32") or ())
+            radios = ", ".join(x.kind for x in s.sdr)
             header = "not read" if s.header is None else list(s.header) or "bare"
             print(f"  {r.host}: {s.model}; header {header}; "
                   f"power {s.power_class or 'not read'}" + (f"; fpga {boards}" if boards else "")
                   + (f"; tinytapeout {tts}" if tts else "")
-                  + (f"; esp32 {esps}" if esps else ""))
+                  + (f"; esp32 {esps}" if esps else "")
+                  + (f"; sdr {radios}" if radios else ""))
             problem = offline_read_problem(r.doc) if r.host in offline else None
             if problem:
                 failed += 1
@@ -315,6 +325,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="also identify an Arty's SPI flash (reloads the FPGA)")
     p.add_argument("--tinytapeout", action="store_true",
                    help="also look for a Tiny Tapeout demo board (reads its REPL)")
+    p.add_argument("--sdr", action="store_true",
+                   help="also look for a software-defined radio (opens none)")
     p.add_argument("--no-stop-service", action="store_true",
                    help=NO_STOP_SERVICE_HELP)
     p.set_defaults(func=cmd_probe)
@@ -376,6 +388,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--esp32-gps", action="append", metavar="HOST=PORT",
                    help="ask the GPS node on PORT of HOST which receiver its firmware "
                         "drives (no reset; implies --esp32 there)")
+    p.add_argument("--sdr", action="store_true",
+                   help="append the SDR module on every host (reads sysfs and a Pluto's "
+                        "network IIO context; opens no radio)")
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_collect)
 

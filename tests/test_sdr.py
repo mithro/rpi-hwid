@@ -275,3 +275,39 @@ def test_the_xsdr_is_no_endpoint_for_fpga_flash_or_soc_reads(xsdr_root):
     """--flash detaches and rescans FPGA endpoints and --soc maps their BAR;
     neither may touch a radio's."""
     assert fpga.fpga_endpoints(fpga.pcie_devices()) == []
+
+
+def test_a_radio_round_trips_through_the_model():
+    from rpi_hwid.model import Summary
+
+    radio = {"kind": "pluto", "usb_serial": "10447354119600022000120009f61e2b82",
+             "rx_lo_hz": [325000000, 3800000000], "rx_channels": 1}
+    kraken = {"kind": "krakensdr", "channel_serials": ["1000", "1001", "1002", "1003", "1004"]}
+    s = Summary.from_dict({"model": "m", "serial": "s", "revision": "r", "power_class": "p",
+                           "sdr": [radio, kraken]})
+    assert s.sdr[0].rx_lo_hz == (325000000, 3800000000)
+    assert s.sdr[1].channel_serials == ("1000", "1001", "1002", "1003", "1004")
+    d = s.to_dict()
+    assert d["sdr"][0]["rx_lo_hz"] == [325000000, 3800000000]
+    assert d["sdr"][1]["channel_serials"] == ["1000", "1001", "1002", "1003", "1004"]
+    assert Summary.from_dict(d) == s
+
+
+def test_a_field_the_model_does_not_know_is_an_error():
+    from rpi_hwid.model import SdrDevice
+
+    with pytest.raises(TypeError):
+        SdrDevice.from_dict({"kind": "pluto", "colour": "blue"})
+
+
+def test_collect_appends_the_sdr_module_on_request():
+    from rpi_hwid.collect import probe_source
+
+    src = probe_source(sdr=True)
+    assert src.startswith("RPI_HWID_EMBEDDED = True")
+    assert "merge_sdr(_doc, collect_sdr())" in src
+    assert "collect_fpga" not in src
+    assert "merge_sdr" not in probe_source()
+    both = probe_source(fpga=True, sdr=True)
+    assert both.index("merge_fpga(_doc") < both.index("merge_sdr(_doc")
+
