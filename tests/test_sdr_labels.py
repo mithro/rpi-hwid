@@ -80,7 +80,7 @@ def test_a_label_row_per_radio():
     assert rows == [("rpi-sdr-kraken", "sdr", "KrakenSDR 1000\u20131004"),
                     ("rpi-sdr-pluto", "sdr", "ADALM-Pluto 10447354119600022000120009f61e2b82"),
                     ("rpi-sdr-rtlsdr-v3", "sdr", "RTL-SDR V3 00000001"),
-                    ("rpi-sdr-xsdr", "sdr", "XSDR 19040203090e9769ffffffffffffffff")]
+                    ("rpi-sdr-xsdr", "sdr", "XSDR 19040203090e9769")]
 
 
 def test_frequencies_read_as_people_write_them():
@@ -105,7 +105,7 @@ def test_render_and_decode(tmp_path):
     for png in sorted(glob.glob(str(tmp_path / "page-*.png"))):
         got |= {b.text for b in zxingcpp.read_barcodes(Image.open(png))}
     # the Kraken and the V3 have no identity to encode, so they get no code
-    assert got == {"10447354119600022000120009f61e2b82", "19040203090e9769ffffffffffffffff"}
+    assert got == {"10447354119600022000120009f61e2b82", "19040203090e9769"}
 
 
 def test_a_missing_mark_sets_the_makers_name(tmp_path, monkeypatch):
@@ -124,7 +124,8 @@ def test_the_xsdr_is_keyed_on_its_flash_esn():
     x = records()["rpi-sdr-xsdr"]
     assert x.title == "XSDR"
     assert x.maker == "Wavelet Lab"
-    assert x.ident == "19040203090e9769ffffffffffffffff"
+    assert x.ident == "19040203090e9769"         # the programmed half; the rest is erased
+    assert "last 64 read erased" in dict(x.provenance)["identity, erased"]
     assert "XC7A50T" in x.subtitle
     assert (x.rx_channels, x.tx_channels) == (2, 2)
     prov = dict(x.provenance)
