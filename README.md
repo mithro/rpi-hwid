@@ -206,6 +206,8 @@ rpi-hwid esp32 [--json] [--read PORT…] [--radio PORT…]
                                                       on a Pi: which ESP32s are on its USB?
 rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] HOST…
                                                       over ssh: one JSON per host
+rpi-hwid tasmota --sheet CSV --site NAME=OCTET --out DIR
+                                                      over HTTP, read-only: Tasmota plugs
 rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
 rpi-hwid name --netv2 DNA… | --arty SERIAL…           the derived board names
 rpi-hwid revision CODE…                               decode Pi revision codes
