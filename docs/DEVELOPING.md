@@ -41,6 +41,7 @@ uv run docs/examples/render.py    # docs/examples/*.png, the label crops in the 
 uv run docs/social_preview.py     # docs/social-preview.png, 1280 x 640
 uv run docs/examples/render_micro.py   # docs/examples/micro-4up.png, one sticker of micro labels
 uv run docs/examples/render_esp32.py   # docs/examples/esp32-sticker-*.png, the ESP32 labels from real reads
+uv run docs/examples/render_esp32_433.py   # docs/examples/esp32-433-sticker.png, the 433 MHz radio-node labels
 ```
 
 Both read `tests/conftest.py`, so the images track the generator. `render.py` cuts
