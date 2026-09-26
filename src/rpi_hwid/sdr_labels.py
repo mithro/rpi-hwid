@@ -119,8 +119,9 @@ SHARED_SERIALS = {
 
 # What reads a radio's unique identifier, for the refusal when it is missing.
 IDENT_READ_WITH = {
-    "usdr": ("the XSDR's configuration flash unique id, read through usdr's espi core "
-             "(RDID 0x9F) with `sudo usdr_flash_uid` on that host"),
+    "usdr": ("the XSDR's configuration flash ESN (the AT25SL321's secured OTP) with "
+             "`rpi-hwid collect --sdr-open HOST`, which needs the card free: nothing "
+             "holding /dev/usdr0"),
 }
 
 
@@ -273,8 +274,13 @@ def record(host, key, r):
         else:
             ident, ident_caption = r.usb_serial, "USB serial  (EEPROM)"
     elif key == "xsdr":
-        ident = r.flash_uid
-        ident_caption = "configuration flash unique id"
+        ident = r.flash_uid if r.flash_uid_state == "read" else None
+        ident_caption = "flash ESN  (AT25SL321 secured OTP)"
+        if ident:
+            prov.append(("identity", "read: the configuration flash's secured-OTP ESN, "
+                                     f"{r.flash_uid_note}; Renesas DS-AT25SL321-112 Rev. K "
+                                     "8.41 and Table 17 (\"128-bit ESN (Electrical Serial "
+                                     "Number)\")"))
         prov.append(("model", f"read: HWID {r.usdr_hwid} (bits 23:16 = 0x30, XSDR_DEV in "
                               "usdr-lib src/lib/device/m2_lm7_1/xsdr_ctrl.h)"))
         if r.fpga_devid:
