@@ -5,6 +5,7 @@ rpi-sdr-xsdr and rpi-sdr-rtlsdr-v3 -- read without opening a device."""
 
 from __future__ import annotations
 
+import json
 import pathlib
 import subprocess
 import sys
@@ -155,26 +156,60 @@ __________________________________________
 """
 
 
+class FakeLibrtlsdr:
+    """The tools the open read runs, answering the way librtlsdr's do.
+
+    `rtl_eeprom -d` parses its argument with atoi (rtl_eeprom.c): it is an
+    index and only an index, so "00000001" is device #1 and "1000" is device
+    #1000 -- the bug rpi-sdr-rtlsdr-v3 showed live on 2026-09-26, "Failed to
+    open rtlsdr device #1." The device list comes from the index reader,
+    in librtlsdr's order, which need not be the ports' order.
+    """
+
+    def __init__(self, serials, eeprom, ds=None, held=False):
+        self.serials, self.eeprom, self.ds, self.held = serials, eeprom, ds, held
+        self.calls = []
+
+    def __call__(self, args, timeout=15):
+        self.calls.append(list(args))
+        if args[:3] == ["sudo", "-n", "fuser"]:
+            return (0, " 4242", "") if self.held else (1, "", "")
+        if args[:3] == ["python3", "-c", sdr.RTL_INDEX_READER]:
+            return 0, json.dumps({"serials": self.serials}) + "\n", ""
+        if args[:2] == ["rtl_eeprom", "-d"]:
+            idx = int(args[2]) if args[2].isdigit() else 0     # atoi
+            if idx >= len(self.serials):
+                return 1, "", (f"Found {len(self.serials)} device(s):\n"
+                               f"Failed to open rtlsdr device #{idx}.\n")
+            return 0, "", self.eeprom.replace("Serial number:\t\t1000",
+                                              "Serial number:\t\t" + self.serials[idx])
+        if args[:3] == ["python3", "-c", sdr.RTL_DS_READER]:
+            assert 0 <= int(args[3]) < len(self.serials)
+            return 0, (self.ds or "{}") + "\n", ""
+        return 127, "", "not here"
+
+    def eeprom_indices(self):
+        return [c[2] for c in self.calls if c[:2] == ["rtl_eeprom", "-d"]]
+
+
+# librtlsdr's order on rpi-sdr-kraken, from rtl_eeprom's own device list
+KRAKEN_ORDER = ["1004", "1000", "1001", "1002", "1003"]
+
+
 def test_the_open_read_finds_every_krakens_tuner(kraken_root, monkeypatch):
     for n, port in enumerate(("2", "3", "4", "5", "6")):
         (kraken_root / "sys/bus/usb/devices" / ("1-1." + port) / "busnum").write_text("1\n")
         (kraken_root / "sys/bus/usb/devices" / ("1-1." + port) / "devnum").write_text(
             f"{n + 3}\n")
-    asked = []
-
-    def fake(args, timeout=15):
-        if args[:3] == ["sudo", "-n", "fuser"]:
-            return 1, "", ""
-        if args[:2] == ["rtl_eeprom", "-d"]:
-            asked.append(args[2])
-            return 0, "", KRAKEN_EEPROM.replace("1000", args[2])
-        return 127, "", "not here"
-
-    monkeypatch.setattr(sdr, "sdr_sh", fake)
+    lib = FakeLibrtlsdr(KRAKEN_ORDER, KRAKEN_EEPROM)
+    monkeypatch.setattr(sdr, "sdr_sh", lib)
     s = sdr.collect_sdr(open_radios=True)
     (k,) = s["summary"]
     assert k["tuner"] == "Rafael Micro R820T"
-    assert sorted(asked) == ["1000", "1001", "1002", "1003", "1004"]
+    # every channel asked by its librtlsdr index, never by its all-digit serial
+    assert sorted(lib.eeprom_indices()) == ["0", "1", "2", "3", "4"]
+    # 1-1.5 is serial 1000, which librtlsdr lists second
+    assert s["rtl_open"]["1-1.5"]["eeprom"]["Serial number"] == "1000"
     assert s["rtl_open"]["1-1.5"]["eeprom"]["IR endpoint enabled"] == "yes"
 
 
@@ -495,25 +530,28 @@ def _v3_root(tmp_path, monkeypatch, ds):
     (d / "devnum").write_text("3\n")
     monkeypatch.setattr(sdr, "SDR_ROOT", str(tmp_path))
 
-    def fake(args, timeout=15):
-        if args[:3] == ["sudo", "-n", "fuser"]:
-            return 1, "", ""
-        if args[:2] == ["rtl_eeprom", "-d"]:
-            return 0, "", V3_EEPROM
-        if args[:2] == ["python3", "-c"]:
-            assert args[2] == sdr.RTL_DS_READER
-            return 0, ds + "\n", ""
-        return 127, "", "not here"
-
-    monkeypatch.setattr(sdr, "sdr_sh", fake)
+    lib = FakeLibrtlsdr(["00000001"], KRAKEN_EEPROM, ds)
+    monkeypatch.setattr(sdr, "sdr_sh", lib)
+    return lib
 
 
 def test_a_v3_is_told_by_its_hf_path(tmp_path, monkeypatch):
     # the measurement at 14 MHz: I 0.46, Q 2.32
-    _v3_root(tmp_path, monkeypatch, '{"i_rms": 0.46, "q_rms": 2.32}')
+    lib = _v3_root(tmp_path, monkeypatch, '{"i_rms": 0.46, "q_rms": 2.32}')
     (r,) = sdr.collect_sdr(open_radios=True)["summary"]
     assert r["tuner"] == "Rafael Micro R820T"
     assert r["rtl_model"] == "rtl-sdr-blog-v3"
+    # the serial "00000001" is atoi 1: the dongle is index 0, and both reads say so
+    assert lib.eeprom_indices() == ["0"]
+    assert [c[3] for c in lib.calls if c[:3] == ["python3", "-c", sdr.RTL_DS_READER]] == ["0"]
+
+
+def test_two_dongles_with_one_serial_are_not_guessed_between(tmp_path, monkeypatch):
+    lib = _v3_root(tmp_path, monkeypatch, "{}")
+    lib.serials = ["00000001", "00000001"]
+    s = sdr.collect_sdr(open_radios=True)
+    assert "2 dongles answer serial 00000001" in s["rtl_open"]["1-1.2"]["error"]
+    assert lib.eeprom_indices() == []
 
 
 def test_a_dongle_with_no_hf_path_is_not_a_v3(tmp_path, monkeypatch):
@@ -526,16 +564,7 @@ def test_a_krakens_channels_are_never_streamed(kraken_root, monkeypatch):
     for port in ("2", "3", "4", "5", "6"):
         (kraken_root / "sys/bus/usb/devices" / ("1-1." + port) / "busnum").write_text("1\n")
         (kraken_root / "sys/bus/usb/devices" / ("1-1." + port) / "devnum").write_text("3\n")
-    calls = []
-
-    def fake(args, timeout=15):
-        calls.append(args)
-        if args[:3] == ["sudo", "-n", "fuser"]:
-            return 1, "", ""
-        if args[:2] == ["rtl_eeprom", "-d"]:
-            return 0, "", KRAKEN_EEPROM
-        return 127, "", "not here"
-
-    monkeypatch.setattr(sdr, "sdr_sh", fake)
+    lib = FakeLibrtlsdr(KRAKEN_ORDER, KRAKEN_EEPROM, '{"i_rms": 1, "q_rms": 9}')
+    monkeypatch.setattr(sdr, "sdr_sh", lib)
     sdr.collect_sdr(open_radios=True)
-    assert not [c for c in calls if c[:2] == ["python3", "-c"]]
+    assert not [c for c in lib.calls if c[:3] == ["python3", "-c", sdr.RTL_DS_READER]]

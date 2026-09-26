@@ -257,6 +257,40 @@ def usb_node(u):
         return None
 
 
+# Every RTL2832U librtlsdr can see, in its own index order, by serial. The
+# tools' `-d` goes through verbose_device_search, which takes an all-digit
+# string for an index before it tries serials -- and every serial on this
+# fleet is all digits: "00000001" asked for device #1 on a host with one
+# dongle (rpi-sdr-rtlsdr-v3, 2026-09-26), and a KrakenSDR's "1000" would ask
+# for device #1000. So the serial is resolved to an index here, through
+# librtlsdr itself, and only the index is passed on.
+RTL_INDEX_READER = r"""
+import ctypes, ctypes.util, json
+lib = ctypes.CDLL(ctypes.util.find_library("rtlsdr") or "librtlsdr.so.0")
+serials = []
+for i in range(lib.rtlsdr_get_device_count()):
+    m, p, s = (ctypes.create_string_buffer(256) for _ in range(3))
+    lib.rtlsdr_get_device_usb_strings(i, m, p, s)
+    serials.append(s.value.decode("ascii", "replace"))
+print(json.dumps({"serials": serials}))
+"""
+
+
+def rtl_index(serial):
+    """(librtlsdr's index for the one dongle with `serial`, None) or
+    (None, why)."""
+    rc, out, err = sdr_sh(["python3", "-c", RTL_INDEX_READER], timeout=30)
+    try:
+        serials = json.loads(out.strip().splitlines()[-1])["serials"]
+    except (ValueError, IndexError, KeyError):
+        return None, "librtlsdr's device list: %s" % ((err.strip() or "no answer")[-200:])
+    found = [i for i, s in enumerate(serials) if s == serial]
+    if len(found) != 1:
+        return None, ("%d dongles answer serial %s, so it names none of them" % (
+            len(found), serial))
+    return found[0], None
+
+
 def rtl_open(u, kraken=False):
     """Ask librtlsdr about one RTL2832U -- `rtl_eeprom -d SERIAL`, which with
     no write flag only reads -- for the tuner and the EEPROM's fields. Only
@@ -268,7 +302,10 @@ def rtl_open(u, kraken=False):
     rc, out, err = sdr_sh(["sudo", "-n", "fuser", node])
     if rc == 0:
         return {"error": "%s is held by pid %s: not opened" % (node, out.split())}
-    rc, out, err = sdr_sh(["rtl_eeprom", "-d", u["serial"]], timeout=30)
+    idx, why = rtl_index(u["serial"])
+    if idx is None:
+        return {"error": why}
+    rc, out, err = sdr_sh(["rtl_eeprom", "-d", str(idx)], timeout=30)
     text = out + err
     res = {}
     m = RTL_TUNER.search(text)
@@ -279,9 +316,9 @@ def rtl_open(u, kraken=False):
         res["eeprom"] = fields
     if res.get("tuner") == "Rafael Micro R820T" and not kraken:
         # the V3's own feature: HF wired into the Q branch (see sdr_verdict)
-        res["direct_sampling"] = rtl_direct_sampling(u["serial"])
+        res["direct_sampling"] = rtl_direct_sampling(idx)
     if not res:
-        res["error"] = "rtl_eeprom -d %s: %s" % (u["serial"], (text.strip() or "rc %d" % rc)
+        res["error"] = "rtl_eeprom -d %d: %s" % (idx, (text.strip() or "rc %d" % rc)
                                                  .splitlines()[-1])
     return res
 
@@ -403,8 +440,7 @@ def usdr_esn(res):
 RTL_DS_READER = r"""
 import ctypes, ctypes.util, json, math, sys
 lib = ctypes.CDLL(ctypes.util.find_library("rtlsdr") or "librtlsdr.so.0")
-lib.rtlsdr_get_index_by_serial.argtypes = [ctypes.c_char_p]
-idx = lib.rtlsdr_get_index_by_serial(sys.argv[1].encode())
+idx = int(sys.argv[1])
 dev = ctypes.c_void_p()
 if idx < 0 or lib.rtlsdr_open(ctypes.byref(dev), idx):
     print(json.dumps({"error": "could not open %s" % sys.argv[1]})); sys.exit(0)
@@ -437,8 +473,8 @@ print(json.dumps(out))
 DS_Q_OVER_I = 3.0
 
 
-def rtl_direct_sampling(serial):
-    rc, out, err = sdr_sh(["python3", "-c", RTL_DS_READER, serial], timeout=30)
+def rtl_direct_sampling(idx):
+    rc, out, err = sdr_sh(["python3", "-c", RTL_DS_READER, str(idx)], timeout=30)
     try:
         return json.loads(out.strip().splitlines()[-1])
     except (ValueError, IndexError):
