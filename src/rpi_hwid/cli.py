@@ -176,8 +176,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sdr", action="store_true",
                    help="also look for a software-defined radio (opens none)")
     p.add_argument("--sdr-open", action="store_true",
-                   help="with --sdr: open a usdr card nothing holds, for its HWID and "
-                        "flash id")
+                   help="with --sdr: open the radios nothing holds, for what only an "
+                        "open radio says")
     p.add_argument("--no-stop-service", action="store_true",
                    help=NO_STOP_SERVICE_HELP)
     p.set_defaults(func=cmd_probe)
@@ -226,8 +226,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="append the SDR module on every host (reads sysfs and a Pluto's "
                         "network IIO context; opens no radio)")
     p.add_argument("--sdr-open", action="append", metavar="HOST",
-                   help="also open this host's usdr card, when nothing holds it, for its "
-                        "HWID and flash id (implies --sdr for it)")
+                   help="also open this host's radios that nothing holds (usdr, RTL2832U), for "
+                        "what only an open radio says (implies --sdr for it)")
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_collect)
 

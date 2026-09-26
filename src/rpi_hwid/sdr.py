@@ -117,6 +117,7 @@ def sdr_usb_devices():
             "manufacturer": sdr_read(p + "/manufacturer"),
             "product": sdr_read(p + "/product"), "serial": sdr_read(p + "/serial"),
             "bcd_device": sdr_read(p + "/bcdDevice"), "speed": sdr_read(p + "/speed"),
+            "busnum": sdr_read(p + "/busnum"), "devnum": sdr_read(p + "/devnum"),
             "parent": parent,
             "parent_id": "%s:%s" % (pvid, ppid) if pvid and ppid else None,
             "net": sorted(os.path.basename(n) for n in glob.glob(p + ":*/net/*")),
@@ -242,6 +243,44 @@ def usdr_open(p):
     return res
 
 
+RTL_TUNER = re.compile(r"Found (.+?) tuner")
+RTL_EEPROM_FIELD = re.compile(r"^(Manufacturer|Product|Serial number|Serial number enabled|"
+                              r"IR endpoint enabled|Remote wakeup enabled):\s*(.*?)\s*$", re.M)
+
+
+def usb_node(u):
+    try:
+        return "/dev/bus/usb/%03d/%03d" % (int(u["busnum"]), int(u["devnum"]))
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
+def rtl_open(u):
+    """Ask librtlsdr about one RTL2832U -- `rtl_eeprom -d SERIAL`, which with
+    no write flag only reads -- for the tuner and the EEPROM's fields. Only
+    with --sdr-open, and only when nothing holds the device: readsb, OpenWebRX
+    and Heimdall keep theirs open for as long as they run."""
+    node = usb_node(u)
+    if not node or not u.get("serial"):
+        return {"error": "no usbfs node or no serial to select it by"}
+    rc, out, err = sdr_sh(["sudo", "-n", "fuser", node])
+    if rc == 0:
+        return {"error": "%s is held by pid %s: not opened" % (node, out.split())}
+    rc, out, err = sdr_sh(["rtl_eeprom", "-d", u["serial"]], timeout=30)
+    text = out + err
+    res = {}
+    m = RTL_TUNER.search(text)
+    if m:
+        res["tuner"] = m.group(1)
+    fields = dict(RTL_EEPROM_FIELD.findall(text))
+    if fields:
+        res["eeprom"] = fields
+    if not res:
+        res["error"] = "rtl_eeprom -d %s: %s" % (u["serial"], (text.strip() or "rc %d" % rc)
+                                                 .splitlines()[-1])
+    return res
+
+
 def iio_range(text):
     """'[325000000 1 3800000000]' -> [325000000, 3800000000]; else None."""
     m = re.match(r"^\s*\[\s*(\d+)\s+\d+\s+(\d+)\s*\]\s*$", text or "")
@@ -326,6 +365,13 @@ def link_text(p):
     return text
 
 
+def rtl_tuner(d, members):
+    """The tuner the open read found behind these RTL2832Us, when every one
+    of them answered and they agree; else None."""
+    read = [((d.get("rtl_open") or {}).get(u["path"]) or {}).get("tuner") for u in members]
+    return read[0] if read and read[0] and len(set(read)) == 1 else None
+
+
 def sdr_verdict(d):
     """Name the radios this host has, from USB and PCIe."""
     devices = []
@@ -344,6 +390,7 @@ def sdr_verdict(d):
                 "hub": members[0]["parent_id"],
                 "channel_serials": list(KRAKEN_SERIALS),
                 "channels": {u["serial"]: u["path"] for u in members},
+                "tuner": rtl_tuner(d, members),
                 "how": "five RTL2832U on hub %s (%s), serials 1000-1004" % (
                     hub, members[0]["parent_id"])})
     for u in rtl:
@@ -352,7 +399,7 @@ def sdr_verdict(d):
         devices.append({
             "kind": "rtl-sdr", "usb": u["path"], "vidpid": u["id"],
             "usb_serial": u["serial"], "manufacturer": u["manufacturer"],
-            "product": u["product"],
+            "product": u["product"], "tuner": rtl_tuner(d, [u]),
             "how": "USB %s %s %s at %s" % (u["id"], u["manufacturer"] or "",
                                           u["product"] or "", u["path"])})
     for u in d["usb"]:
@@ -405,7 +452,7 @@ SDR_SUMMARY_KEYS = (
     "iio_uri", "hw_model", "hw_model_variant", "hw_serial", "fw_version", "rf_chip",
     "xo_hz", "rx_lo_hz", "tx_lo_hz", "rx_rate_hz", "tx_rate_hz", "rx_bw_hz", "tx_bw_hz",
     "rx_channels", "tx_channels", "adc_bits", "usdr_hwid", "flash_jedec", "fpga_devid",
-    "usdr_error")
+    "usdr_error", "tuner")
 
 
 def sdr_summary(devices):
@@ -420,6 +467,8 @@ def sdr_summary(devices):
 def collect_sdr(open_radios=False):
     s = {"usb": sdr_usb_devices(), "pcie": sdr_pcie_devices(), "iio": {}}
     s["usdr_open"] = {p["slot"]: usdr_open(p) for p in s["pcie"]} if open_radios else {}
+    s["rtl_open"] = {u["path"]: rtl_open(u) for u in s["usb"]
+                     if u["id"] in RTL_IDS} if open_radios else {}
     for u in s["usb"]:
         if u["id"] in PLUTO_IDS:
             addr, why = pluto_address(u)
@@ -431,7 +480,7 @@ def collect_sdr(open_radios=False):
 
 def merge_sdr(doc, s):
     """Fold an sdr document into a Pi probe document (in place)."""
-    doc["sdr"] = {k: s[k] for k in ("usb", "pcie", "usdr_open") if k in s}
+    doc["sdr"] = {k: s[k] for k in ("usb", "pcie", "usdr_open", "rtl_open") if k in s}
     if "iio" in s:
         doc["sdr"]["iio"] = s["iio"]
     doc["verdict"]["sdr"] = s["devices"]
