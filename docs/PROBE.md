@@ -278,3 +278,42 @@ $ rpi-hwid esp32                 # rpi5-433mhz: three C3 SuperMinis, a LilyGO, a
   esp32? : CH9102 bridge 1a86:55d4 serial 591B031339 on /dev/ttyACM1; --read /dev/ttyACM1 would reset it to ask
   esp32? : CH340 bridge 1a86:7523 serial (none) on /dev/ttyUSB0; --read /dev/ttyUSB0 would reset it to ask
 ```
+
+### 433 MHz radio nodes
+
+`rpi_hwid.esp32_radio` asks a node built by
+[esp32-to-433mhz](https://github.com/mithro/esp32-to-433mhz) which radio it has.
+The nodes run Tasmota's `cc1101-node` build, whose driver finds the radio itself.
+It is a module of the same kind as the others: stand-alone, stdlib-only and
+Python 3.5-clean. `rpi-hwid esp32 --radio PORT` runs it on the host, and
+`rpi-hwid collect --esp32-radio HOST=PORT` appends it after the esptool read.
+
+The driver prints the chip and the pins it answered on only at boot:
+
+```
+CC1: CC1101 PARTNUM 0x00 VERSION 0x14, SCK=3 MISO=7 MOSI=4 CS=1 GDO0=10 GDO2=6
+```
+
+So the read resets the node once. It pulses RTS with DTR low, as esptool's hard
+reset does, and HUPCL is cleared so closing the port does not reset it again. It
+keeps twelve seconds of boot output, then asks `Radio`, `CcStatus` and
+`SxStatus` on the console. Where the answers and the boot line both give a
+value, the answers win; the pins come only from the boot line. Tasmota falls
+back to its safeboot image after a run of boots that each end within ten
+seconds, and the twelve-second listen outlasts that.
+
+A board with no radio fitted is a finding, not an error. A port that answers
+neither way is an error, kept on its ESP32 as `radio_error`. The radio goes on
+the ESP32's entry as `verdict.esp32[].radio`, and each read's full output is kept
+under `esp32.radio_reads`.
+
+The reads `collect --esp32-radio` made on rpi5-433mhz on 2026-09-26, printed the
+way `rpi-hwid esp32 --radio` prints them:
+
+```
+  radio  : /dev/radio-sx1278-ra02: SX1278 version 0x12  DIO0=6 MISO=7 MOSI=4 NSS=1 RST=10 SCK=3
+  radio  : /dev/radio-cc1101-blue: CC1101 version 0x14 partnum 0x00  CS=1 GDO0=10 GDO2=6 MISO=7 MOSI=4 SCK=3
+  radio  : /dev/radio-esp32-E8:3D:C1:8C:5C:88: none (firmware 15.5.0(safeboot))
+```
+
+All three nodes were back in their firmware straight after.

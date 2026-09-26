@@ -35,6 +35,7 @@ DEFAULT_USERS = (getpass.getuser(), "pi")
 def probe_source(
     fpga: bool = False, jtag: bool = False, flash: bool = False, tinytapeout: bool = False,
     take_port: bool = True, esp32: bool = False, esp32_read: Sequence[str] = (),
+    esp32_radio: Sequence[str] = (),
 ) -> str:
     """The script to feed to ``python3 -`` on a host.
 
@@ -63,6 +64,11 @@ def probe_source(
         # named for this host only
         extra += "\n" + pkg.joinpath("esp32.py").read_text()
         glue += f"merge_esp32(_doc, collect_esp32({list(esp32_read)!r}))\n"
+    if esp32_radio:
+        # the radio a 433 MHz node's firmware drives: after the esptool read,
+        # which resets the same chips and must find them first
+        extra += "\n" + pkg.joinpath("esp32_radio.py").read_text()
+        glue += f"merge_radios(_doc, collect_radios({list(esp32_radio)!r}))\n"
     glue += "print(json.dumps(_doc, indent=1))\n"
     return "RPI_HWID_EMBEDDED = True\n" + probe + extra + glue
 
@@ -90,9 +96,11 @@ def probe_host(
     take_port: bool = True,
     esp32: bool = False,
     esp32_read: Sequence[str] = (),
+    esp32_radio: Sequence[str] = (),
 ) -> Result:
     """Run the probe on one host; `host` may carry its own ``user@``."""
-    source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32, esp32_read)
+    source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32, esp32_read,
+                          esp32_radio)
     args = ["--json"]
     if "@" in host:
         user_list: Sequence[str] = [host.split("@", 1)[0]]
@@ -124,8 +132,9 @@ def probe_host(
     return Result(host, False, error=last or "no user could log in")
 
 
-def esp32_reads(hosts: Sequence[str], pairs: Sequence[str]) -> dict[str, list[str]]:
-    """`--esp32-read HOST=PORT` pairs as host -> ports, keyed on the host
+def esp32_reads(hosts: Sequence[str], pairs: Sequence[str],
+                flag: str = "--esp32-read") -> dict[str, list[str]]:
+    """`--esp32-read HOST=PORT` pairs (or `flag`'s) as host -> ports, keyed on the host
     exactly as it was given for collection. HOST may be written with or
     without its ``user@``; a HOST that is not being collected is an error,
     because a read that silently does nothing looks just like one that found
@@ -137,13 +146,13 @@ def esp32_reads(hosts: Sequence[str], pairs: Sequence[str]) -> dict[str, list[st
     for pair in pairs:
         h, sep, port = pair.partition("=")
         if not sep or not h or not port:
-            raise ValueError(f"--esp32-read wants HOST=PORT, not {pair!r}")
+            raise ValueError(f"{flag} wants HOST=PORT, not {pair!r}")
         matches = [x for x in hosts if x == h] or [x for x in hosts if bare(x) == bare(h)]
         if len(matches) != 1:
             raise ValueError(
-                f"--esp32-read {pair}: {h} is not one of the hosts being collected "
+                f"{flag} {pair}: {h} is not one of the hosts being collected "
                 f"({', '.join(hosts)})" if not matches else
-                f"--esp32-read {pair}: {h} matches more than one host ({', '.join(matches)})")
+                f"{flag} {pair}: {h} matches more than one host ({', '.join(matches)})")
         out.setdefault(matches[0], []).append(port)
     return out
 
@@ -161,6 +170,7 @@ def collect(
     take_port: bool = True,
     esp32: bool = False,
     esp32_read: Sequence[str] = (),
+    esp32_radio: Sequence[str] = (),
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
@@ -173,17 +183,20 @@ def collect(
     the read -- only fpgas-tt.service, and only on a Raspberry Pi.
     `esp32` appends the ESP32 module for every host (the USB tree only, from
     sysfs); `esp32_read` is HOST=PORT pairs, the ports whose chip may be reset
-    and read on that host.
+    and read on that host, and `esp32_radio` the same for the ports whose
+    433 MHz node firmware may be reset and asked what radio it drives.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     reads = esp32_reads(hosts, esp32_read)
+    radios = esp32_reads(hosts, esp32_radio, "--esp32-radio")
 
     def one(host: str) -> Result:
         return probe_host(host, users, jump, fpga or host in jtag_hosts,
                           host in jtag_hosts, host in flash_hosts, tinytapeout=tinytapeout,
-                          take_port=take_port, esp32=esp32 or host in reads,
-                          esp32_read=reads.get(host, ()))
+                          take_port=take_port,
+                          esp32=esp32 or host in reads or host in radios,
+                          esp32_read=reads.get(host, ()), esp32_radio=radios.get(host, ()))
 
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:

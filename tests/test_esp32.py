@@ -420,7 +420,7 @@ def test_collect_hands_each_host_its_own_ports(monkeypatch, tmp_path):
     seen = {}
 
     def fake(host, users, jump, fpga, jtag, flash, tinytapeout=False, take_port=True,
-             esp32=False, esp32_read=()):
+             esp32=False, esp32_read=(), esp32_radio=()):
         seen[host] = (esp32, tuple(esp32_read))
         return collect.Result(host, False, error="not really")
 
@@ -439,7 +439,7 @@ def test_a_read_names_its_host_with_or_without_the_user(monkeypatch, tmp_path):
     seen = {}
 
     def fake(host, users, jump, fpga, jtag, flash, tinytapeout=False, take_port=True,
-             esp32=False, esp32_read=()):
+             esp32=False, esp32_read=(), esp32_radio=()):
         seen[host] = tuple(esp32_read)
         return collect.Result(host, False, error="not really")
 

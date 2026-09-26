@@ -84,6 +84,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PT", "TC", "C4", "PIE", "RET"
 "src/rpi_hwid/tinytapeout.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
 # The ESP32 module is a probe too, sent over ssh like the three above.
 "src/rpi_hwid/esp32.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
+# ...and so is the 433 MHz node's radio read, embedded after it.
+"src/rpi_hwid/esp32_radio.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
 # The label generator is ported from a proven script and drawn in points and
 # millimetres; its long argument lists read better unwrapped.
 "src/rpi_hwid/labels.py" = ["RUF", "B", "SIM", "C4", "PIE", "RET", "UP031", "UP032"]
@@ -106,7 +108,7 @@ ignore_errors = true
 
 # The ESP32 probe module is annotation-free for the same reason as the others.
 [[tool.mypy.overrides]]
-module = "rpi_hwid.esp32"
+module = ["rpi_hwid.esp32", "rpi_hwid.esp32_radio"]
 ignore_errors = true
 
 # The micro-label layout draws with rpi_hwid.labels' helpers, which are untyped.
@@ -117,7 +119,7 @@ warn_return_any = false
 
 # ...and so do the ESP32 micro labels, which also use its flash tables.
 [[tool.mypy.overrides]]
-module = "rpi_hwid.esp32_micro"
+module = ["rpi_hwid.esp32_micro", "rpi_hwid.esp32_433_micro"]
 disallow_untyped_calls = false
 warn_return_any = false
 
