@@ -116,8 +116,14 @@ def cmd_esp32(args: argparse.Namespace) -> int:
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
-    from rpi_hwid.collect import collect
+    from rpi_hwid.collect import collect, esp32_reads
 
+    try:
+        # checked before anything is probed, so a mistyped host costs nothing
+        esp32_reads(args.hosts, args.esp32_read or ())
+    except ValueError as exc:
+        print(f"rpi-hwid collect: {exc}", file=sys.stderr)
+        return 2
     results = collect(
         args.hosts, args.out, users=tuple(args.users.split(",")), jump=args.jump,
         fpga=args.fpga, jtag_hosts=tuple(args.jtag or ()), flash_hosts=tuple(args.flash or ()),

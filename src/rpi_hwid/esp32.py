@@ -146,7 +146,7 @@ def device_from_usb(dev, links):
         "chip": None, "chip_description": None, "revision": None, "package": None,
         "features": [], "crystal_mhz": None,
         "flash_jedec": None, "flash_uid": None, "efuse": {},
-        "read": None, "read_error": None,
+        "read": None, "read_error": None, "read_errors": {}, "boot_after": None,
     }
     if how == "usb-serial-jtag":
         # the peripheral's serial-number string is the chip's base MAC
@@ -157,58 +157,135 @@ def device_from_usb(dev, links):
 
 # --- the read -----------------------------------------------------------------
 #
-# Run in a child python3 with esptool importable, so this file stays
-# stdlib-only. It prints one line, RESULT {json}. After the hard reset it
-# keeps the same port open for a few seconds and keeps what the application
-# prints as it boots -- the evidence that the chip came back -- with HUPCL
-# cleared first so that closing the port does not drop DTR and RTS and
-# reset it a second time.
+# Run in a child python3 that can import esptool, so this file stays
+# stdlib-only. It prints one line, RESULT {json}.
+#
+# Every step after the connect is on its own: a step that fails records its
+# error under "errors" and the rest still run, so a flash that will not give
+# up a unique id does not cost the chip, MAC, crystal and eFuse already read.
+# And whatever happens once the chip is in its bootloader, the `finally`
+# resets it back into its application: a read that died half way once left
+# three nodes sitting in the ROM (2026-09-26).
+#
+# After that reset the same port stays open for a few seconds to keep what
+# the application prints as it boots -- the evidence that it came back --
+# with HUPCL cleared first so that closing the port does not drop DTR and
+# RTS and reset it a second time.
+#
+# The flash's Read Unique ID (0x4B: four dummy bytes, then 64 bits) is read
+# in two halves. esptool reads at most 32 bits back from one SPI command
+# (esptool 4.7 and 5.2 both refuse more), and 0x4B takes no address, so the
+# second half is read by clocking eight bytes out on MOSI first -- the four
+# dummies and the first half, which the flash drives on its own output while
+# the controller ignores it -- and then 32 bits in. A third read offset by two
+# bytes must agree with the join of the two, or the uid is not trusted.
+#
+# esptool 4.x spells its reset modes default_reset, 5.x default-reset, and
+# 5.x dropped espefuse.get_efuses; the eFuse table is taken from the chip's
+# own module (espefuse.efuse.<chip>.fields.EspEfuses), which both have.
 READ_SCRIPT = r'''
-import json, re, sys, termios, time
-import esptool
-from espefuse import get_efuses
+import json, os, re, sys, termios, time
 port = sys.argv[1]
-out = {"port": port, "esptool": esptool.__version__}
-esp = esptool.cmds.detect_chip(port, 115200, "default_reset")
-out["chip_description"] = esp.get_chip_description()
-out["features"] = list(esp.get_chip_features())
-out["crystal_mhz"] = esp.get_crystal_freq()
-out["mac"] = ":".join("%02x" % b for b in esp.read_mac())
-esp.flash_spi_attach(0)
-fid = esp.flash_id()
-out["flash_jedec"] = "0x%02x%02x%02x" % (fid & 0xFF, (fid >> 8) & 0xFF, (fid >> 16) & 0xFF)
-uid = esp.run_spiflash_command(0x4B, data=b"\0" * 4, read_bits=64)
-out["flash_uid"] = "%016x" % int.from_bytes(uid.to_bytes(8, "little"), "big")
-efuses, _ops = get_efuses(esp)
-wanted = re.compile(r"^(MAC|MAC_FACTORY|CUSTOM_MAC|MAC_CUSTOM|OPTIONAL_UNIQUE_ID|"
-                    r"WAFER_VERSION.*|CHIP_VER.*|CHIP_PACKAGE.*|PKG_VERSION|BLK_VERSION.*|"
-                    r"FLASH_CAP|FLASH_VENDOR|FLASH_TEMP|PSRAM_CAP|PSRAM_VENDOR|PSRAM_TEMP|"
-                    r"PSRAM_SIZE|CHIP_CPU_FREQ.*)$")
-fields = {}
-for e in efuses:
-    if wanted.match(e.name):
-        v = e.get()
-        fields[e.name] = v if isinstance(v, (int, bool)) else str(v)
-out["efuse"] = fields
-esp.hard_reset()
-ser = esp._port
-try:
-    attrs = termios.tcgetattr(ser.fileno())
-    attrs[2] &= ~termios.HUPCL
-    termios.tcsetattr(ser.fileno(), termios.TCSANOW, attrs)
-except Exception as exc:
-    out["hupcl_error"] = repr(exc)
-buf = b""
-t0 = time.time()
-while time.time() - t0 < 12:
+listen = float(os.environ.get("RPI_HWID_ESP32_LISTEN", "12"))
+out = {"port": port, "python": sys.executable, "errors": {}}
+
+
+def step(name, fn):
     try:
-        buf += ser.read(4096)
+        out[name] = fn()
     except Exception as exc:
-        out["listen_error"] = repr(exc)
-        break
-out["boot_after"] = buf.decode("utf-8", "replace")[-3000:]
-ser.close()
-print("RESULT " + json.dumps(out))
+        out["errors"][name] = "%s: %s" % (type(exc).__name__, exc)
+
+
+import esptool
+out["esptool"] = esptool.__version__
+mode = "default-reset" if int(esptool.__version__.split(".")[0]) >= 5 else "default_reset"
+esp = None
+try:
+    esp = esptool.cmds.detect_chip(port, 115200, mode)
+    step("chip_description", esp.get_chip_description)
+    step("features", lambda: list(esp.get_chip_features()))
+    step("crystal_mhz", esp.get_crystal_freq)
+    step("mac", lambda: ":".join("%02x" % b for b in esp.read_mac()))
+
+    def jedec():
+        esp.flash_spi_attach(0)
+        fid = esp.flash_id()
+        return "0x%02x%02x%02x" % (fid & 0xFF, (fid >> 8) & 0xFF, (fid >> 16) & 0xFF)
+
+    step("flash_jedec", jedec)
+
+    def uid():
+        def word(skip):
+            w = esp.run_spiflash_command(0x4B, data=b"\0" * (4 + skip), read_bits=32)
+            return w.to_bytes(4, "little")
+        whole = word(0) + word(4)
+        if word(2) != whole[2:6]:
+            raise ValueError("halves disagree: %s, offset read %s"
+                             % (whole.hex(), word(2).hex()))
+        return whole.hex()
+
+    step("flash_uid", uid)
+
+    def efuse():
+        import importlib
+        name = esp.CHIP_NAME.lower().replace("-", "")
+        mod = importlib.import_module("espefuse.efuse.%s.fields" % name)
+        efuses = mod.EspEfuses(esp, skip_connect=False)
+        wanted = re.compile(
+            r"^(MAC|MAC_FACTORY|CUSTOM_MAC|MAC_CUSTOM|OPTIONAL_UNIQUE_ID|"
+            r"WAFER_VERSION.*|CHIP_VER.*|CHIP_PACKAGE.*|PKG_VERSION|BLK_VERSION.*|"
+            r"FLASH_CAP|FLASH_VENDOR|FLASH_TEMP|PSRAM_CAP|PSRAM_VENDOR|PSRAM_TEMP|"
+            r"PSRAM_SIZE|CHIP_CPU_FREQ.*)$")
+        fields = {}
+        for e in efuses:
+            if wanted.match(e.name):
+                v = e.get()
+                fields[e.name] = v if isinstance(v, (int, bool)) else str(v)
+        return fields
+
+    step("efuse", efuse)
+except Exception as exc:
+    out["errors"]["connect"] = "%s: %s" % (type(exc).__name__, exc)
+finally:
+    ser = None
+    try:
+        if esp is not None:
+            esp.hard_reset()
+            ser = esp._port
+        else:
+            # never reached the ROM, or reached it and lost it: pulse RTS
+            # the way esptool's HardReset does, so nothing is left stranded
+            import serial
+            ser = serial.Serial(port, 115200, timeout=0.2)
+            ser.dtr = False
+            ser.rts = True
+            time.sleep(0.2)
+            ser.rts = False
+        out["reset"] = "hard_reset"
+    except Exception as exc:
+        out["errors"]["reset"] = "%s: %s" % (type(exc).__name__, exc)
+    if ser is not None:
+        try:
+            attrs = termios.tcgetattr(ser.fileno())
+            attrs[2] &= ~termios.HUPCL
+            termios.tcsetattr(ser.fileno(), termios.TCSANOW, attrs)
+        except Exception as exc:
+            out["errors"]["hupcl"] = "%s: %s" % (type(exc).__name__, exc)
+        buf = b""
+        t0 = time.time()
+        while time.time() - t0 < listen:
+            try:
+                buf += ser.read(4096)
+            except Exception as exc:
+                out["errors"]["listen"] = "%s: %s" % (type(exc).__name__, exc)
+                break
+        out["boot_after"] = buf.decode("utf-8", "replace")[-3000:]
+        try:
+            ser.close()
+        except Exception:
+            pass
+    print("RESULT " + json.dumps(out))
 '''
 
 
@@ -223,10 +300,45 @@ def parse_read(text):
     return None
 
 
-def run_read(port, timeout=90):
+def esptool_pythons():
+    """The interpreters to try for the read, in order: this one, then any
+    virtualenv under ~/.venvs -- where rpi4-esp keeps the esptool it has --
+    so a host with esptool in a venv of its own needs nothing installed."""
+    home = os.path.expanduser("~")
+    return [sys.executable] + sorted(
+        glob.glob(os.path.join(home, ".venvs", "*", "bin", "python3")))
+
+
+def esptool_python():
+    """The first interpreter that can import esptool and espefuse, or None."""
+    for python in esptool_pythons():
+        try:
+            r = subprocess.run([python, "-c", "import esptool, espefuse"],
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                               timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        if r.returncode == 0:
+            return python
+    return None
+
+
+def error_line(text):
+    """The line of the child's output that says what went wrong: the last
+    that names an error, else the last there is."""
+    lines = [s.strip() for s in (text or "").splitlines() if s.strip()]
+    errors = [s for s in lines if "Error" in s or "error:" in s]
+    return (errors or lines or ["no output"])[-1]
+
+
+def run_read(port, timeout=120):
     """Run the read on one port: (result or None, error or None, output)."""
+    python = esptool_python()
+    if python is None:
+        return None, ("no python here can import esptool (tried %s)"
+                      % ", ".join(esptool_pythons())), ""
     try:
-        r = subprocess.run([sys.executable, "-c", READ_SCRIPT, port],
+        r = subprocess.run([python, "-u", "-c", READ_SCRIPT, port],
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                            timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -236,8 +348,7 @@ def run_read(port, timeout=90):
     text = r.stdout.decode("utf-8", "replace")
     result = parse_read(text)
     if result is None:
-        tail = [s for s in text.strip().splitlines() if s.strip()][-1:] or ["no output"]
-        return None, "esptool read failed: " + tail[0], text
+        return None, "esptool read failed: " + error_line(text), text
     return result, None, text
 
 
@@ -268,7 +379,12 @@ def apply_read(d, result):
         "features": result.get("features") or [], "crystal_mhz": result.get("crystal_mhz"),
         "flash_jedec": result.get("flash_jedec"), "flash_uid": result.get("flash_uid"),
         "efuse": result.get("efuse") or {}, "read": "esptool " + str(result.get("esptool")),
+        # a step that failed, in esptool's words: the rest of the read stands
+        "read_errors": result.get("errors") or {},
+        "boot_after": result.get("boot_after"),
     })
+    if "connect" in d["read_errors"]:
+        d["read_error"] = d["read_errors"]["connect"]
     return d
 
 
