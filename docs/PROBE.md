@@ -101,6 +101,43 @@ and the Armbian release, where the board has one, is recorded as evidence
 only: the fleet's Orange Pi netboots the pool's Raspbian armhf root and so
 carries none.
 
+## RISC-V boards
+
+A board is RISC-V when `/proc/cpuinfo` prints an `isa` line for its harts, which
+no other architecture does. The probe runs on it unchanged and the document keeps
+its shape; the summary gains a `riscv` record (the harts, and on a SiFive board
+its PCB EEPROM), which is `null` on every other board. The fleet has two, SiFive
+HiFive Unmatched A00s, reached as `ansible@` (key only):
+
+```
+$ ssh ansible@10.1.90.243 'python3 -' < src/rpi_hwid/probe.py
+SiFive HiFive Unmatched A00  serial SF105SZ212200391
+  header  : no HAT header on this board
+  evidence: device tree: compatible sifive,hifive-unmatched-a00 sifive,fu740-c000 sifive,fu740; 16 GB (MemTotal 16358196 kB)
+  evidence: RISC-V: 4 harts rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd, mmu sv39, uarch sifive,bullet0, mvendorid 0x489 marchid 0x8000000000000007 mimpid 0x20181004
+  evidence: SiFive EEPROM: HiFive Unmatched PCB rev 3 BOM B0 serial SF105SZ212200391 MAC 70:b3:d5:92:f8:de test pass, CRC 0x9709e522 ok
+  evidence: storage nvme0 WDC WDS100T2B0C-00PXH0 serial 21210J802282 firmware 211210WD
+  evidence: storage mmc0:0000 SD32G serial 0xb81f9080 cid 035344534433324785b81f9080014c61
+  power   : no power sensing on this board: nothing on it reports its supply
+  onboard : eth    70:b3:d5:92:f8:de  macb (driver)
+```
+
+That is hifive-unmatched-1 on 2026-09-26 (Debian 13, kernel 6.12.73).
+
+The board's identity is its PCB EEPROM, a 24c02 at 0x54 on i2c-0. The probe
+reads it only on a board whose device tree names it as an Unmatched, and only
+through the kernel's at24 driver: whichever nvmem the device
+`/sys/bus/i2c/devices/0-0054` carries (6.12 names it `board-id0`, after the
+device tree's label). at24 serves it to root alone, so a refused plain read is
+tried again through `sudo -n cat`, and a read that still fails is recorded with
+the command that reads it. The layout is U-Boot's
+(`board/sifive/unmatched/hifive-platform-i2c-eeprom.c`) and its CRC-32 is
+checked; the bytes read off both boards are exactly what that layout rebuilds
+from U-Boot's own boot print-out. U-Boot also copies the serial into the device
+tree's `/serial-number`, which is where `serial` comes from; the EEPROM's stands
+in where the device tree has none. The NVMe and SD serials are evidence only —
+a disk is not the board.
+
 ## FPGA boards
 
 `rpi_hwid.fpga` is kept apart from the Pi probe because few people have an FPGA

@@ -392,13 +392,14 @@ COMPUTE_MODULE_1 = _doc(
 
 
 def _unmatched(serial, mac, crc):
-    """A SiFive HiFive Unmatched A00, the fleet's RISC-V boards. The EEPROM
-    fields are the ones U-Boot printed at boot on 2026-07-04, and the CRC it
-    printed beside them is reproduced by those fields (tests/test_riscv.py)."""
+    """A SiFive HiFive Unmatched A00, the fleet's RISC-V boards, as the
+    probe read them on 2026-09-26 (as ansible, Debian 13, kernel 6.12.73):
+    the board EEPROM through at24's board-id0 nvmem, the harts from cpuinfo,
+    the MAC off end0 (macb)."""
     eeprom = {"format": 1, "product_id": "0x0002", "product": "HiFive Unmatched",
               "pcb_revision": 3, "bom_revision": "B", "bom_variant": 0, "serial": serial,
               "manuf_test_status": "pass", "mac": mac, "crc": crc, "crc_ok": True}
-    rv = {"harts": 4, "isa": "rv64imafdc_zicntr_zicsr_zifencei_zihpm", "mmu": "sv39",
+    rv = {"harts": 4, "isa": "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd", "mmu": "sv39",
           "uarch": "sifive,bullet0", "mvendorid": "0x489", "marchid": "0x8000000000000007",
           "mimpid": "0x20181004", "eeprom": eeprom, "eeprom_error": None}
     doc = _doc("SiFive HiFive Unmatched A00", serial, None, [], "undetermined", [],

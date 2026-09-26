@@ -2,12 +2,12 @@
 label's side (which board, what its header says, what refuses to print).
 
 The fleet's two RISC-V boards are SiFive HiFive Unmatched A00s. Their
-identity lives in an I2C EEPROM U-Boot prints at every boot; the bytes used
-here are rebuilt from that print-out and are right to the bit, because
-U-Boot also prints the EEPROM's CRC-32 and the rebuilt bytes reproduce it
-(9709e522 on hifive-unmatched-1, 946c3551 on hifive-unmatched-2) -- which
-only one value of the one field it does not print, the manufacturing test
-status, manages."""
+identity lives in an I2C EEPROM U-Boot prints at every boot. The bytes here
+were read off both boards on 2026-09-26 (`sudo od -A x -t x1
+/sys/bus/nvmem/devices/board-id0/nvmem`, Debian 13, kernel 6.12.73), and
+the fake sysfs tree is laid out as that kernel lays it out. They are also
+exactly what U-Boot's layout rebuilds from its own boot print-out, CRC and
+all -- so the decoder and U-Boot agree about every byte."""
 
 from __future__ import annotations
 
@@ -32,13 +32,22 @@ def sifive_eeprom_bytes(serial, mac, test_status=1, pcb=3, bom="B", variant=0, p
     return blob + b"\xff" * (pad - len(blob))
 
 
-UNMATCHED_1 = sifive_eeprom_bytes("SF105SZ212200391", "70:b3:d5:92:f8:de")
-UNMATCHED_2 = sifive_eeprom_bytes("SF105SZ212200532", "70:b3:d5:92:f8:83")
+# The two EEPROMs as read off the boards, 256 bytes each: 37 of data and the
+# rest erased.
+UNMATCHED_1 = bytes.fromhex(
+    "f15e50450102000342005346313035535a323132323030333931"
+    "0170b3d592f8de22e50997") + b"\xff" * 219
+UNMATCHED_2 = bytes.fromhex(
+    "f15e50450102000342005346313035535a323132323030353332"
+    "0170b3d592f88351356c94") + b"\xff" * 219
 
 
-def test_rebuilt_eeproms_carry_the_crcs_u_boot_printed():
-    """The fixture is only as good as this: the CRC U-Boot printed on
-    2026-07-04 is reproduced, so every byte it covers is the board's."""
+def test_real_eeproms_are_what_u_boots_layout_rebuilds():
+    """The board read and U-Boot's layout agree to the byte, CRC included:
+    the CRCs U-Boot printed on 2026-07-04 (9709e522, 946c3551) are the ones
+    the boards hold."""
+    assert sifive_eeprom_bytes("SF105SZ212200391", "70:b3:d5:92:f8:de") == UNMATCHED_1
+    assert sifive_eeprom_bytes("SF105SZ212200532", "70:b3:d5:92:f8:83") == UNMATCHED_2
     assert UNMATCHED_1[33:37] == struct.pack("<I", 0x9709E522)
     assert UNMATCHED_2[33:37] == struct.pack("<I", 0x946C3551)
 
@@ -70,21 +79,23 @@ def test_a_corrupt_eeprom_says_its_crc_is_wrong():
 def test_riscv_cpu_from_cpuinfo():
     cpu = probe.riscv_cpu(UNMATCHED_CPUINFO)
     assert cpu == {
-        "harts": 4, "isa": "rv64imafdc_zicntr_zicsr_zifencei_zihpm", "mmu": "sv39",
+        "harts": 4, "isa": "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd", "mmu": "sv39",
         "uarch": "sifive,bullet0", "mvendorid": "0x489", "marchid": "0x8000000000000007",
         "mimpid": "0x20181004",
     }
     assert probe.riscv_cpu("processor\t: 0\nmodel name\t: ARMv7 Processor rev 5 (v7l)\n") is None
 
 
-# /proc/cpuinfo of a Debian 13 (6.12) kernel on the Unmatched: the four U74
-# application harts, 1-4 (hart 0, the S7 monitor core, is not Linux's).
+# /proc/cpuinfo on hifive-unmatched-1, 2026-09-26: the four U74 application
+# harts, 1-4, the booting one listed first (hart 0, the S7 monitor core, is
+# not Linux's).
 UNMATCHED_CPUINFO = "".join(
-    f"processor\t: {n}\nhart\t\t: {n + 1}\n"
-    "isa\t\t: rv64imafdc_zicntr_zicsr_zifencei_zihpm\n"
+    f"processor\t: {n}\nhart\t\t: {hart}\n"
+    "isa\t\t: rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd\n"
     "mmu\t\t: sv39\nuarch\t\t: sifive,bullet0\nmvendorid\t: 0x489\n"
     "marchid\t\t: 0x8000000000000007\nmimpid\t\t: 0x20181004\n"
-    "hart isa\t: rv64imafdc_zicntr_zicsr_zifencei_zihpm\n\n" for n in range(4))
+    "hart isa\t: rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd\n\n"
+    for n, hart in enumerate((4, 1, 2, 3)))
 
 
 def _w(root, rel, content):
@@ -97,32 +108,40 @@ def _w(root, rel, content):
     return path
 
 
+# Where the kernel puts the board EEPROM's nvmem: under the at24 device.
+EEPROM_NVMEM = "/sys/bus/i2c/devices/0-0054/board-id0/nvmem"
+
+
 def _unmatched_tree(root, eeprom=UNMATCHED_1, serial="SF105SZ212200391"):
-    """hifive-unmatched-1: the device tree U-Boot hands the kernel, the
-    board EEPROM behind at24 on i2c-0 at 0x54, the GEM on macb, an NVMe and
-    an SD card on mmc_spi."""
+    """hifive-unmatched-1 as it read on 2026-09-26: the device tree U-Boot
+    hands the kernel, the board EEPROM behind at24 on i2c-0 at 0x54 (whose
+    nvmem the kernel names after the device tree's label, board-id0, and
+    serves to root alone), the GEM on macb, its NVMe and its SD card."""
     _w(root, "/proc/device-tree/model", "SiFive HiFive Unmatched A00\0")
     _w(root, "/proc/device-tree/compatible",
        "sifive,hifive-unmatched-a00\0sifive,fu740-c000\0sifive,fu740\0")
     if serial is not None:
         _w(root, "/proc/device-tree/serial-number", serial + "\0")
     _w(root, "/proc/cpuinfo", UNMATCHED_CPUINFO)
-    _w(root, "/proc/meminfo", "MemTotal:       16306200 kB\n")
+    _w(root, "/proc/meminfo", "MemTotal:       16358196 kB\n")
     if eeprom is not None:
-        _w(root, "/sys/bus/nvmem/devices/0-00540/nvmem", eeprom)
+        _w(root, EEPROM_NVMEM, eeprom)
+        nvmem = root / "sys/bus/nvmem/devices"
+        nvmem.mkdir(parents=True, exist_ok=True)
+        (nvmem / "board-id0").symlink_to(root / EEPROM_NVMEM.lstrip("/").rsplit("/", 1)[0])
     _w(root, "/sys/class/net/end0/address", "70:b3:d5:92:f8:de\n")
     gem = root / "sys/devices/platform/soc/10090000.ethernet"
     gem.mkdir(parents=True)
     (root / "sys/class/net/end0/device").symlink_to(gem)
     (root / "sys/bus/platform/drivers/macb").mkdir(parents=True)
     (gem / "driver").symlink_to(root / "sys/bus/platform/drivers/macb")
-    _w(root, "/sys/class/nvme/nvme0/model", "WDC WDS500G2B0C-00PXH0              \n")
-    _w(root, "/sys/class/nvme/nvme0/serial", "21052Z800123        \n")
-    _w(root, "/sys/class/nvme/nvme0/firmware_rev", "211070WD\n")
+    _w(root, "/sys/class/nvme/nvme0/model", "WDC WDS100T2B0C-00PXH0                  \n")
+    _w(root, "/sys/class/nvme/nvme0/serial", "21210J802282        \n")
+    _w(root, "/sys/class/nvme/nvme0/firmware_rev", "211210WD\n")
     card = "/sys/class/mmc_host/mmc0/mmc0:0000"
     _w(root, card + "/name", "SD32G\n")
-    _w(root, card + "/serial", "0x12345678\n")
-    _w(root, card + "/cid", "03534453443332478012345678016a00\n")
+    _w(root, card + "/serial", "0xb81f9080\n")
+    _w(root, card + "/cid", "035344534433324785b81f9080014c61\n")
     _w(root, card + "/type", "SD\n")
 
 
@@ -150,16 +169,16 @@ def test_collect_hifive_unmatched(rv_root):
     assert d["pi5"] is False
     assert calls == [], "the EEPROM was readable, so no sudo; nothing Pi-only either"
     rv = d["riscv"]
-    assert rv["cpu"]["isa"] == "rv64imafdc_zicntr_zicsr_zifencei_zihpm"
+    assert rv["cpu"]["isa"] == "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd"
     assert rv["eeprom"]["serial"] == "SF105SZ212200391"
     assert rv["eeprom"]["crc_ok"] is True
-    assert rv["eeprom_path"] == "/sys/bus/nvmem/devices/0-00540/nvmem"
+    assert rv["eeprom_path"] == EEPROM_NVMEM
     assert rv["eeprom_error"] is None
     assert rv["storage"] == [
-        {"kind": "nvme", "name": "nvme0", "model": "WDC WDS500G2B0C-00PXH0",
-         "serial": "21052Z800123", "firmware": "211070WD", "cid": None},
-        {"kind": "SD", "name": "mmc0:0000", "model": "SD32G", "serial": "0x12345678",
-         "firmware": None, "cid": "03534453443332478012345678016a00"},
+        {"kind": "nvme", "name": "nvme0", "model": "WDC WDS100T2B0C-00PXH0",
+         "serial": "21210J802282", "firmware": "211210WD", "cid": None},
+        {"kind": "SD", "name": "mmc0:0000", "model": "SD32G", "serial": "0xb81f9080",
+         "firmware": None, "cid": "035344534433324785b81f9080014c61"},
     ]
     ifaces = {i["name"]: i for i in d["interfaces"]}
     assert ifaces["end0"]["onboard"] is True
@@ -169,7 +188,7 @@ def test_collect_hifive_unmatched(rv_root):
     assert any(e.startswith("RISC-V: 4 harts rv64imafdc") for e in v["evidence"])
     assert any("SiFive EEPROM: HiFive Unmatched PCB rev 3 BOM B0 serial SF105SZ212200391"
                in e for e in v["evidence"])
-    assert any(e.startswith("storage nvme0 WDC WDS500G2B0C-00PXH0 serial 21052Z800123")
+    assert any(e.startswith("storage nvme0 WDC WDS100T2B0C-00PXH0 serial 21210J802282")
                for e in v["evidence"])
     s = v["summary"]
     assert s["serial"] == "SF105SZ212200391"
@@ -177,7 +196,7 @@ def test_collect_hifive_unmatched(rv_root):
     assert s["memory"] == "16 GB"
     assert s["macs"] == [{"kind": "eth", "mac": "70:b3:d5:92:f8:de", "signal": "driver"}]
     assert s["riscv"] == {
-        "harts": 4, "isa": "rv64imafdc_zicntr_zicsr_zifencei_zihpm", "mmu": "sv39",
+        "harts": 4, "isa": "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd", "mmu": "sv39",
         "uarch": "sifive,bullet0", "mvendorid": "0x489", "marchid": "0x8000000000000007",
         "mimpid": "0x20181004",
         "eeprom": probe.sifive_eeprom_decode(UNMATCHED_1), "eeprom_error": None,
@@ -186,7 +205,7 @@ def test_collect_hifive_unmatched(rv_root):
 
 def test_a_root_only_eeprom_is_read_through_sudo(rv_root, monkeypatch):
     root, _calls = rv_root
-    path = root / "sys/bus/nvmem/devices/0-00540/nvmem"
+    path = root / EEPROM_NVMEM.lstrip("/")
     path.chmod(0o000)
     asked = []
 
@@ -204,7 +223,7 @@ def test_a_root_only_eeprom_is_read_through_sudo(rv_root, monkeypatch):
 
 def test_an_unreadable_eeprom_is_said_with_the_command_that_reads_it(rv_root):
     root, _calls = rv_root
-    path = root / "sys/bus/nvmem/devices/0-00540/nvmem"
+    path = root / EEPROM_NVMEM.lstrip("/")
     path.chmod(0o000)
     try:
         d = probe.collect()        # sudo_read_bytes is stubbed to give nothing
@@ -213,8 +232,8 @@ def test_an_unreadable_eeprom_is_said_with_the_command_that_reads_it(rv_root):
     rv = d["riscv"]
     assert rv["eeprom"] is None
     assert rv["eeprom_error"] == (
-        "could not read /sys/bus/nvmem/devices/0-00540/nvmem, even through sudo -n: "
-        "run `sudo od -A x -t x1z /sys/bus/nvmem/devices/0-00540/nvmem` on the host")
+        f"could not read {EEPROM_NVMEM}, even through sudo -n: "
+        f"run `sudo od -A x -t x1z {EEPROM_NVMEM}` on the host")
     assert d["serial"] == "SF105SZ212200391", "the device tree still has it"
 
 
@@ -278,7 +297,7 @@ def test_board_record_carries_the_riscv_band(docs):
     assert b.serial == "SF105SZ212200391"
     assert b.macs == (("eth", "70:b3:d5:92:f8:de"),)
     assert b.wlan_note == "no radio"
-    assert b.isa == "rv64imafdc_zicntr_zicsr_zifencei_zihpm"
+    assert b.isa == "rv64imafdc_zicntr_zicsr_zifencei_zihpm_zca_zcd"
     assert b.riscv_line == "4 harts  ·  sv39  ·  PCB rev 3  ·  BOM B0"
 
 
@@ -287,14 +306,14 @@ def test_an_unread_serial_refuses_the_label_naming_host_and_command(docs):
     raw["verdict"]["summary"]["serial"] = None
     raw["verdict"]["summary"]["riscv"]["eeprom"] = None
     raw["verdict"]["summary"]["riscv"]["eeprom_error"] = (
-        "could not read /sys/bus/nvmem/devices/0-00540/nvmem, even through sudo -n: "
-        "run `sudo od -A x -t x1z /sys/bus/nvmem/devices/0-00540/nvmem` on the host")
+        f"could not read {EEPROM_NVMEM}, even through sudo -n: "
+        f"run `sudo od -A x -t x1z {EEPROM_NVMEM}` on the host")
     doc = _doc("hifive-unmatched-1", raw)
     with pytest.raises(labels.IdentifierNotReadError) as exc:
         labels.board_record(doc)
     msg = str(exc.value)
     assert msg.startswith("hifive-unmatched-1:")
-    assert "sudo od -A x -t x1z /sys/bus/nvmem/devices/0-00540/nvmem" in msg
+    assert f"sudo od -A x -t x1z {EEPROM_NVMEM}" in msg
 
 
 def test_the_eeprom_and_the_device_tree_must_agree(docs):

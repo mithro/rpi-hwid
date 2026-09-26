@@ -580,16 +580,19 @@ def usb_net_adapters(ifaces):
 #
 # The SiFive HiFive Unmatched keeps its identity in an I2C EEPROM (a 24c02
 # at 0x54 on i2c-0, which the upstream device tree declares read-only and
-# at24 serves as nvmem 0-00540). U-Boot prints it at every boot, sets
+# at24 serves as an nvmem device under /sys/bus/i2c/devices/0-0054). The
+# nvmem's name is the kernel's to choose -- 0-00540 by the device, or the
+# device tree's label: Debian 13's 6.12 calls it board-id0 -- so it is found
+# as whichever nvmem that one device carries. U-Boot prints it at every boot, sets
 # serial# and ethaddr from it, and writes serial# into the device tree's
 # /serial-number. The layout is U-Boot's own
 # (board/sifive/unmatched/hifive-platform-i2c-eeprom.c): packed and
 # little-endian, the magic f1 5e 50 45, a format byte, a 16-bit product id,
 # PCB revision, BOM revision (a letter) and BOM variant, the 16-character
 # serial, the manufacturing test status, the MAC, and a CRC-32 of all of
-# that. Checked against both of the fleet's boards: the bytes rebuilt from
-# what U-Boot printed on 2026-07-04 reproduce the CRCs it printed beside
-# them (9709e522 and 946c3551), and only with the test status "pass".
+# that. Checked against both of the fleet's boards on 2026-09-26: the
+# bytes read off them are exactly what that layout rebuilds from U-Boot's
+# own print-out, the CRCs it printed (9709e522 and 946c3551) included.
 #
 # The EEPROM is read only where the device tree says this is an Unmatched,
 # through the kernel's own driver -- never by talking to the bus -- and
@@ -597,7 +600,7 @@ def usb_net_adapters(ifaces):
 # once more through `sudo -n`.
 
 SIFIVE_EEPROM_BOARDS = ("sifive,hifive-unmatched-a00",)
-SIFIVE_EEPROM_NVMEM = "/sys/bus/nvmem/devices/0-00540/nvmem"
+SIFIVE_EEPROM_DEVICE = "/sys/bus/i2c/devices/0-0054"
 SIFIVE_EEPROM_MAGIC = b"\xf1\x5e\x50\x45"
 SIFIVE_EEPROM_LEN = 37
 SIFIVE_PRODUCTS = {0: "Unknown", 2: "HiFive Unmatched"}
@@ -655,25 +658,27 @@ def sifive_eeprom(compatible):
     for a board known to carry one; (None, None, None) for any other."""
     if not any(c in SIFIVE_EEPROM_BOARDS for c in compatible):
         return None, None, None
-    path = ROOT + SIFIVE_EEPROM_NVMEM
-    if not os.path.exists(path):
-        return None, None, ("no %s: is at24 loaded? `ls /sys/bus/i2c/devices/0-0054` "
-                            "on the host" % SIFIVE_EEPROM_NVMEM)
+    found = sorted(glob.glob(ROOT + SIFIVE_EEPROM_DEVICE + "/*/nvmem"))
+    if not found:
+        return None, None, ("no nvmem under %s: is at24 loaded? `ls %s` on the host" % (
+            SIFIVE_EEPROM_DEVICE, SIFIVE_EEPROM_DEVICE))
+    path = found[0]
+    name = path[len(ROOT):]
     try:
         with open(path, "rb") as f:
             raw = f.read(SIFIVE_EEPROM_LEN)
     except (OSError, IOError):
         raw = sudo_read_bytes(path)
     if not raw:
-        return None, SIFIVE_EEPROM_NVMEM, (
+        return None, name, (
             "could not read %s, even through sudo -n: run `sudo od -A x -t x1z %s` "
-            "on the host" % (SIFIVE_EEPROM_NVMEM, SIFIVE_EEPROM_NVMEM))
+            "on the host" % (name, name))
     e = sifive_eeprom_decode(raw[:SIFIVE_EEPROM_LEN])
     if e is None:
-        return None, SIFIVE_EEPROM_NVMEM, (
+        return None, name, (
             "%s does not start with the SiFive magic f15e5045: %s" % (
-                SIFIVE_EEPROM_NVMEM, " ".join("%02x" % b for b in bytearray(raw[:8]))))
-    return e, SIFIVE_EEPROM_NVMEM, None
+                name, " ".join("%02x" % b for b in bytearray(raw[:8]))))
+    return e, name, None
 
 
 def riscv_storage():
