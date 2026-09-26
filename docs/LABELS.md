@@ -279,6 +279,46 @@ render_micro([MicroLabel(
 )], "micro.pdf", outline=True)
 ```
 
+## ESP32s
+
+Each ESP32 that `rpi-hwid esp32 --read` has read gets a micro label (`--only
+esp32`), laid out like this:
+
+- **Header:** the Espressif mark and the chip as the title, with the Wi-Fi arcs
+  and a chip glyph lettered with the family (`C3`, or `32` for an original ESP32).
+- **Subtitle:** the silicon revision and package, then the in-package flash or
+  the crystal.
+- **Foot and QR:** the base MAC, burned into eFuse, which is also the Wi-Fi
+  station MAC.
+- **BT row:** the Bluetooth MAC, which is the one derived value on the label.
+  ESP-IDF's default for a chip with four universal MACs is base+2 on the last
+  octet, so the row is printed only for the families that table covers.
+- **Second identifier:** where the chip has one in eFuse, its 128-bit
+  `OPTIONAL_UNIQUE_ID`, over two rows. Otherwise, the external flash and the
+  flash's own unique id.
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-sticker-1.png" alt="Four ESP32 micro labels from real reads: an ESP32-CAM and a devkit (original ESP32s, keyed on their flash's unique id) over two ESP32-C3 SuperMinis (keyed on the chip's OPTIONAL_UNIQUE_ID)" width="98%">
+</p>
+
+These are real reads from 2026-09-26, from `tests/esp32_devices.json`: an
+ESP32-CAM and a devkit on rpi4-esp, and two of the three C3 radio nodes on
+rpi5-433mhz. `docs/examples/render_esp32.py` regenerates them. The C3s'
+in-package XMC flash answers Read Unique ID with zeroes, which is why their
+second identifier is the chip's own; a flash uid that reads back blank is left
+off rather than printed. What is *not* read is refused, as on every other label:
+
+- An ESP32 known only from the USB tree (a MAC and nothing else) is an error.
+- So is a C3 whose eFuse read failed.
+
+Either error names the host, the MAC and both ways to read it: `rpi-hwid esp32
+--read PORT` on the host, or `rpi-hwid collect --esp32-read HOST=PORT`. Both
+reset the chip.
+
+For a label that builds on this one (an ESP32 with a 433 MHz radio, say),
+`esp32_micro.esp32_label(host, device)` returns the plain `MicroLabel` for
+`dataclasses.replace` to add to.
+
 ## Artwork
 
 The package ships the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax,

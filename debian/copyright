@@ -106,6 +106,14 @@ License: trademark
  it. Copied byte for byte from gf.com's own site icon SVG, GF's
  symbol-only mark; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/espressif.svg
+Copyright: Espressif Systems (Shanghai) Co., Ltd.
+License: trademark
+ The Espressif symbol, drawn only on the label of hardware built on an
+ Espressif chip (an ESP32), to identify it. From espressif.com's own header
+ logo SVG with the wordmark paths removed and the viewBox trimmed to the
+ symbol, whose paths are untouched; see src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.

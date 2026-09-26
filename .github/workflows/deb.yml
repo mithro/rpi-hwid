@@ -91,7 +91,7 @@ jobs:
       - name: Byte-compile the probes with python 3.5
         run: >-
           docker run --rm -v "$PWD:/src" -w /src python:3.5-slim
-          python -W error -m py_compile src/rpi_hwid/probe.py src/rpi_hwid/fpga.py src/rpi_hwid/tinytapeout.py
+          python -W error -m py_compile src/rpi_hwid/probe.py src/rpi_hwid/fpga.py src/rpi_hwid/tinytapeout.py src/rpi_hwid/esp32.py
 
   build-deb:
     name: build-deb (${{ matrix.suite }} ${{ matrix.arch }})
