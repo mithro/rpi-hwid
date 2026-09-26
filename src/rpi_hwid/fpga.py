@@ -631,6 +631,17 @@ def sh_rc(args, timeout=15):
         return 1, str(exc)
 
 
+def sh_split(args, timeout=15):
+    """stdout and stderr kept apart: a tool whose stdout is a JSON document
+    and whose stderr says why cannot have the two run together."""
+    try:
+        r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           universal_newlines=True, timeout=timeout)   # 3.5-safe
+        return r.stdout, r.stderr
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        return "", str(exc)
+
+
 def sh_all(args, timeout=15):
     """As sh(), but stderr too: openocd says everything on stderr."""
     try:
@@ -1412,6 +1423,66 @@ def read_flash(res, harness, board, part):
             res["flash_error"] = said or fl.strip()[-200:] or None
 
 
+# --- an Acorn's flash, read over PCIe by the fpgas.online SoC ------------------
+#
+# The SoC the Acorns now carry can read its own configuration flash, so an
+# Acorn's flash is asked there first: a JTAG read loads a bridge in place of
+# the running design, which may be someone's session. The Acorn deployment's
+# `fpgas-acorn-verify --identify` does the reading (fpgas-online-acorn-tools)
+# and prints one JSON document whatever its exit status -- exit 1 includes a
+# board still on SQRL's factory image -- so the document is what is read and
+# the status is not. Anything it cannot read falls back to JTAG.
+ACORN_VERIFY = "fpgas-acorn-verify"
+ACORN_VERIFY_SCHEMA = 1
+
+
+def acorn_flash_parse(out):
+    """({slot: flash facts}, why the rest were not read) from what
+    `fpgas-acorn-verify --identify` printed."""
+    try:
+        doc = json.loads(out)
+    except ValueError:
+        return {}, "%s printed no document: %s" % (ACORN_VERIFY, out.strip()[-200:])
+    if not isinstance(doc, dict) or doc.get("schema_version") != ACORN_VERIFY_SCHEMA:
+        # a schema this code was not taught is refused, not read hopefully
+        return {}, "%s wrote schema_version %r" % (
+            ACORN_VERIFY, doc.get("schema_version") if isinstance(doc, dict) else None)
+    read, why = {}, []
+    for b in doc.get("boards") or ():
+        fl = b.get("flash") or {}
+        if b.get("result") == "read" and fl.get("jedec") and fl.get("unique_id"):
+            uid = fl["unique_id"].lower()
+            read[b.get("bdf")] = {
+                "flash_source": "pcie",
+                "flash_jedec": "0x%06x" % int(fl["jedec"], 16),
+                "flash": fl.get("part"),
+                "flash_uid": uid,
+                "flash_uid_bits": len(uid) * 4,
+                "flash_uid_state": "read",
+                "flash_uid_note": None,
+                # the tool reports neither, so neither is claimed
+                "flash_extended_id": None,
+                "flash_sfdp": None}
+        elif b.get("result") == "read":
+            why.append("%s: read (no unique id)" % b.get("bdf"))
+        else:
+            why.append("%s: %s (%s)" % (b.get("bdf"), b.get("result"), b.get("reason")))
+    if not doc.get("boards"):
+        why.append("result %s: no board found" % doc.get("result"))
+    return read, "; ".join(why) or None
+
+
+def acorn_flash_probe():
+    """What the SoC read of each Acorn's flash, and why any were not."""
+    if not sh(["which", ACORN_VERIFY]):
+        return {}, ACORN_VERIFY + " not installed"
+    out, err = sh_split(["sudo", ACORN_VERIFY, "--identify"], timeout=120)
+    read, why = acorn_flash_parse(out)
+    if why and err.strip():
+        why += "; stderr: " + err.strip()[-200:]
+    return read, why
+
+
 def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
     """openFPGALoader over whichever cable this host has, else openocd.
     Returns the idcode line when a chain answers. `parts` is {die: part} from
@@ -1491,6 +1562,7 @@ def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
     if cable == "gpio":
         res["pins"] = pins or HARNESS_PINS
     if want_flash:
+        res["flash_source"] = "jtag"
         # The bridge replaces the running design either way, which is what
         # --flash pays for. The board profile is only needed on a Digilent
         # cable; on the GPIO harness the part comes from the chain. Matched
@@ -2176,7 +2248,7 @@ def fpga_verdict(d):
 # What a chain's flash read leaves on the board it belongs to
 JTAG_FLASH_KEYS = ("flash_jedec", "flash", "flash_uid", "flash_uid_bits",
                    "flash_uid_state", "flash_uid_note", "flash_error",
-                   "flash_extended_id", "flash_sfdp")
+                   "flash_extended_id", "flash_sfdp", "flash_source")
 
 
 def merge_soc(boards, soc):
@@ -2208,6 +2280,18 @@ def merge_soc(boards, soc):
     return boards
 
 
+def merge_acorn_flash(boards, read):
+    """Put each flash an Acorn's SoC read on the board at that PCIe address.
+
+    By slot, not through the chain: the chain belongs to whatever board its
+    harness names, and on a Pi 4's default pins that is a NeTV2."""
+    for board in boards:
+        reading = read.get(board.get("slot") or "")
+        if reading:
+            board.update(reading)
+    return boards
+
+
 def fpga_summary(boards):
     """Only the identity keys, in a fixed shape."""
     out = []
@@ -2218,7 +2302,7 @@ def fpga_summary(boards):
                   "dna_sources", "dna_agree", "dna_conflict", "soc_model",
                   "flash_uid", "flash_uid_bits", "flash_uid_state",
                   "flash_uid_note", "flash_error", "flash_extended_id",
-                  "flash_sfdp"):
+                  "flash_sfdp", "flash_source"):
             # not plain truthiness: FPGA id 0 is a real class (SP605_FT601)
             if b.get(k) is not None and b.get(k) != "":
                 entry[k] = b[k]
@@ -2251,15 +2335,27 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
         for pc in f["pcie"]:
             if pc["id"].startswith(("10ee:", "1e24:")):
                 f["soc"][pc["slot"]] = soc_probe(pc["slot"])
-    f["jtag"] = jtag_probe(flash, pins, gateware_parts(f["pcileech"]),
-                           fpga_endpoints(f["pcie"])) if jtag else None
+    # An Acorn's SoC reads its own flash without replacing itself, and needs
+    # no chain to do it: pi-sw2-p48's was read this way while its harness
+    # said "TDO is stuck at 0". So it is asked first, and on its own; only a
+    # board it could not read goes on to the bridge, which replaces whatever
+    # design is running -- possibly someone's session.
+    endpoints = fpga_endpoints(f["pcie"])
+    f["acorn_flash"] = None
+    if flash and endpoints:
+        read, why = acorn_flash_probe()
+        f["acorn_flash"] = {"read": read, "error": why}
+    unread = [s for s in endpoints if s not in (f["acorn_flash"] or {}).get("read", {})]
+    f["jtag"] = jtag_probe(flash and (unread or not endpoints), pins,
+                           gateware_parts(f["pcileech"]), endpoints) if jtag else None
     # The ECP5 TraceID, and only when asked for by name. This ends the
     # board's capture and may drop power to whatever is on its TARGET port,
     # so it is not folded into --jtag, which is harmless everywhere else.
     f["cynthion_jtag"] = None
     if force_offline and any(cynthion_flash_uid(c) for c in f["cynthion"]):
         f["cynthion_jtag"] = cynthion_offline_probe()
-    f["boards"] = merge_soc(fpga_verdict(f), f["soc"])
+    f["boards"] = merge_acorn_flash(merge_soc(fpga_verdict(f), f["soc"]),
+                                    (f["acorn_flash"] or {}).get("read", {}))
     f["summary"] = fpga_summary(f["boards"])
     return f
 
@@ -2267,7 +2363,7 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
 def merge_fpga(doc, f):
     """Fold an fpga document into a Pi probe document (in place)."""
     doc["fpga"] = {k: f[k] for k in ("pcie", "ftdi", "jtag", "cynthion",
-                                     "cynthion_jtag", "soc")}
+                                     "cynthion_jtag", "soc", "acorn_flash")}
     doc["verdict"]["fpga"] = f["boards"]
     doc["verdict"]["summary"]["fpga"] = f["summary"]
     return doc
