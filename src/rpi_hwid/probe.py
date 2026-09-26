@@ -176,13 +176,17 @@ def dt_strings(path):
 
 # --- which board --------------------------------------------------------------
 
-def board_kind(model, compatible):
-    """"rpi" for a Raspberry Pi, "opi" for a Xunlong Orange Pi, else "other";
-    from the device tree's compatible list first, the model string second."""
+def board_kind(model, compatible, dmi=None):
+    """"rpi" for a Raspberry Pi, "opi" for a Xunlong Orange Pi, "x86" for a
+    machine that describes itself through DMI/SMBIOS rather than a device
+    tree, else "other"; from the device tree's compatible list first, the
+    model string second, DMI last (some arm64 firmware publishes both)."""
     if any(c.startswith("raspberrypi,") for c in compatible) or model.startswith("Raspberry Pi"):
         return "rpi"
     if any(c.startswith("xunlong,") for c in compatible) or "Orange Pi" in model:
         return "opi"
+    if dmi and not compatible:
+        return "x86"
     return "other"
 
 
@@ -258,6 +262,161 @@ def sunxi_serial(sid):
     if tail & 0xffffff == 0:
         tail |= 0x800000
     return "%08x%08x" % (words[0], tail)
+
+
+# --- x86: DMI / SMBIOS, the CPU, the disks --------------------------------------
+#
+# A PC has no device tree: the firmware describes the machine in its SMBIOS
+# tables, which the kernel publishes under /sys/class/dmi/id. The serials and
+# the UUID there are root-only (0400), so they are read through `sudo -n cat`
+# when a plain read is refused -- and a field neither could read is recorded
+# as unread, never passed off as absent.
+#
+# Measured on the fleet's two MinnowBoards on 2026-09-26: minnow-turbot-2 is
+# an ADI MinnowBoard Turbot (board_vendor "ADI", product "Minnowboard Turbot
+# D0 PLATFORM", Atom E3826) and minnow-turbot-1, whatever its name, a
+# CircuitCo MinnowBoard MAX ("Circuitco", "MinnowBoard MAX B3 PLATFORM",
+# Atom E3825). On both, board_serial and product_serial are the Ethernet MAC
+# without its colons -- 0008A209EFED on 00:08:a2:09:ef:ed -- and both carry
+# the same product_uuid, 00000000-6462-4524-006a-9b7737e315cf, which is
+# therefore a firmware constant and not an identity.
+
+DMI_FIELDS = ("sys_vendor", "product_name", "product_version", "product_serial",
+              "product_uuid", "board_vendor", "board_name", "board_version", "board_serial",
+              "chassis_serial", "bios_vendor", "bios_version", "bios_date")
+DMI_ROOT_ONLY = ("product_serial", "product_uuid", "board_serial", "chassis_serial")
+# The serials in the order they are believed: the board's own, then the
+# system's, then the chassis's.
+DMI_SERIALS = ("board_serial", "product_serial", "chassis_serial")
+
+# What firmware writes where the OEM wrote nothing. Compared lower-case with
+# any trailing full stop removed.
+DMI_PLACEHOLDERS = frozenset((
+    "to be filled by o.e.m", "default string", "system serial number",
+    "base board serial number", "chassis serial number", "system product name",
+    "system manufacturer", "system version", "not specified", "not applicable",
+    "none", "n/a", "oem", "o.e.m", "0123456789", "123456789", "serial",
+))
+
+
+def dmi_value(value):
+    """A DMI string, or None where it is empty or a firmware placeholder
+    (including a run of one repeated character, "00000000" or "FFFFFFFF")."""
+    v = (value or "").strip()
+    if not v or v.lower().rstrip(".") in DMI_PLACEHOLDERS or len(set(v)) == 1:
+        return None
+    return v
+
+
+def sudo_read(path):
+    """A root-only file's contents through `sudo -n cat`, or None when sudo
+    will not (no passwordless sudo) or the file cannot be read even so."""
+    try:
+        r = subprocess.run(["sudo", "-n", "cat", path], stdout=subprocess.PIPE,
+                           stderr=subprocess.PIPE, universal_newlines=True, timeout=15)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def dmi_read():
+    """Every DMI field there is, as read (None where the firmware does not
+    publish it), with `unread` listing the ones that exist and could not be
+    read; None on a machine with no DMI at all."""
+    base = ROOT + "/sys/class/dmi/id"
+    if not os.path.isdir(base):
+        return None
+    out, unread = {}, []
+    for f in DMI_FIELDS:
+        p = base + "/" + f
+        if not os.path.exists(p):
+            out[f] = None
+            continue
+        v = read(p)
+        if v is None and f in DMI_ROOT_ONLY:
+            v = sudo_read(p)
+        if v is None:
+            unread.append(f)
+        out[f] = v
+    out["unread"] = unread
+    return out
+
+
+def dmi_serial(dmi):
+    """The first DMI serial that is a serial and not a placeholder."""
+    for f in DMI_SERIALS:
+        v = dmi_value(dmi.get(f))
+        if v:
+            return v
+    return None
+
+
+def dmi_model(dmi):
+    """The machine as its maker names it: the board's vendor and name
+    ("ADI MinnowBoard Turbot"), else the system's."""
+    for vendor, name in (("board_vendor", "board_name"), ("sys_vendor", "product_name")):
+        n = dmi_value(dmi.get(name))
+        if n:
+            v = dmi_value(dmi.get(vendor))
+            return "%s %s" % (v, n) if v and not n.startswith(v) else n
+    return ""
+
+
+def cpu_info(cpuinfo):
+    """The x86 CPU's model name and how many threads it runs, or None where
+    cpuinfo has no "model name" (an ARM board's has none, or only "ARMv7")."""
+    m = re.search(r"^model name\s*:\s*(.+)$", cpuinfo, re.M)
+    if not m or not re.search(r"^vendor_id\s*:", cpuinfo, re.M):
+        return None
+    return {"model": m.group(1).strip(),
+            "threads": len(re.findall(r"^processor\s*:", cpuinfo, re.M))}
+
+
+def read_raw(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+def scsi_serial(dev):
+    """The unit serial number from a SCSI/SATA disk's VPD page 0x80, which
+    the kernel serves world-readable: [qualifier, 0x80, length (2 bytes),
+    serial]."""
+    raw = read_raw(dev + "/vpd_pg80")
+    if not raw or len(raw) < 4 or bytearray(raw)[1] != 0x80:
+        return None
+    n = struct.unpack(">H", raw[2:4])[0]
+    return raw[4:4 + n].decode("ascii", "replace").strip() or None
+
+
+def storage():
+    """Every disk the kernel has a device for, with its serial: a SATA or
+    SCSI disk's from VPD page 0x80, an NVMe drive's controller serial, an
+    SD card's or eMMC's from its CID register (the CID is the card's whole
+    identity: maker, name, serial and date). Partitions, device-mapper and
+    loop devices, and an eMMC's boot and RPMB areas, are the same silicon or
+    none, and are skipped."""
+    out = []
+    for p in sorted(glob.glob(ROOT + "/sys/block/*")):
+        name = os.path.basename(p)
+        dev = p + "/device"
+        if not os.path.exists(dev) or re.search(r"boot\d+$|rpmb$", name):
+            continue
+        e = {"name": name, "model": read(dev + "/model"), "vendor": read(dev + "/vendor"),
+             "serial": None, "removable": read(p + "/removable") == "1",
+             "size_bytes": int(read(p + "/size") or 0) * 512, "cid": None, "mmc_type": None}
+        if name.startswith("mmcblk"):
+            e.update(model=read(dev + "/name"), serial=read(dev + "/serial"),
+                     cid=read(dev + "/cid"), mmc_type=read(dev + "/type"))
+        elif name.startswith("nvme"):
+            e["serial"] = read(dev + "/serial") or read(dev + "/device/serial")
+            e["model"] = e["model"] or read(dev + "/device/model")
+        else:
+            e["serial"] = scsi_serial(dev)
+        out.append(e)
+    return out
 
 
 # --- I2C ----------------------------------------------------------------------
@@ -484,7 +643,7 @@ def board_macs(serial):
     }
 
 
-def net_interfaces(serial=None):
+def net_interfaces(serial=None, pci_onboard=False):
     """Every non-loopback interface: name, MAC, driver, whether onboard.
 
     Each one also carries `signal`: which piece of evidence settled
@@ -511,8 +670,20 @@ def net_interfaces(serial=None):
     -- it will derive a pair from a Pi 5's serial, which follows no such
     rule -- so a miss only means anything once a hit has shown the rule
     applies to this board at all.
+
+    On a PC (`pci_onboard`) a wired port on the PCI bus is taken as the
+    board's own, and two more signals say how firmly:
+
+    serial-mac       the firmware's own DMI serial is this MAC: the
+                     MinnowBoards' is, colons dropped (0008A209EFED on
+                     00:08:a2:09:ef:ed), so the port is provably the board's.
+    pci              a wired PCI port the serial does not name: soldered down
+                     on most boards, but a PCIe card would read the same.
     """
     own = board_macs(serial)
+    serial_hex = re.sub(r"[:-]", "", (serial or "").lower())
+    if not re.match(r"^[0-9a-f]{12}$", serial_hex):
+        serial_hex = ""
     out = []
     for p in sorted(glob.glob(ROOT + "/sys/class/net/*")):
         name = os.path.basename(p)
@@ -538,11 +709,18 @@ def net_interfaces(serial=None):
         # interface ended up being called.
         if mac in own:
             onboard, kind = True, own[mac]
+        signal = None
+        if pci_onboard and "/pci" in dev and not usb_dev and kind == "eth":
+            onboard = True
+            signal = ("serial-mac" if serial_hex
+                      and (mac or "").replace(":", "").lower() == serial_hex else "pci")
         out.append({"name": name, "mac": mac, "driver": drv,
                     "onboard": onboard, "kind": kind, "usb": usb_dev,
-                    "signal": None, "speed": read(p + "/speed")})
+                    "signal": signal, "speed": read(p + "/speed")})
     derived = any(i["mac"] in own for i in out)
     for i in out:
+        if i["signal"]:
+            continue
         if i["mac"] in own:
             i["signal"] = "derived-mac"
         elif i["onboard"]:
@@ -579,10 +757,18 @@ def collect():
     d["model"] = read(ROOT + "/proc/device-tree/model") or ""
     compatible = dt_strings(ROOT + "/proc/device-tree/compatible")
     d["compatible"] = compatible
-    d["board"] = board_kind(d["model"], compatible)
+    # DMI only where there is no device tree: that is what makes a PC a PC
+    # here, and a device-tree board's DMI (where it has any) adds nothing.
+    d["dmi"] = dmi_read() if not d["model"] and not compatible else None
+    d["board"] = board_kind(d["model"], compatible, d["dmi"])
     is_pi = d["board"] == "rpi"
     cpuinfo = read(ROOT + "/proc/cpuinfo") or ""
+    d["cpu"] = cpu_info(cpuinfo)
+    d["storage"] = storage()
     d["serial"] = read(ROOT + "/proc/device-tree/serial-number")
+    if d["board"] == "x86":
+        d["model"] = dmi_model(d["dmi"])
+        d["serial"] = dmi_serial(d["dmi"])
     m = re.search(r"^Serial\s*:\s*([0-9a-fA-F]+)", cpuinfo, re.M)
     d["cpuinfo_serial"] = m.group(1) if m else None
     # The Allwinner SID: recorded whenever the nvmem is there, and the
@@ -638,7 +824,7 @@ def collect():
     d["throttled"] = ("0x%x" % t) if t is not None else None
     d["undervoltage_now"] = bool(t & 0x1) if t is not None else None
     d["undervoltage_since_boot"] = bool(t & 0x10000) if t is not None else None
-    d["interfaces"] = net_interfaces(d["serial"])
+    d["interfaces"] = net_interfaces(d["serial"], pci_onboard=d["board"] == "x86")
     d["usb_net"] = usb_net_adapters(d["interfaces"])
     pi5 = "Pi 5" in d["model"]
     d["pi5"] = pi5
@@ -677,6 +863,28 @@ def verdict(d):
         ev.append("Allwinner SID %s -> serial %s%s" % (
             " ".join(d["sid"]), d["sid_serial"],
             "" if d["sid_serial"] == d["serial"] else " (device tree says %s)" % d["serial"]))
+    dmi = d.get("dmi")
+    if dmi:
+        ev.append("DMI: board %s %s %s, system %s %s %s, BIOS %s %s; %s (MemTotal %s kB)" % (
+            dmi.get("board_vendor"), dmi.get("board_name"), dmi.get("board_version"),
+            dmi.get("sys_vendor"), dmi.get("product_name"), dmi.get("product_version"),
+            dmi.get("bios_version"), dmi.get("bios_date"),
+            nominal_memory(d.get("mem_kb")) or "memory not read", d.get("mem_kb")))
+        ev.append("DMI serials: board %s, product %s, chassis %s; product uuid %s" % tuple(
+            dmi.get(f) for f in ("board_serial", "product_serial", "chassis_serial",
+                                 "product_uuid")))
+        dmi_unread = [f for f in ("board_serial", "product_serial", "chassis_serial",
+                                  "product_uuid") if f in dmi.get("unread", ())]
+        if dmi_unread:
+            ev.append("DMI %s could not be read, even through sudo -n: run "
+                      "`sudo cat /sys/class/dmi/id/%s` on the host, or give the probe "
+                      "passwordless sudo" % (", ".join(dmi_unread), dmi_unread[0]))
+    if d.get("cpu"):
+        ev.append("CPU: %s, %d threads" % (d["cpu"]["model"], d["cpu"]["threads"]))
+    for s in d.get("storage") or ():
+        ev.append("storage %s %s serial %s%s%s" % (
+            s["name"], s["model"], s["serial"], " cid " + s["cid"] if s["cid"] else "",
+            " (removable)" if s["removable"] else ""))
     if d.get("armbian"):
         a = d["armbian"]
         ev.append("Armbian %s on board id %s (%s)" % (
@@ -768,7 +976,9 @@ def verdict(d):
         # A HAT found above still names the supply; this is only what is left
         # when it did not. An H3 has no PMIC and no firmware to ask.
         power = "no power sensing on this board: nothing on it reports its supply"
-    if not header:
+    if not header and d.get("board") == "x86":
+        header = ["no HAT header on this board"]
+    elif not header:
         header = ["nothing identifiable on the header" if not unread else
                   "nothing identifiable on the header, and it was not fully read"]
     return {"header": header, "power": power,
@@ -845,6 +1055,10 @@ def summary(d, header, power):
         "fan": (d.get("fan_dt") == "okay") if d["pi5"] else None,
         "max_current_ma": d.get("max_current_ma") if d["pi5"] else None,
         "ext5v_v": d.get("ext5v_v") if d["pi5"] else None,
+        # A PC's: the firmware's DMI strings, and the CPU's model name. None
+        # on a device-tree board, which carries its identity in the fields above.
+        "dmi": d.get("dmi"),
+        "cpu": (d.get("cpu") or {}).get("model") if d.get("dmi") else None,
     }
 
 

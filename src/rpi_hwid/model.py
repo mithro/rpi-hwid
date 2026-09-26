@@ -156,6 +156,11 @@ class Summary:
     fan: bool | None = None
     max_current_ma: int | None = None
     ext5v_v: float | None = None
+    # A PC, which has no device tree: its firmware's DMI strings as the probe
+    # read them (with `unread` naming any it could not), and its CPU's model
+    # name. None on every device-tree board.
+    dmi: dict[str, Any] | None = None
+    cpu: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Summary:
@@ -175,6 +180,7 @@ class Summary:
             usb_net=tuple(UsbNetAdapter(**u) for u in d.get("usb_net", ())),
             rtc_battery=d.get("rtc_battery"), fan=d.get("fan"),
             max_current_ma=d.get("max_current_ma"), ext5v_v=d.get("ext5v_v"),
+            dmi=d.get("dmi"), cpu=d.get("cpu"),
         )
 
     def to_dict(self) -> dict[str, Any]:
