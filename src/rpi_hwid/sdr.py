@@ -11,11 +11,13 @@ or appended to the Pi probe by ``rpi-hwid collect --sdr``, which merges its
 findings into that document's ``verdict.summary.sdr``.
 
 Every radio here is usually held by a live service -- OpenWebRX, the KrakenSDR
-DoA software, readsb -- so nothing in this file opens one. It reads sysfs, and
-the one tool it runs, ``iio_attr``, it runs against a Pluto's *network* IIO
-context, a second client of the Pluto's own iiod that leaves the USB IIO
-interface OpenWebRX streams through alone. Established on the fleet's four
-radios, 2026-09-26:
+DoA software, readsb -- so by default nothing in this file opens one. It reads
+sysfs, and the one tool it runs, ``iio_attr``, it runs against a Pluto's
+*network* IIO context, a second client of the Pluto's own iiod that leaves the
+USB IIO interface OpenWebRX streams through alone. With --sdr-open, and only
+on a card nothing holds, it also opens a usdr card the way its own tools do
+(usdr_dm_sensors, usdr_flash: both read-only) for what only an open card says.
+Established on the fleet's four radios, 2026-09-26:
 
 RTL2832U (0bda:2838)
     Realtek's demodulator, the RTL-SDR. Its EEPROM gives the USB strings and
@@ -134,8 +136,11 @@ def sdr_pcie_devices():
         # sysfs serial_number is root-only (0400); sudo -n, so a host without
         # passwordless sudo reports it unread rather than prompting
         rc, dsn, err = sdr_sh(["sudo", "-n", "cat", p + "/serial_number"])
+        cfg = sdr_read_bytes(p + "/config", 8)
         out.append({
             "slot": os.path.basename(p), "id": pid,
+            "health": usdr_health(cfg, bool(drv)),
+            "usdr_node": usdr_node(os.path.basename(p)),
             "subsystem": "%s:%s" % ((sdr_read(p + "/subsystem_vendor") or "0x????")[2:],
                                     (sdr_read(p + "/subsystem_device") or "0x????")[2:]),
             "class": sdr_read(p + "/class"), "revision": sdr_read(p + "/revision"),
@@ -148,6 +153,93 @@ def sdr_pcie_devices():
             "max_link_width": sdr_read(p + "/max_link_width"),
         })
     return out
+
+
+def sdr_read_bytes(path, n):
+    try:
+        with open(path, "rb") as f:
+            return f.read(n)
+    except OSError:
+        return None
+
+
+def usdr_health(cfg, bound):
+    """Why a usdr card is not answering, from the first bytes of its config
+    space (user-readable in sysfs), or None when it looks alive.
+
+    Measured on rpi-sdr-xsdr 2026-09-26: the card silently dropped off its
+    link some days after the driver had brought it up -- no dmesg line, the
+    endpoint still listed, but its command register back to Mem- BusMaster-
+    and the library reading HWID ffffffff. A reboot brought it back. A
+    config read of a dead link answers all ones.
+    """
+    if not cfg or len(cfg) < 6:
+        return "config space unreadable"
+    vendor = cfg[0] | (cfg[1] << 8)
+    command = cfg[4] | (cfg[5] << 8)
+    if vendor == 0xFFFF:
+        return ("card not answering: its config space reads all ones (link down); "
+                "reboot the host, or power-cycle it if that does not bring it back")
+    if bound and not command & 0x6:
+        return ("card not answering: the driver is bound but the card's memory and "
+                "bus-master enables are clear, so it has reset or dropped its link since "
+                "the driver brought it up; reboot the host, or power-cycle it")
+    return None
+
+
+def usdr_node(slot):
+    """The /dev/usdrN the driver made for the card at `slot`, or None."""
+    for d in sorted(glob.glob(SDR_ROOT + "/sys/class/usdr/usdr*")):
+        if os.path.basename(os.path.realpath(d + "/device")) == slot:
+            return "/dev/" + os.path.basename(d)
+    return None
+
+
+USDR_HWID = re.compile(r"\[XDEV\]\s+HWID\s+([0-9a-fA-F]{8})")
+USDR_FLASH_ID = re.compile(r"Flash ID id ([0-9a-fA-F]{8})")
+USDR_FW = re.compile(r"Actual firmware in use:\s+FirmwareID ([0-9a-fA-F]{8})")
+USDR_IMAGE = re.compile(r"(Golden|Master) image: DEVID ([0-9a-fA-F]{8}) "
+                        r"FirmwareID ([0-9a-fA-F]{8})")
+
+
+def usdr_open(p):
+    """Open the card the way its own tools do and read what only an open
+    card says: the HWID register (which LMS7002M card this is), the
+    configuration flash's JEDEC id and the images in it. Only with
+    --sdr-open, only on a healthy card, and only when nothing holds it:
+    OpenWebRX opens the card when a listener connects, and a second open
+    would take it from under them."""
+    if p["health"]:
+        return {"error": p["health"]}
+    if not p["usdr_node"]:
+        return {"error": "no /dev/usdr node for %s: driver not bound" % p["slot"]}
+    rc, out, err = sdr_sh(["sudo", "-n", "fuser", p["usdr_node"]])
+    if rc == 0:
+        return {"error": "%s is held by pid %s: not opened" % (p["usdr_node"], out.split())}
+    if err.strip() and "sudo" in err:
+        return {"error": "sudo -n fuser: %s" % err.strip()}
+    res = {}
+    rc, out, err = sdr_sh(["sudo", "-n", "usdr_dm_sensors", "-l", "3"], timeout=60)
+    m = USDR_HWID.search(out + err)
+    if m:
+        res["hwid"] = m.group(1).lower()
+    rc, out, err = sdr_sh(["sudo", "-n", "usdr_flash"], timeout=60)
+    text = out + err
+    m = USDR_FLASH_ID.search(text)
+    if m:
+        # usdr reads RDID as a little-endian word: 1f16421f is 1f 42 16
+        raw = m.group(1).lower()
+        res["flash_jedec"] = "0x" + raw[6:8] + raw[4:6] + raw[2:4]
+    m = USDR_FW.search(text)
+    if m:
+        res["firmware_id"] = m.group(1).lower()
+    for kind, devid, fwid in USDR_IMAGE.findall(text):
+        res[kind.lower() + "_image"] = {"devid": devid.lower(), "firmware_id": fwid.lower()}
+    if res.get("hwid") == "ffffffff":
+        res["error"] = ("card not answering: HWID reads ffffffff; reboot the host, or "
+                        "power-cycle it if that does not bring it back")
+        del res["hwid"]
+    return res
 
 
 def iio_range(text):
@@ -289,7 +381,14 @@ def sdr_verdict(d):
         devices.append(dev)
     for p in d["pcie"]:
         family = USDR_FAMILY.get(USDR_PCIE[p["id"]])
+        opened = (d.get("usdr_open") or {}).get(p["slot"]) or {}
+        golden = opened.get("golden_image") or {}
         devices.append({
+            "usdr_hwid": opened.get("hwid"), "flash_jedec": opened.get("flash_jedec"),
+            "fpga_devid": golden.get("devid"), "usdr_images": {
+                k: opened[k] for k in ("firmware_id", "golden_image", "master_image")
+                if k in opened} or None,
+            "usdr_error": p["health"] or opened.get("error"),
             "kind": "usdr", "slot": p["slot"], "pcie_id": p["id"],
             "pcie_subsystem": p["subsystem"], "usdr_family": family,
             "driver": p["driver"], "pcie_dsn": p["dsn"], "pcie_link": link_text(p),
@@ -305,7 +404,8 @@ SDR_SUMMARY_KEYS = (
     "pcie_id", "pcie_subsystem", "usdr_family", "driver", "pcie_dsn", "pcie_link",
     "iio_uri", "hw_model", "hw_model_variant", "hw_serial", "fw_version", "rf_chip",
     "xo_hz", "rx_lo_hz", "tx_lo_hz", "rx_rate_hz", "tx_rate_hz", "rx_bw_hz", "tx_bw_hz",
-    "rx_channels", "tx_channels", "adc_bits")
+    "rx_channels", "tx_channels", "adc_bits", "usdr_hwid", "flash_jedec", "fpga_devid",
+    "usdr_error")
 
 
 def sdr_summary(devices):
@@ -317,8 +417,9 @@ def sdr_summary(devices):
     return out
 
 
-def collect_sdr():
+def collect_sdr(open_radios=False):
     s = {"usb": sdr_usb_devices(), "pcie": sdr_pcie_devices(), "iio": {}}
+    s["usdr_open"] = {p["slot"]: usdr_open(p) for p in s["pcie"]} if open_radios else {}
     for u in s["usb"]:
         if u["id"] in PLUTO_IDS:
             addr, why = pluto_address(u)
@@ -330,7 +431,7 @@ def collect_sdr():
 
 def merge_sdr(doc, s):
     """Fold an sdr document into a Pi probe document (in place)."""
-    doc["sdr"] = {k: s[k] for k in ("usb", "pcie") if k in s}
+    doc["sdr"] = {k: s[k] for k in ("usb", "pcie", "usdr_open") if k in s}
     if "iio" in s:
         doc["sdr"]["iio"] = s["iio"]
     doc["verdict"]["sdr"] = s["devices"]
@@ -346,7 +447,7 @@ def sdr_describe(devices):
 
 
 def sdr_main():
-    s = collect_sdr()
+    s = collect_sdr("--sdr-open" in sys.argv)
     if "--json" in sys.argv:
         print(json.dumps(s, indent=1))
         return

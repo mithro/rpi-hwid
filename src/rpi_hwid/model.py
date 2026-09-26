@@ -171,6 +171,8 @@ class SdrDevice:
     adc_bits: int | None = None
     # Read by opening the radio, which only an opt-in read does (--sdr-open)
     usdr_hwid: str | None = None           # the M2_LM7_1 card's HWID register, hex
+    usdr_error: str | None = None          # why the card could not be read: not answering
+    fpga_devid: str | None = None          # the IDCODE its golden image was built for
     flash_jedec: str | None = None         # its configuration flash
     flash_uid: str | None = None           # that flash's factory serial, where it has one
     flash_uid_state: str | None = None     # read | none

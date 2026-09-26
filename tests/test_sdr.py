@@ -65,9 +65,14 @@ def _usb(root, path, vid, pid, manufacturer=None, product=None, serial=None,
     return d
 
 
-def _pci(root, slot, vendor, device, driver=None, sub=("0x10ee", "0x0007")):
+def _pci(root, slot, vendor, device, driver=None, sub=("0x10ee", "0x0007"),
+         command=0x0006):
     d = root / "sys/bus/pci/devices" / slot
     d.mkdir(parents=True)
+    # the head of config space: vendor, device, command (Mem+ BusMaster+)
+    (d / "config").write_bytes(int(vendor, 16).to_bytes(2, "little")
+                               + int(device, 16).to_bytes(2, "little")
+                               + command.to_bytes(2, "little") + b"\x10\x00")
     for name, value in (("vendor", vendor), ("device", device), ("class", "0x058000"),
                         ("subsystem_vendor", sub[0]), ("subsystem_device", sub[1]),
                         ("revision", "0x00"), ("current_link_speed", "5.0 GT/s PCIe"),
@@ -78,6 +83,10 @@ def _pci(root, slot, vendor, device, driver=None, sub=("0x10ee", "0x0007")):
         drv = root / "sys/bus/pci/drivers" / driver
         drv.mkdir(parents=True, exist_ok=True)
         (d / "driver").symlink_to(drv)
+    if driver == "usdr":
+        node = root / "sys/class/usdr/usdr0"
+        node.mkdir(parents=True)
+        (node / "device").symlink_to(d)
     return d
 
 
@@ -308,6 +317,85 @@ def test_collect_appends_the_sdr_module_on_request():
     assert "merge_sdr(_doc, collect_sdr())" in src
     assert "collect_fpga" not in src
     assert "merge_sdr" not in probe_source()
+    assert "collect_sdr(open_radios=True)" in probe_source(sdr=True, sdr_open=True)
     both = probe_source(fpga=True, sdr=True)
     assert both.index("merge_fpga(_doc") < both.index("merge_sdr(_doc")
 
+
+
+# `sudo usdr_dm_sensors -l 3` and `sudo usdr_flash` on rpi-sdr-xsdr after its
+# reboot, 2026-09-26 (the lines the probe reads; the tools print more)
+XSDR_SENSORS = "14:47:21.100010 ERROR:  [XDEV] HWID 8030012d\n"
+XSDR_FLASH = """Device was created: `usdr0`!
+Flash ID id 1f16421f (Adesto SPI/QPI series 32 Mb)!
+It looks like the FPGA M image is corrupted! res=-22
+Actual firmware in use:      FirmwareID 83355581 (20260616212201)
+Golden image: DEVID 0362c093 FirmwareID 83355581 (20260616212201)
+Master image: DEVID 00000000 FirmwareID 00000000 (0)
+"""
+
+
+def _xsdr_tools(root, held=False):
+    def fake(args, timeout=15):
+        if args[:3] == ["sudo", "-n", "cat"]:
+            return 0, "00-00-00-00-12-34-56-78\n", ""
+        if args == ["sudo", "-n", "fuser", "/dev/usdr0"]:
+            return (0, " 659", "/dev/usdr0:        ") if held else (1, "", "")
+        if args == ["sudo", "-n", "usdr_dm_sensors", "-l", "3"]:
+            return 0, "", XSDR_SENSORS
+        if args == ["sudo", "-n", "usdr_flash"]:
+            return 0, "", XSDR_FLASH
+        return 127, "", "not here"
+    return fake
+
+
+def test_the_open_read_names_the_card_and_its_flash(xsdr_root, monkeypatch):
+    monkeypatch.setattr(sdr, "sdr_sh", _xsdr_tools(xsdr_root))
+    s = sdr.collect_sdr(open_radios=True)
+    (x,) = s["summary"]
+    assert x["usdr_hwid"] == "8030012d"
+    assert x["flash_jedec"] == "0x1f4216"
+    assert x["fpga_devid"] == "0362c093"
+    (dev,) = s["devices"]
+    # the images are evidence, not identity: gateware changes
+    assert dev["usdr_images"]["master_image"] == {"devid": "00000000",
+                                                  "firmware_id": "00000000"}
+
+
+def test_a_card_someone_holds_is_not_opened(xsdr_root, monkeypatch):
+    calls = []
+    tools = _xsdr_tools(xsdr_root, held=True)
+
+    def spy(args, timeout=15):
+        calls.append(args)
+        return tools(args, timeout)
+
+    monkeypatch.setattr(sdr, "sdr_sh", spy)
+    (x,) = sdr.collect_sdr(open_radios=True)["summary"]
+    assert "held by" in x["usdr_error"]
+    assert not [c for c in calls if "usdr_flash" in c or "usdr_dm_sensors" in c]
+
+
+def test_without_the_flag_nothing_is_opened(xsdr_root, monkeypatch):
+    calls = []
+    tools = _xsdr_tools(xsdr_root)
+    monkeypatch.setattr(sdr, "sdr_sh", lambda a, timeout=15: calls.append(a) or tools(a))
+    sdr.collect_sdr()
+    assert [c[:3] for c in calls] == [["sudo", "-n", "cat"]]
+
+
+def test_a_card_that_dropped_off_its_link_says_so(tmp_path, monkeypatch):
+    """rpi-sdr-xsdr, 2026-09-26: bound, listed, and its command register
+    back to Mem- BusMaster-; the library read HWID ffffffff."""
+    _pci(tmp_path, "0001:01:00.0", "0x10ee", "0x7049", driver="usdr", command=0)
+    monkeypatch.setattr(sdr, "SDR_ROOT", str(tmp_path))
+    monkeypatch.setattr(sdr, "sdr_sh", _xsdr_tools(tmp_path))
+    (x,) = sdr.collect_sdr(open_radios=True)["summary"]
+    assert x["usdr_error"].startswith("card not answering")
+    assert "usdr_hwid" not in x
+
+
+def test_a_dead_link_reads_all_ones():
+    assert sdr.usdr_health(b"\xff" * 8, True).startswith("card not answering")
+    assert sdr.usdr_health(b"\xee\x10\x49\x70\x06\x00\x10\x00", True) is None
+    assert sdr.usdr_health(None, True) == "config space unreadable"

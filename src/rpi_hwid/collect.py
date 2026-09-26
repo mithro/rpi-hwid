@@ -36,7 +36,7 @@ def probe_source(
     fpga: bool = False, jtag: bool = False, flash: bool = False, tinytapeout: bool = False,
     take_port: bool = True, esp32: bool = False, esp32_read: Sequence[str] = (),
     esp32_radio: Sequence[str] = (),
-    sdr: bool = False,
+    sdr: bool = False, sdr_open: bool = False,
 ) -> str:
     """The script to feed to ``python3 -`` on a host.
 
@@ -73,7 +73,9 @@ def probe_source(
     if sdr:
         # the radios: sysfs and a Pluto's network IIO context, nothing opened
         extra += "\n" + pkg.joinpath("sdr.py").read_text()
-        glue += "merge_sdr(_doc, collect_sdr())\n"
+        # opening a free usdr card is its own opt-in, written out only when asked
+        glue += ("merge_sdr(_doc, collect_sdr(open_radios=True))\n" if sdr_open
+                 else "merge_sdr(_doc, collect_sdr())\n")
     glue += "print(json.dumps(_doc, indent=1))\n"
     return "RPI_HWID_EMBEDDED = True\n" + probe + extra + glue
 
@@ -103,10 +105,12 @@ def probe_host(
     esp32_read: Sequence[str] = (),
     esp32_radio: Sequence[str] = (),
     sdr: bool = False,
+    sdr_open: bool = False,
 ) -> Result:
     """Run the probe on one host; `host` may carry its own ``user@``."""
-    source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32, esp32_read,
-                          esp32_radio, sdr)
+    source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32=esp32,
+                          esp32_read=esp32_read, esp32_radio=esp32_radio,
+                          sdr=sdr or sdr_open, sdr_open=sdr_open)
     args = ["--json"]
     if "@" in host:
         user_list: Sequence[str] = [host.split("@", 1)[0]]
@@ -178,6 +182,7 @@ def collect(
     esp32_read: Sequence[str] = (),
     esp32_radio: Sequence[str] = (),
     sdr: bool = False,
+    sdr_open_hosts: Sequence[str] = (),
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
@@ -204,7 +209,7 @@ def collect(
                           take_port=take_port,
                           esp32=esp32 or host in reads or host in radios,
                           esp32_read=reads.get(host, ()), esp32_radio=radios.get(host, ()),
-                          sdr=sdr)
+                          sdr=sdr, sdr_open=host in sdr_open_hosts)
 
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
