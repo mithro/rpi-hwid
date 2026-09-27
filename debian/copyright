@@ -161,6 +161,17 @@ License: trademark
  logo SVG with the wordmark paths removed and the viewBox trimmed to the
  symbol, whose paths are untouched; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/risc-v-simple.svg
+Copyright: RISC-V International
+License: trademark
+ The RISC-V mark (the "RV" without the wordmark), a registered trademark
+ of RISC-V International, drawn only on the label of a part whose
+ processor implements the RISC-V ISA, to say so. Cut from risc-v.svg,
+ RISC-V International's own stacked logo file: the wordmark's shapes
+ deleted and the viewBox trimmed to the mark, whose paths and colours are
+ untouched. On the same terms as risc-v.svg; see
+ src/rpi_hwid/artwork/README.md.
+
 Files: src/rpi_hwid/artwork/tasmota.svg
 Copyright: Theo Arends and the Tasmota contributors (the logo designed by tmo)
 License: GPL-3.0-only
