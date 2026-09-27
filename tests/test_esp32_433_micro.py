@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import glob
 import json
 import pathlib
@@ -95,9 +96,9 @@ def test_the_radio_label_is_the_plain_label_plus_the_radio():
         plain.ident, plain.ident_caption, plain.title, plain.mark, plain.subtitle,
         plain.qr_content)
     assert m.icons == (*plain.icons, Icon("antenna", "433"))
-    # the flash and both halves of the unique id stay; the chip row, the
-    # revision and crystal every SuperMini shares, gives way to the radio
-    assert [r.caption for r in plain.rows] == ["chip", "flash", "uid", ""]
+    # the flash, its uid and both halves of the eFuse id stay; the chip row,
+    # the revision every SuperMini shares, gives way to the radio
+    assert [r.caption for r in plain.rows] == ["chip", "flash", "uid", "eFuse", ""]
     assert m.rows == plain.rows[1:]
     assert m.extra is not None
     # the part number still prints whole beside wifi, bluetooth and the 433
@@ -154,3 +155,30 @@ def test_render_and_decode_the_radio_labels(tmp_path):
     for png in sorted(glob.glob(str(tmp_path / "page-*.png"))):
         got |= {b.text for b in zxingcpp.read_barcodes(Image.open(png))}
     assert got == {"44:1b:f6:2e:b3:80", "e8:3d:c1:8c:3e:b8"}
+
+
+@pytest.mark.parametrize("node", [SX, BLUE], ids=["sx1278", "cc1101-blue"])
+def test_the_radio_line_fits_under_both_ids(node):
+    """Tim, 2026-09-27: every id is printed, and the 433 labels lose their
+    chip row for it. The flash, the uid on one row and the eFuse id on two
+    leave the radio line room under them down to the foot caption's line,
+    its text no smaller than the labels print."""
+    import io
+
+    m = _one(node)
+    assert [r.caption for r in m.rows] == ["flash", "uid", "eFuse", ""]
+    assert len(m.rows[1].value) == 20          # the XMC's uid, trimmed
+    boxes = []
+    real = m.extra
+
+    def extra(cell, box):
+        boxes.append(box)
+        real(cell, box)
+
+    micro.render_micro([dataclasses.replace(m, extra=extra)], io.BytesIO())
+    ((_x, y, _w, h),) = boxes
+    last_row_bottom = (micro.band_top() + micro.SPEC_H + micro.SPEC_GAP
+                       + 3 * micro.spec_pitch() + esp32_micro.UID_PT * 0.72)
+    assert y > last_row_bottom
+    assert y + h == pytest.approx(micro.caption_baseline())
+    assert h >= micro.MIN_SIZE * 0.72

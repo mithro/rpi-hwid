@@ -5,21 +5,22 @@ SuperMini wired to a 433 MHz radio board: the blue Ebyte E07-M1101D or the
 green D-Sun (both a TI CC1101), or the Ai-Thinker Ra-02 breakout (a Semtech
 SX1278). Their label is the plain ESP32 label from
 ``rpi_hwid.esp32_micro`` -- the part number and its spec strip, the Wi-Fi
-MAC in the QR and along the foot, the flash, and a 128-bit unique id over
-two rows -- with the radio added:
+MAC in the QR and along the foot, the flash, and both the node's ids: its
+flash's unique id on one row and the chip's eFuse id on two -- with the
+radio added:
 
   * an antenna whose mast is the band, "433" set upright, after the Wi-Fi
     and Bluetooth glyphs;
-  * under the unique id, a line naming the radio: the chip maker's mark and
+  * under the ids, a line naming the radio: the chip maker's mark and
     the board maker's where there is one to draw, then the chip and the
     board: "[TI] CC1101 · E07-M1101D", "[Semtech] [Ai-Thinker] SX1278 · Ra-02".
 
 The room for that line is the plain label's ``chip`` row (the silicon
-revision and the crystal), which every C3 SuperMini shares: it says nothing
-about which node this is, whereas the flash row names a part, the unique
-id's two rows are the only copy of a serial read from the node, and the
-radio is what this label exists to add. The collected document keeps the
-revision and crystal.
+revision), which every C3 SuperMini shares: it says nothing about which
+node this is, whereas the flash row names a part, the three rows of ids are
+the only copies of serials read from the node, and the radio is what this
+label exists to add (Tim, 2026-09-27, accepting that these labels lose the
+chip row to print both ids). The collected document keeps the revision.
 
 Everything on the radio line was read from the node (``rpi_hwid.esp32_radio``):
 the chip from the firmware's answers, and the board from the pins its

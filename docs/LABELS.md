@@ -550,14 +550,14 @@ gets the ESP32 label with the radio added (`--only esp32-433`):
 
 - **Header:** an antenna whose mast is the band, `433` set upright, after the
   Wi-Fi and Bluetooth glyphs. The part number still prints whole.
-- **Radio line:** under the unique id, the chip maker's mark (TI for the
+- **Radio line:** under the ids, the chip maker's mark (TI for the
   CC1101, Semtech for the SX1278), the board maker's where there is one
   (Ai-Thinker for the Ra-02), then the chip and the board: `CC1101 ·
   E07-M1101D`, `CC1101 · D-Sun`, `SX1278 · Ra-02`.
 
-The room is the `chip` row, the revision and crystal, which every C3 SuperMini
-shares and the document keeps. The flash row and both rows of the unique id
-stay.
+The room is the `chip` row, the revision, which every C3 SuperMini shares and
+the document keeps. The flash row and all three rows of ids stay: the flash's
+uid, trimmed to one row, and the chip's eFuse id on two.
 
 The board is named by the pins the node's firmware found the chip on at boot,
 because each board puts its signals on different header positions; the maps are
