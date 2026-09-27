@@ -203,8 +203,11 @@ def test_the_module_is_a_plain_python35_script():
 # --- the read script, against a fake esptool ------------------------------------
 #
 # Enough of esptool, espefuse and pyserial for READ_SCRIPT to run in a real
-# child python: the flash answers 0x4B from a fixed 64-bit uid and, like
-# esptool 4.7 and 5.2, refuses to read more than 32 bits back at once.
+# child python. The flash sits behind a fake of the C3's SPI controller
+# registers, which is how the read reaches it: it answers RDID, the status
+# registers, Read Unique ID (a 128-bit id ending in 0xFF, as an XMC's does)
+# and SFDP, and -- like a real C3 -- reads nothing back from a command that
+# has a MOSI phase.
 
 FAKE_ESPTOOL = '''
 import os
@@ -213,7 +216,11 @@ from . import cmds
 '''
 FAKE_CMDS = '''
 import os
-UID = bytes.fromhex("c1a2b3d4e5f60718")
+UID = bytes.fromhex("c1a2b3d4e5f607180150ffffffffffff")
+SFDP = bytes.fromhex("53464450060100ff00060110300000ff") + bytes([255]) * 32 + bytes.fromhex(
+    "e520f9ffffffff01") + bytes([255]) * 200
+BASE = 0x60002000
+USR, USR1, USR2, MISO, MOSI, W0 = (BASE + o for o in (0x18, 0x1C, 0x20, 0x28, 0x24, 0x58))
 LOG = os.environ["FAKE_LOG"]
 
 def log(s):
@@ -243,8 +250,41 @@ class Port:
 
 class ESP:
     CHIP_NAME = "ESP32-C3"
+    SPI_REG_BASE, SPI_USR_OFFS, SPI_USR1_OFFS, SPI_USR2_OFFS = BASE, 0x18, 0x1C, 0x20
+    SPI_MOSI_DLEN_OFFS, SPI_MISO_DLEN_OFFS, SPI_W0_OFFS = 0x24, 0x28, 0x58
     def __init__(self):
         self._port = Port()
+        self.regs = {}
+    def read_reg(self, a):
+        return self.regs.get(a, 0)
+    def write_reg(self, a, v):
+        self.regs[a] = v
+        if a == BASE and v & (1 << 18):
+            self.run()
+            self.regs[BASE] = 0
+    def run(self):
+        cmd, usr = self.regs[USR2] & 0xFF, self.regs[USR]
+        n = (self.regs[MISO] + 1) // 8
+        log("spi 0x%02x %d" % (cmd, n))
+        if cmd not in (0x9F, 0x05, 0x35, 0x15, 0x4B, 0x5A):
+            raise FatalError("the fake flash was sent 0x%02x" % cmd)
+        if cmd == 0x4B and os.environ.get("FAKE_UID") == "broken":
+            raise FatalError("SPI command did not complete in time")
+        if usr & (1 << 27):
+            data = bytes(n)                 # a C3 reads nothing after MOSI
+        elif cmd == 0x4B:
+            # four dummy bytes as address and dummy clocks, then the id
+            assert usr & (1 << 30) and usr & (1 << 29), "0x4B without its dummies"
+            data = (UID + bytes([255]) * 64)[:n]
+        elif cmd == 0x5A:
+            a = self.regs[BASE + 4]
+            data = (SFDP + bytes([255]) * 64)[a:a + n]
+        else:
+            data = ({0x9F: bytes.fromhex("204016") * 22, 0x05: bytes([0]), 0x35: bytes([2]),
+                     0x15: bytes([0x20])}[cmd] * 64)[:n]
+        data += bytes(-len(data) % 4)
+        for i in range(0, len(data), 4):
+            self.regs[W0 + i] = int.from_bytes(data[i:i + 4], "little")
     def get_chip_description(self):
         return "ESP32-C3 (QFN32) (revision v0.4)"
     def get_chip_features(self):
@@ -257,14 +297,6 @@ class ESP:
         pass
     def flash_id(self):
         return 0x164020
-    def run_spiflash_command(self, cmd, data=b"", read_bits=0):
-        if read_bits > 32:
-            raise FatalError("Reading more than 32 bits back from a SPI flash "
-                             "operation is unsupported")
-        if os.environ.get("FAKE_UID") == "broken":
-            raise FatalError("SPI command did not complete in time")
-        skip = len(data) - 4
-        return int.from_bytes(UID[skip:skip + 4], "little")
     def hard_reset(self):
         log("hard_reset")
 
@@ -328,18 +360,25 @@ def fake_esptool(tmp_path, monkeypatch):
     return log
 
 
-def test_the_read_joins_the_flash_uid_from_two_32_bit_halves(fake_esptool):
+def test_the_read_takes_the_whole_uid_and_sfdp_through_the_registers(fake_esptool):
     result, error, _text = esp32.run_read("/dev/ttyACM3")
     assert error is None
-    assert result["flash_uid"] == "c1a2b3d4e5f60718"
+    assert result["flash_uid_raw"] == "c1a2b3d4e5f607180150ffffffffffff" + "ff" * 16
+    assert result["flash_rdid"] == "2040162040162040"
+    assert result["flash_status"] == {"05": "00", "35": "02", "15": "20"}
+    assert result["flash_sfdp_raw"].startswith("53464450060100ff")
+    assert len(result["flash_sfdp_raw"]) == 512
     assert result["flash_jedec"] == "0x204016"
     assert result["chip_description"] == "ESP32-C3 (QFN32) (revision v0.4)"
     assert result["efuse"]["OPTIONAL_UNIQUE_ID"] == "00112233445566778899aabbccddeeff"
     assert "BLOCK_KEY0" not in result["efuse"], "no key block is ever printed"
     assert result["errors"] == {"hupcl": "OSError: not a tty"}
     assert "USB_UART_CHIP_RESET" in result["boot_after"]
-    assert fake_esptool.read_text().splitlines() == [
-        "detect default_reset", "hard_reset", "close"]
+    lines = fake_esptool.read_text().splitlines()
+    assert lines[0] == "detect default_reset"
+    assert lines[-2:] == ["hard_reset", "close"]
+    assert set(lines[1:-2]) == {"spi 0x4b 32", "spi 0x9f 8", "spi 0x05 1", "spi 0x35 1",
+                                "spi 0x15 1", "spi 0x5a 64"}
 
 
 def test_a_quiet_application_does_not_hold_the_read_open(fake_esptool, monkeypatch):
@@ -351,7 +390,7 @@ def test_a_quiet_application_does_not_hold_the_read_open(fake_esptool, monkeypat
     t0 = time.time()
     result, error, _ = esp32.run_read("/dev/ttyACM0", timeout=30)
     assert error is None
-    assert result["flash_uid"] == "c1a2b3d4e5f60718"
+    assert result["flash_uid_raw"].startswith("c1a2b3d4e5f60718")
     assert time.time() - t0 < 20
 
 
@@ -366,8 +405,9 @@ def test_a_failed_step_keeps_the_rest_and_still_resets(fake_esptool, monkeypatch
     monkeypatch.setenv("FAKE_UID", "broken")
     result, error, _ = esp32.run_read("/dev/ttyACM3")
     assert error is None
-    assert "flash_uid" not in result
-    assert result["errors"]["flash_uid"].startswith("FatalError: SPI command")
+    assert "flash_uid_raw" not in result
+    assert result["errors"]["flash_uid_raw"].startswith("FatalError: SPI command")
+    assert result["flash_sfdp_raw"].startswith("53464450")
     assert result["mac"] == "e8:3d:c1:8c:3e:b8"
     assert result["efuse"]["MAC"].startswith("e8:3d")
     assert "hard_reset" in fake_esptool.read_text()
@@ -386,11 +426,47 @@ def test_apply_read_keeps_what_was_read_and_says_what_was_not():
         {"path": "3-1.4", "vidpid": "303a:1001", "manufacturer": "Espressif",
          "product": "USB JTAG/serial debug unit", "serial": "E8:3D:C1:8C:3E:B8",
          "bcd_device": "0101", "speed": "12", "tty": ["/dev/ttyACM3"]}, {})
-    esp32.apply_read(d, dict(READ, flash_uid=None,
-                             errors={"flash_uid": "FatalError: no"}))
+    esp32.apply_read(d, dict(READ, flash_uid_raw=None,
+                             errors={"flash_uid_raw": "FatalError: no"}))
     assert d["chip"] == "ESP32-C3"
     assert d["flash_uid"] is None
-    assert d["read_errors"] == {"flash_uid": "FatalError: no"}
+    assert d["flash_uid_state"] is None
+    assert d["read_errors"] == {"flash_uid_raw": "FatalError: no"}
+
+
+# The Read Unique ID reads of 2026-09-27, 32 bytes each: an XMC in an
+# ESP32-C3 (128 bits, the last six 0xFF, then 0xFF), a devkit's GigaDevice
+# (64 bits, then 0xFF) and an ESP32-CAM's Boya (128 bits, then again).
+@pytest.mark.parametrize(("raw", "want"), [
+    ("240c1119088539540150ffffffffffff" + "ff" * 16,
+     ("240c1119088539540150ffffffffffff", 128, "read")),
+    ("3130343531118566" + "ff" * 8 + "c801" + "ff" * 14, ("3130343531118566", 64, "read")),
+    ("343738393844fa77fffcffff968f1f11" * 2, ("343738393844fa77fffcffff968f1f11", 128, "read")),
+    ("0123456789abcdef" * 4, ("0123456789abcdef", 64, "read")),
+    ("00" * 32, (None, None, "blank")),
+    ("ff" * 32, (None, None, "blank")),
+    ("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+     (None, None, "unbounded")),
+    (None, (None, None, None)),
+    ("abcd", (None, None, None)),
+])
+def test_the_uid_is_as_long_as_the_part_says(raw, want):
+    assert esp32.flash_uid_from_raw(raw) == want
+
+
+# A C3 SuperMini's XMC, as read on 2026-09-27 (the header and basic table)
+C3_SFDP = ("53464450060102ff00060110300000ff46000104d00000ff84000102c00000ff"
+           + "ff" * 16 + "e520f9ffffffff01")
+
+
+def test_the_sfdp_summary():
+    got = esp32.sfdp_summary(C3_SFDP)
+    assert got == {"revision": "1.6", "density_bytes": 4 << 20, "tables": [
+        {"id": "0xff00", "revision": "1.6", "dwords": 16, "pointer": "0x30"},
+        {"id": "0xff46", "revision": "1.0", "dwords": 4, "pointer": "0xd0"},
+        {"id": "0xff84", "revision": "1.0", "dwords": 2, "pointer": "0xc0"}]}
+    assert esp32.sfdp_summary("ff" * 16) == {"revision": "none"}
+    assert esp32.sfdp_summary(None) is None
 
 
 def test_the_error_line_is_the_one_that_says_what_went_wrong():

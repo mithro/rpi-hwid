@@ -145,7 +145,10 @@ def device_from_usb(dev, links):
         "mac": None, "mac_source": None,
         "chip": None, "chip_description": None, "revision": None, "package": None,
         "features": [], "crystal_mhz": None,
-        "flash_jedec": None, "flash_uid": None, "efuse": {},
+        "flash_jedec": None, "flash_uid": None, "flash_uid_bits": None,
+        "flash_uid_state": None, "flash_uid_raw": None, "flash_rdid": None,
+        "flash_status": None, "flash_sfdp": None, "flash_sfdp_summary": None,
+        "flash_sfdp_raw": None, "efuse": {},
         "read": None, "read_error": None, "read_errors": {}, "boot_after": None,
     }
     if how == "usb-serial-jtag":
@@ -172,20 +175,36 @@ def device_from_usb(dev, links):
 # with HUPCL cleared first so that closing the port does not drop DTR and
 # RTS and reset it a second time.
 #
-# The flash's Read Unique ID (0x4B: four dummy bytes, then 64 bits) is read
-# in two halves. esptool reads at most 32 bits back from one SPI command
-# (esptool 4.7 and 5.2 both refuse more), and 0x4B takes no address, so the
-# second half is read by clocking eight bytes out on MOSI first -- the four
-# dummies and the first half, which the flash drives on its own output while
-# the controller ignores it -- and then 32 bits in. A third read offset by two
-# bytes must agree with the join of the two, or the uid is not trusted.
+# The flash is asked through the SPI controller's own registers, which the
+# ROM loader (and esptool's stub) will read and write for anyone: the same
+# "user command" machinery esptool's run_spiflash_command drives, but with
+# the whole 64-byte W0..W15 buffer read back, where esptool returns only W0
+# and refuses to ask for more than 32 bits (4.7 and 5.2 alike). So one
+# command returns up to 64 bytes, and anything addressed -- SFDP -- is read
+# in 64-byte pieces. Only read opcodes are ever sent (FLASH_READ_OPS).
+#
+# The dummy bytes a command wants are clocked as an address phase and dummy
+# cycles, never as MOSI data: on an ESP32-C3 a user command with a MOSI phase
+# reads nothing back (all zeroes, measured on three SuperMinis, 2026-09-27),
+# which is why the first version of this read, which skipped 0x4B's four
+# dummy bytes by sending them as data, found no uid on any C3.
+#
+# Read Unique ID (0x4B) is read as 32 bytes and kept whole: parts return 64
+# or 128 bits and then either 0xFF or the id again, and which is decided by
+# the host (flash_uid_from_raw), not here. Two reads must agree.
+#
+# SFDP (0x5A) is read whole: its 256-byte header region, and past that any
+# parameter table a header points beyond it, up to 4 KiB.
 #
 # esptool 4.x spells its reset modes default_reset, 5.x default-reset, and
 # 5.x dropped espefuse.get_efuses; the eFuse table is taken from the chip's
 # own module (espefuse.efuse.<chip>.fields.EspEfuses), which both have.
 READ_SCRIPT = r'''
-import json, os, re, sys, termios, time
+import json, os, re, struct, sys, termios, time
 port = sys.argv[1]
+# every opcode the read may send the flash, and each only reads: RDID,
+# RDSR 1-3, Read Unique ID, Read SFDP
+FLASH_READ_OPS = (0x9F, 0x05, 0x35, 0x15, 0x4B, 0x5A)
 listen = float(os.environ.get("RPI_HWID_ESP32_LISTEN", "12"))
 out = {"port": port, "python": sys.executable, "errors": {}}
 
@@ -215,17 +234,81 @@ try:
 
     step("flash_jedec", jedec)
 
-    def uid():
-        def word(skip):
-            w = esp.run_spiflash_command(0x4B, data=b"\0" * (4 + skip), read_bits=32)
-            return w.to_bytes(4, "little")
-        whole = word(0) + word(4)
-        if word(2) != whole[2:6]:
-            raise ValueError("halves disagree: %s, offset read %s"
-                             % (whole.hex(), word(2).hex()))
-        return whole.hex()
+    def spi(cmd, nread, addr=None, dummy=0):
+        """One read command on the flash, `nread` (at most 64) bytes back."""
+        if cmd not in FLASH_READ_OPS or not 0 < nread <= 64:
+            raise ValueError("refusing SPI command 0x%02x for %d bytes" % (cmd, nread))
+        base = esp.SPI_REG_BASE
+        r_cmd, r_addr, r_w0 = base, base + 4, base + esp.SPI_W0_OFFS
+        r_usr, r_usr1, r_usr2 = (base + esp.SPI_USR_OFFS, base + esp.SPI_USR1_OFFS,
+                                 base + esp.SPI_USR2_OFFS)
+        r_miso, r_mosi = base + esp.SPI_MISO_DLEN_OFFS, base + esp.SPI_MOSI_DLEN_OFFS
+        saved = [(r, esp.read_reg(r)) for r in (r_usr, r_usr1, r_usr2, r_miso, r_mosi)]
+        try:
+            flags = (1 << 31) | (1 << 28)            # USR_COMMAND, USR_MISO
+            usr1 = dict(saved)[r_usr1] & ~((0x3F << 26) | 0xFF)
+            if addr is not None:
+                flags |= 1 << 30                     # USR_ADDR, 24 bits
+                usr1 |= 23 << 26
+            if dummy:
+                flags |= 1 << 29                     # USR_DUMMY, in clocks
+                usr1 |= dummy - 1
+            esp.write_reg(r_mosi, 0)
+            esp.write_reg(r_miso, nread * 8 - 1)
+            esp.write_reg(r_usr1, usr1)
+            esp.write_reg(r_usr, flags)
+            esp.write_reg(r_usr2, (7 << 28) | cmd)   # an 8-bit command
+            if addr is not None:
+                # the original ESP32 takes the address in the register's top
+                # bits and later chips in its bottom ones; esptool 5 says
+                # which, and 4.7 does not know
+                msb = getattr(esp, "SPI_ADDR_REG_MSB",
+                              esp.CHIP_NAME in ("ESP32", "ESP8266"))
+                esp.write_reg(r_addr, addr << 8 if msb else addr)
+            words = range(0, nread, 4)
+            for i in words:
+                esp.write_reg(r_w0 + i, 0)
+            esp.write_reg(r_cmd, 1 << 18)            # USR: go
+            for _ in range(20):
+                if not esp.read_reg(r_cmd) & (1 << 18):
+                    break
+            else:
+                raise RuntimeError("SPI command 0x%02x did not complete" % cmd)
+            data = b"".join(struct.pack("<I", esp.read_reg(r_w0 + i)) for i in words)
+            return data[:nread]
+        finally:
+            for r, v in saved:
+                esp.write_reg(r, v)
 
-    step("flash_uid", uid)
+    def uid():
+        # four dummy bytes: a zero address and eight dummy clocks
+        first, second = (spi(0x4B, 32, addr=0, dummy=8) for _ in range(2))
+        if first != second:
+            raise ValueError("two reads disagree: %s, %s" % (first.hex(), second.hex()))
+        return first.hex()
+
+    step("flash_uid_raw", uid)
+    step("flash_rdid", lambda: spi(0x9F, 8).hex())
+    step("flash_status", lambda: dict(("%02x" % op, spi(op, 1).hex())
+                                      for op in (0x05, 0x35, 0x15)))
+
+    def sfdp():
+        # 0x5A: a 24-bit address, then eight dummy clocks
+        def read(start, end):
+            return b"".join(spi(0x5A, min(64, end - a), addr=a, dummy=8)
+                            for a in range(start, end, 64))
+        raw = read(0, 256)
+        if raw[:4] == b"SFDP":
+            end = 256
+            for n in range(raw[6] + 1):
+                h = raw[8 + 8 * n:16 + 8 * n]
+                if len(h) == 8:
+                    end = max(end, (h[4] | h[5] << 8 | h[6] << 16) + 4 * h[3])
+            if end > 256:
+                raw += read(256, min(end, 4096))
+        return raw.hex()
+
+    step("flash_sfdp_raw", sfdp)
 
     def efuse():
         import importlib
@@ -371,6 +454,64 @@ def chip_facts(description):
     return m.group(1), (pkgs[0] if pkgs else None), (rev.group(1) if rev else None)
 
 
+def flash_uid_from_raw(raw):
+    """(uid, bits, state) from a 32-byte Read Unique ID read, as hex.
+
+    Parts give 64 or 128 bits and then 0xFF (a GigaDevice, an XMC) or the id
+    again (a Boya), so the length is where one of those begins: 64 bits when
+    bytes 8-15 are 0xFF or repeat bytes 0-7, 128 when bytes 16-31 are 0xFF or
+    repeat bytes 0-15. The id is kept exactly as the part sent it, 0xFF bytes
+    inside it included: an XMC's 128 bits end in six of them (measured on
+    three ESP32-C3 SuperMinis, 2026-09-27). All zeroes or all ones is "blank",
+    a failed read rather than a value; a read whose end cannot be found in 32
+    bytes is "unbounded", and no uid.
+    """
+    try:
+        b = bytearray.fromhex(raw or "")
+    except (TypeError, ValueError):
+        return None, None, None
+    if len(b) < 32:
+        return None, None, None
+    ff8, ff16 = bytearray(b"\xff" * 8), bytearray(b"\xff" * 16)
+    if b[:16] in (bytearray(16), ff16):
+        return None, None, "blank"
+    if b[8:16] in (ff8, b[:8]):
+        return bytes(b[:8]).hex(), 64, "read"
+    if b[16:32] in (ff16, b[:16]):
+        return bytes(b[:16]).hex(), 128, "read"
+    return None, None, "unbounded"
+
+
+def sfdp_summary(raw):
+    """The SFDP a flash answered with, from the hex of its bytes: revision,
+    parameter tables and (from the basic table) density; {"revision": "none"}
+    when the part answered without the signature; None when there is no read.
+    """
+    try:
+        b = bytearray.fromhex(raw or "")
+    except (TypeError, ValueError):
+        return None
+    if len(b) < 8:
+        return None
+    if b[:4] != bytearray(b"SFDP"):
+        return {"revision": "none"}
+    out = {"revision": "%d.%d" % (b[5], b[4]), "tables": []}
+    for n in range(b[6] + 1):
+        h = b[8 + 8 * n:16 + 8 * n]
+        if len(h) < 8:
+            break
+        ptr = h[4] | h[5] << 8 | h[6] << 16
+        out["tables"].append({"id": "0x%02x%02x" % (h[7], h[0]),
+                              "revision": "%d.%d" % (h[2], h[1]),
+                              "dwords": h[3], "pointer": "0x%x" % ptr})
+        if n == 0 and h[0] == 0x00 and len(b) >= ptr + 8:
+            # the basic table's second dword: the density, in bits
+            d2 = b[ptr + 4] | b[ptr + 5] << 8 | b[ptr + 6] << 16 | b[ptr + 7] << 24
+            bits = (1 << (d2 & 0x7FFFFFFF)) if d2 & 0x80000000 else d2 + 1
+            out["density_bytes"] = bits // 8
+    return out
+
+
 def apply_read(d, result):
     """Fold a read's result into a device entry (in place)."""
     chip, package, rev = chip_facts(result.get("chip_description"))
@@ -381,11 +522,18 @@ def apply_read(d, result):
     if read_mac:
         d["mac"] = read_mac
         d["mac_source"] = "efuse" if not d["mac_source"] else d["mac_source"] + "; efuse"
+    uid, uid_bits, uid_state = flash_uid_from_raw(result.get("flash_uid_raw"))
+    sfdp = sfdp_summary(result.get("flash_sfdp_raw"))
     d.update({
         "chip": chip, "package": package, "revision": rev,
         "chip_description": result.get("chip_description"),
         "features": result.get("features") or [], "crystal_mhz": result.get("crystal_mhz"),
-        "flash_jedec": result.get("flash_jedec"), "flash_uid": result.get("flash_uid"),
+        "flash_jedec": result.get("flash_jedec"),
+        "flash_uid": uid, "flash_uid_bits": uid_bits, "flash_uid_state": uid_state,
+        "flash_uid_raw": result.get("flash_uid_raw"),
+        "flash_rdid": result.get("flash_rdid"), "flash_status": result.get("flash_status"),
+        "flash_sfdp": sfdp["revision"] if sfdp else None, "flash_sfdp_summary": sfdp,
+        "flash_sfdp_raw": result.get("flash_sfdp_raw"),
         "efuse": result.get("efuse") or {}, "read": "esptool " + str(result.get("esptool")),
         # a step that failed, in esptool's words: the rest of the read stands
         "read_errors": result.get("errors") or {},
