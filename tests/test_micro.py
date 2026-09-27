@@ -543,3 +543,44 @@ def test_under_a_spec_strip_the_extra_section_runs_down_to_the_caption_line():
     assert x == pytest.approx(micro.rows_x())
     assert y + h == pytest.approx(micro.caption_baseline())
     assert h >= micro.MIN_SIZE * 0.72
+
+
+def _row_sizes(monkeypatch, lab):
+    """{value: (point size, top)} for every row value drawn."""
+    seen = {}
+    real = micro.Cell.fit
+
+    def fit(self, x, y, s, font, size, max_w, min_size=5.5, color=None, **k):
+        seen[s] = (size, y)
+        return real(self, x, y, s, font, size, max_w, min_size=min_size)
+
+    monkeypatch.setattr(micro.Cell, "fit", fit)
+    micro.render_micro([lab], _null_pdf())
+    return seen
+
+
+def test_a_row_with_a_size_prints_at_that_size_whatever_its_length(monkeypatch):
+    """A caller that wants one kind of row the same size on every label
+    says so, rather than have each shrink to its own length."""
+    rows = (MicroRow("flash", "GD25Q32x · 4 MiB", size=4.4),
+            MicroRow("uid", "0123", mono=True, size=4.3))
+    seen = _row_sizes(monkeypatch, _label(specs=_strip(), rows=rows))
+    assert seen["GD25Q32x · 4 MiB"][0] == 4.4
+    assert seen["0123"][0] == 4.3
+
+
+def test_a_row_that_does_not_fit_at_its_size_is_refused():
+    rows = (MicroRow("flash", "N25Q128/MT25QL128 · GigaDevice · 16 MiB", size=5.5),)
+    with pytest.raises(ValueError, match=r"bench-1.*flash.*5\.5 pt"):
+        micro.render_micro([_label(specs=_strip(), rows=rows)], _null_pdf())
+
+
+def test_a_blank_row_keeps_its_place_empty(monkeypatch):
+    """A fact that does not apply leaves its place empty: the rows under
+    it stay where they are on every other label."""
+    full = (MicroRow("chip", "v0.4"), MicroRow("flash", "GD25Q32x · 4 MiB"))
+    gap = (micro.BLANK_ROW, MicroRow("flash", "GD25Q32x · 4 MiB"))
+    a = _row_sizes(monkeypatch, _label(specs=_strip(), rows=full))
+    b = _row_sizes(monkeypatch, _label(specs=_strip(), rows=gap))
+    assert a["GD25Q32x · 4 MiB"] == b["GD25Q32x · 4 MiB"]
+    assert "" not in b

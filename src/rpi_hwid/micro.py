@@ -633,11 +633,26 @@ class IdentifierMissingError(ValueError):
 class MicroRow:
     """One captioned fact beside the QR. A ``mono`` value is an identifier
     someone may type, so it is set in the monospace face and never elided:
-    if it cannot fit at the smallest size the label is refused."""
+    if it cannot fit at the smallest size the label is refused.
+
+    A row shrinks to fit its value unless it has a ``size``: then it is set
+    at exactly that size, so a kind of row a caller prints on every label
+    reads the same on all of them, and a value that does not fit whole at
+    it is refused rather than shrunk. ``BLANK_ROW`` keeps a place empty."""
 
     caption: str
     value: str
     mono: bool = False
+    size: float | None = None
+
+    @property
+    def blank(self) -> bool:
+        return not self.caption and not self.value
+
+
+# A place left empty: the fact it holds on other labels does not apply here,
+# and the rows under it stay where they are on every other label.
+BLANK_ROW = MicroRow("", "")
 
 
 ExtraFn = Callable[[Cell, tuple[float, float, float, float]], None]
@@ -672,7 +687,7 @@ class MicroLabel:
                 f"label holds {MAX_ROWS}; put the rest in an extra section or leave them "
                 "in the document")
         for r in self.rows:
-            if not (r.value or "").strip():
+            if not r.blank and not (r.value or "").strip():
                 raise ValueError(
                     f"{self.host}: the {r.caption} row of the {self.title} label has no "
                     "value; leave the row out rather than print it blank")
@@ -762,9 +777,16 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
     cap_w = max([cell.width(r.caption, labels.SANS, CAPTION) for r in m.rows] or [0])
     vx = rx + cap_w + (labels.Label.CAPTION_GAP * 0.6 if cap_w else 0)
     for r in m.rows:
+        if r.blank:
+            y += pitch
+            continue
         font = labels.MONO_REGULAR if r.mono else labels.SANS
         vw = right - vx
-        size = cell.fitted_size(r.value, font, ROW, vw, min_size=MIN_SIZE)
+        if r.size is not None and cell.width(r.value, font, r.size) > vw + 0.01:
+            raise ValueError(
+                f"{m.host}: the {r.caption} row of the {m.title} label ({r.value!r}) does "
+                f"not fit whole at its {r.size:g} pt")
+        size = r.size or cell.fitted_size(r.value, font, ROW, vw, min_size=MIN_SIZE)
         if r.mono and cell.width(r.value, font, size) > vw + 0.01:
             raise ValueError(
                 f"{m.host}: the {r.caption} row of the {m.title} label ({r.value!r}) does "
