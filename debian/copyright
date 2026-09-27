@@ -161,6 +161,19 @@ License: trademark
  logo SVG with the wordmark paths removed and the viewBox trimmed to the
  symbol, whose paths are untouched; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/tasmota.svg
+Copyright: Theo Arends and the Tasmota contributors (the logo designed by tmo)
+License: GPL-3.0-only
+ The Tasmota symbol (the house with the power symbol), drawn only on the
+ label of a device running Tasmota, to identify its firmware. Copied byte
+ for byte from tools/logo/TASMOTA_Symbol_Vector.svg in
+ https://github.com/arendst/Tasmota, whose licence is GPL-3.0-only; see
+ src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.
+
+License: GPL-3.0-only
+ On Debian systems, the complete text of the GNU General Public License
+ version 3 can be found in '/usr/share/common-licenses/GPL-3'.

@@ -27,8 +27,9 @@ mark is drawn only on the label of hardware that maker made, to identify it.
 | `ihp.svg` | the IHP mark: the red square with the "ihp" script and the corner flag, without the claim line | the IHP site's own header logo, [`ihp-microelectronics.com/_assets/07f43f764fd345573d01c3fa61ab86d5/Images/IHP-Logo-ohne-claim.svg`](https://www.ihp-microelectronics.com/_assets/07f43f764fd345573d01c3fa61ab86d5/Images/IHP-Logo-ohne-claim.svg), fetched 2026-09-11 (the file IHP itself names "ohne claim", i.e. without the tagline); the drawing already fills its `viewBox`, so only the XML doctype and the Illustrator comment were dropped and the indentation collapsed. No path is touched | Trademark of IHP – Leibniz-Institut für innovative Mikroelektronik. Drawn only on the label of hardware made by IHP, to identify it. |
 | `skywater.svg` | the SkyWater symbol (the stacked green-to-teal layers, without the "skywater" wordmark) | SkyWater's own header logo, [`skywatertechnology.com/wp-content/uploads/2022/01/skywater-logo.svg`](https://www.skywatertechnology.com/wp-content/uploads/2022/01/skywater-logo.svg), fetched 2026-09-11; the eight `#004D71` wordmark paths removed and the `viewBox` trimmed from the 171 × 36 canvas to the two symbol paths, which are untouched. The symbol-only form is SkyWater's own: the same glyph is their site icon, `wp-content/uploads/2022/02/cropped-Group-374-1-270x270.png`. (svglib does not do gradients, so on the label each of the two paths prints as one flat colour rather than as the gradient.) | Trademark of SkyWater Technology, Inc. Drawn only on the label of hardware made by SkyWater, to identify it. |
 | `globalfoundries.svg` | the GF monogram (the orange "GF" mark with its ®, without the "globalfoundries" wordmark) | gf.com's own site icon, [`gf.com/wp-content/themes/gf-2025/favicon/favicon.svg`](https://gf.com/wp-content/themes/gf-2025/favicon/favicon.svg), fetched 2026-09-11, copied byte for byte: it is GF's symbol-only mark, 46 × 40 with the glyph already filling the `viewBox`. Wikimedia Commons' [File:GlobalFoundries logo.svg](https://commons.wikimedia.org/wiki/File:GlobalFoundries_logo.svg) is the 204 × 40 wordmark, illegible at 4 mm | Trademark of GlobalFoundries Inc. Drawn only on the label of hardware made by GlobalFoundries, to identify it. |
+| `tasmota.svg` | the Tasmota symbol: the house with the power symbol in it, without the "TASMOTA" wordmark | [`tools/logo/TASMOTA_Symbol_Vector.svg`](https://github.com/arendst/Tasmota/blob/development/tools/logo/TASMOTA_Symbol_Vector.svg) in the Tasmota repository (unchanged since commit `c702cb1`, 2019-07-05), fetched 2026-09-26 and copied byte for byte (sha256 `656978990ab79bdfb51b4cb741d2f0004b930672a95e2925c848f4692895e542`). The README credits "tmo for designing the official Tasmota logo". The symbol rather than the full logo because the wordmark would be illegible in a 3.6 mm glyph | GPL-3.0-only, the Tasmota repository's licence. Drawn, as the `tasmota` glyph on a micro label, only on a device running Tasmota, to say which firmware answers at its MAC. |
 
-The last six are the foundries and shuttle operators Tiny Tapeout chips are
+The six from `efabless.png` to `globalfoundries.svg` are the foundries and shuttle operators Tiny Tapeout chips are
 made through. Which apply to a given shuttle is
 `rpi_hwid.tinytapeout.shuttle_marks()`, whose table records where each
 mapping came from.
@@ -55,3 +56,13 @@ An x86 board's label draws its maker's mark (ADI Engineering's, CircuitCo's)
 in the header beside the project's mark (the MinnowBoard fish), in a box the
 fish's size, with no name in text.
 Which mark goes with which DMI vendor is `rpi_hwid.x86.MAKERS`.
+The ESP32 micro labels (`rpi_hwid.esp32_micro`) carry the Espressif symbol
+beside the part number, and two of these marks in the spec strip under it:
+the RISC-V logo on a part whose cores are RISC-V (the C2, C3, C5, C6, H2 and
+P4), and the Tasmota symbol on a part Tasmota ships a release binary for,
+to say it can run it (docs/ESPRESSIF.md has the sources for both facts).
+Cadence registers "Xtensa" as a word mark and no logo for the architecture
+could be had (its trademark pages refuse a fetch), so an Xtensa part's
+glyph is not artwork: the generator sets the name as a wordmark. The
+Bluetooth rune, the 802.15.4 mesh, the cores, the memory module and the
+Wi-Fi arcs are drawn by the generator too.
