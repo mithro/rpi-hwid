@@ -4,7 +4,7 @@
     uv run docs/examples/render_esp32_433.py
 
 The records are tests/esp32_433_devices.json: what `rpi-hwid collect
---esp32-read ... --esp32-radio ...` wrote on 2026-09-26 for the three
+--esp32-read ... --esp32-radio ...` wrote on 2026-09-27 for the three
 ESP32-C3 SuperMinis on rpi5-433mhz. The sticker is what `rpi-hwid labels`
 prints for them with both the esp32 and esp32-433 kinds: the SX1278 and
 the blue CC1101 node get the radio label, and the reference board, which

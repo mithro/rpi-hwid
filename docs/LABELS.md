@@ -549,14 +549,15 @@ An ESP32 wired to a 433 MHz radio board by
 gets the ESP32 label with the radio added (`--only esp32-433`):
 
 - **Header:** an antenna whose mast is the band, `433` set upright, after the
-  Wi-Fi and chip glyphs.
-- **Radio line:** under the chip's unique id, the chip maker's mark (TI for the
+  Wi-Fi and Bluetooth glyphs. The part number still prints whole.
+- **Radio line:** under the unique id, the chip maker's mark (TI for the
   CC1101, Semtech for the SX1278), the board maker's where there is one
   (Ai-Thinker for the Ra-02), then the chip and the board: `CC1101 ·
   E07-M1101D`, `CC1101 · D-Sun`, `SX1278 · Ra-02`.
 
-The room is the Bluetooth MAC's row, the one value on the ESP32 label that was
-not read (it is the Wi-Fi MAC plus two). Both rows of the chip's unique id stay.
+The room is the `chip` row, the revision and crystal, which every C3 SuperMini
+shares and the document keeps. The flash row and both rows of the unique id
+stay.
 
 The board is named by the pins the node's firmware found the chip on at boot,
 because each board puts its signals on different header positions; the maps are
@@ -574,7 +575,7 @@ plain label only.
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-433-sticker.png" alt="Three micro labels from real reads on rpi5-433mhz: the reference ESP32-C3 with no radio (the plain ESP32 label), the SX1278 node (Semtech and Ai-Thinker marks, SX1278 · Ra-02) and the blue CC1101 node (TI mark, CC1101 · E07-M1101D)" width="98%">
 </p>
 
-These are the three C3 SuperMinis on rpi5-433mhz, read on 2026-09-26
+These are the three C3 SuperMinis on rpi5-433mhz, read on 2026-09-27
 (`tests/esp32_433_devices.json`); `docs/examples/render_esp32_433.py`
 regenerates the image. What is not read is refused:
 
