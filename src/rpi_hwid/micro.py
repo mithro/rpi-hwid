@@ -666,7 +666,15 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
     if m.extra is not None:
         ey = (y - pitch + ROW * 0.72 + 0.6 * mm if m.rows or m.subtitle
               else y if m.specs else top)
-        m.extra(cell, (rx, ey, rw, top + q - ey))
+        # under a spec strip the rows run down beside the foot's caption, and
+        # so does the room left under them
+        bottom = caption_baseline() if m.specs else top + q
+        if m.specs and bottom > top + q and cell.width(
+                m.ident_caption, labels.SANS, CAPTION) > rx - MICRO_PAD - 0.8 * mm:
+            raise ValueError(
+                f"{m.host}: the {m.title} label's foot caption {m.ident_caption!r} runs "
+                "under the extra section beside it; shorten the caption")
+        m.extra(cell, (rx, ey, rw, bottom - ey))
 
     # --- the foot: caption over the identifier, the whole width ---
     fy = foot_top()

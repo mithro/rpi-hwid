@@ -440,3 +440,18 @@ def test_title_fits_says_when_the_header_would_elide_the_title():
     assert micro.title_fits(_label(title="ESP32-C6FH4", icons=(Icon("wifi"),)))
     crowded = (Icon("wifi"), Icon("bluetooth"), Icon("mesh"), Icon("usb"), Icon("usb"))
     assert not micro.title_fits(_label(title="ESP32-C6FH4", icons=crowded))
+
+
+def test_under_a_spec_strip_the_extra_section_runs_down_to_the_caption_line():
+    """What a label that builds on the ESP32 one gets when it drops a row."""
+    boxes = []
+    rows = (MicroRow("flash", "XMC 0x464016 · 4 MiB"),
+            MicroRow("uid", "0123456789abcdef", mono=True),
+            MicroRow("", "fedcba9876543210", mono=True))
+    micro.render_micro([_label(specs=_strip(), rows=rows,
+                               extra=lambda cell, box: boxes.append(box))], _null_pdf())
+    ((x, y, w, h),) = boxes
+    assert w == pytest.approx(micro.rows_w())
+    assert x == pytest.approx(micro.rows_x())
+    assert y + h == pytest.approx(micro.caption_baseline())
+    assert h >= micro.MIN_SIZE * 0.72
