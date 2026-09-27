@@ -393,8 +393,11 @@ the same places:
     not printed.
   - `flash`: the flash's part where the read settles it (`GD25Q32x`,
     `XM25QH32D`, or `BY25Q32ES` where a Boya's 128-bit unique id tells it
-    from the 64-bit BS), else its JEDEC id (`0x464017`, with its vendor
-    where that fits); then its size. The row prints at one size, 4.4 pt, on
+    from the 64-bit BS); then its size. A flash whose JEDEC id names no
+    part stops label generation: the error names the host, the ESP32 and
+    the id, and says to add the part to `JEDEC_PART` in
+    `src/rpi_hwid/esp32_micro.py` with its source. A bare id is never
+    printed. The row prints at one size, 4.4 pt, on
     every label, whatever the length of the part's name. In the package or beside it, the flash is on this row.
     [research/esp32-flash.md](research/esp32-flash.md) has the reads and the
     datasheets behind each name.

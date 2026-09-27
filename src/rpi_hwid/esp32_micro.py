@@ -97,7 +97,17 @@ JEDEC_VENDOR = {0x68: "Boya", 0x46: "XMC"}
 #             vendor alone would suggest.
 #   0x684016  Boya's BY25Q32BS or BY25Q32ES, whose SFDP headers are the same;
 #             PART_BY_UID_BITS tells the two apart where the uid was read.
-JEDEC_PART = {0xC84016: "GD25Q32x", 0x464016: "XM25QH32D", 0x684016: "BY25Q32xS"}
+#   0xC84014, 0xC84015, 0xC84017, 0xC84018  the rest of GigaDevice's GD25Q
+#             family, from flashrom's include/flashchips.h (commit a1de15b):
+#             GIGADEVICE_GD25Q80 0x4014 "Same as GD25Q80B", GD25Q16 0x4015
+#             "Same as GD25Q16B", GD25Q64 0x4017 "Same as GD25Q64B", GD25Q128
+#             0x4018 "Same as GD25Q128B, GD25Q127C, GD25Q128C ...". Not read
+#             on the fleet; the sample sheet's 1, 2, 8 and 16 MiB flash.
+# A flash whose id is in neither table stops label generation
+# (UnknownFlashPartError): a bare id is never printed (Tim, 2026-09-27).
+JEDEC_PART = {0xC84016: "GD25Q32x", 0x464016: "XM25QH32D", 0x684016: "BY25Q32xS",
+              0xC84014: "GD25Q80x", 0xC84015: "GD25Q16x", 0xC84017: "GD25Q64x",
+              0xC84018: "GD25Q128x"}
 # Parts that share an id and an SFDP but not the length of their unique id,
 # which the read measures (flash_uid_bits). BYTe's BY25Q32BS datasheet (Rev.
 # 2.4, 7.3.5) gives a 64-bit id and its BY25Q32ES (Rev. 2.2, 7.3.5) a 128-bit
@@ -123,6 +133,12 @@ UID_PT = 4.3
 
 class Esp32NotReadError(labels.IdentifierNotReadError):
     """An ESP32 reached the label generator without its chip read."""
+
+
+class UnknownFlashPartError(Exception):
+    """An ESP32's flash answered with a JEDEC id no table names. Not a failed
+    read -- the id was read -- but a part to add: the label never prints a
+    bare id (Tim, 2026-09-27)."""
 
 
 @dataclass(frozen=True)
@@ -213,14 +229,16 @@ def embedded_flash(features: tuple[str, ...]) -> tuple[str, str] | None:
     return None
 
 
-def flash_line(dev: Esp32Device, part: espressif.Part | None = None) -> str | None:
-    """The flash row: the part where the read settles one -- a part number
-    says its maker -- else the vendor and the JEDEC id; then the size.
+def flash_line(host: str, dev: Esp32Device,
+               part: espressif.Part | None = None) -> str | None:
+    """The flash row: the part the read settles -- a part number says its
+    maker -- then the size.
 
     One place for the flash, the same on every label, whether it is in the
-    chip's package or beside it. The vendor of an in-package flash is the
-    one the chip's eFuse names (FLASH_VENDOR), which esptool reports with
-    its size; the id and the density come from the flash itself."""
+    chip's package or beside it; the density comes from the flash itself, or
+    else from what the chip's eFuse says is in its package. A JEDEC id no
+    table names stops here with UnknownFlashPartError, naming the host, the
+    ESP32 and the id and saying where the part goes."""
     info = labels.flash_from_jedec(dev.flash_jedec, sfdp=dev.flash_sfdp)
     if not info["jedec"]:
         return None
@@ -228,30 +246,28 @@ def flash_line(dev: Esp32Device, part: espressif.Part | None = None) -> str | No
     inside = embedded_flash(dev.features)
     named = (PART_BY_UID_BITS.get(value, {}).get(dev.flash_uid_bits or 0)
              or info["part"] or JEDEC_PART.get(value))
-    vendor = (inside[1] if inside else "") or info["vendor"] or JEDEC_VENDOR.get(value >> 16)
     size = info["size"] or (inside[0] if inside else None)
     if not size and part is not None and part.flash_mb:
         size = f"{part.flash_mb:g} MiB"
-
-    def line(what: str | None) -> str:
-        return " · ".join(x for x in (what, size) if x)
-
-    if named:
-        return line(named)
-    # an id no part is known for: its vendor too where that fits at the
-    # row's one size, else the id alone, whose first byte names the vendor
-    full = line(" ".join(x for x in (vendor, info["jedec"]) if x))
-    return full if fits_flash_row(full) else line(info["jedec"])
+    if not named:
+        vendor = (inside[1] if inside else "") or info["vendor"] or JEDEC_VENDOR.get(value >> 16)
+        sfdp = f", SFDP {dev.flash_sfdp}" if dev.flash_sfdp else ""
+        raise UnknownFlashPartError(
+            f"{host}: the ESP32 {dev.mac} has a flash whose JEDEC id {info['jedec']}"
+            f"{sfdp} names no part"
+            + (f" (the id's vendor: {vendor}{', ' + size if size else ''})" if vendor else "")
+            + ", and a label never prints a bare id. Find the part from its "
+            "datasheet or flashrom's include/flashchips.h and add it to JEDEC_PART "
+            "in src/rpi_hwid/esp32_micro.py as 0xVVDDCC: \"PART\" (letters the id "
+            "cannot settle written as x), with the source cited in the comment "
+            "above the table.")
+    return " · ".join(x for x in (named, size) if x)
 
 
 def value_room() -> float:
     """The width a row's value has beside the widest caption a row can have."""
     widest = max(pdfmetrics.stringWidth(c, labels.SANS, micro.CAPTION) for c in CAPTIONS)
     return micro.rows_w() - widest - labels.Label.CAPTION_GAP * 0.6
-
-
-def fits_flash_row(value: str) -> bool:
-    return pdfmetrics.stringWidth(value, labels.SANS, FLASH_PT) <= value_room()
 
 
 def valid_flash_uid(uid: str | None) -> bool:
@@ -345,7 +361,7 @@ def _label(host: str, dev: Esp32Device, part: espressif.Part) -> MicroLabel:
     # the chip row is the revision; an ESP8266 reports none, and leaves the
     # row's place empty so the flash row stays where it is on every label
     rows = [MicroRow("chip", dev.revision) if dev.revision else BLANK_ROW]
-    flash = flash_line(dev, part)
+    flash = flash_line(host, dev, part)
     if flash:
         rows.append(MicroRow("flash", flash, size=FLASH_PT))
     rows += serial_rows(dev)
@@ -388,6 +404,11 @@ def _sample_hex(part: espressif.Part, what: str, digits: int) -> str:
 # samples so the sheet shows each way a flash row can read: (JEDEC id, uid
 # bits). The Boya's 128 bits are what name it a BY25Q32ES.
 SAMPLE_FLASH = ((0xC84016, 64), (0x684016, 128))
+# ...and inside the package, by size in MiB: (JEDEC id, uid bits, the vendor
+# the eFuse would name).
+SAMPLE_IN_PACKAGE = {1: (0xC84014, 64, "GD"), 2: (0xC84015, 64, "GD"),
+                     4: (0x464016, 128, "XMC"), 8: (0xC84017, 64, "GD"),
+                     16: (0xC84018, 64, "GD")}
 
 
 def sample_device(part: espressif.Part, n: int) -> Esp32Device:
@@ -407,14 +428,15 @@ def sample_device(part: espressif.Part, n: int) -> Esp32Device:
     mac = "02:" + ":".join(tail[i:i + 2] for i in range(0, 10, 2))
     size = f"{part.flash_mb:g}" if part.flash_mb else "4"
     feats = ["Wi-Fi"] if fam.wifi else []
-    if part.flash_mb and fam not in (espressif.ESP8266, espressif.ESP32):
-        # the eFuse of the later chips names the in-package flash's size and
-        # vendor; esptool says only "Embedded Flash" for the older two
-        feats.append(f"Embedded Flash {size}MB (XMC)")
     if part.flash_mb:
-        # in the package: XMC's second vendor code, as on the real C3s
-        capacity = {1: 0x14, 2: 0x15, 4: 0x16, 8: 0x17}.get(int(part.flash_mb), 0x16)
-        jedec, bits = 0x464000 | capacity, 128
+        # in the package: the 4 MiB XMC the real C3s carry; other sizes, the
+        # GigaDevice part of that size, since no read has named theirs and a
+        # sample must carry a part the tables name, as a real one must
+        jedec, bits, vendor = SAMPLE_IN_PACKAGE.get(int(part.flash_mb), SAMPLE_IN_PACKAGE[4])
+        if fam not in (espressif.ESP8266, espressif.ESP32):
+            # the eFuse of the later chips names the in-package flash's size
+            # and vendor; esptool says only "Embedded Flash" for the older two
+            feats.append(f"Embedded Flash {size}MB ({vendor})")
     else:
         jedec, bits = SAMPLE_FLASH[n % len(SAMPLE_FLASH)]
     # every other sample has no flash uid, to show the eFuse id in its place

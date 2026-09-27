@@ -109,15 +109,28 @@ def test_a_boya_is_named_by_the_length_of_its_uid(bits, part):
     assert cam.rows[1] == flash(f"{part} · 4 MiB")
 
 
-def test_a_flash_no_part_is_known_for_is_its_id_and_size():
-    """Its vendor too where that fits at the flash row's one size; the
-    id's first byte names the vendor anyway (JEP106)."""
-    (dev,) = esp32_micro.micro_labels(_docs(dict(DEVKIT, flash_jedec="0x464017"),
-                                            host="rpi4-esp"))
-    assert dev.rows[1] == flash("0x464017 · 8 MiB")
-    (dev,) = esp32_micro.micro_labels(_docs(dict(DEVKIT, flash_jedec="0xc84017"),
-                                            host="rpi4-esp"))
-    assert dev.rows[1] == flash("0xc84017 · 8 MiB")
+def test_a_flash_no_part_is_known_for_stops_label_generation():
+    """Tim, 2026-09-27: a bare JEDEC id is never printed. The tool stops,
+    names the host, the ESP32 and the id, and asks for the part to be added."""
+    with pytest.raises(esp32_micro.UnknownFlashPartError) as excinfo:
+        esp32_micro.micro_labels(_docs(dict(DEVKIT, flash_jedec="0x464017"), host="rpi4-esp"))
+    msg = str(excinfo.value)
+    assert msg.startswith("rpi4-esp:")
+    assert "24:0a:c4:11:44:e8" in msg
+    assert "0x464017" in msg
+    assert "JEDEC_PART" in msg
+
+
+@pytest.mark.parametrize(("jedec", "part"), [
+    ("0xc84014", "GD25Q80x · 1 MiB"), ("0xc84015", "GD25Q16x · 2 MiB"),
+    ("0xc84016", "GD25Q32x · 4 MiB"), ("0xc84017", "GD25Q64x · 8 MiB"),
+    ("0xc84018", "GD25Q128x · 16 MiB"),
+])
+def test_the_gigadevice_family_is_named(jedec, part):
+    """flashrom's include/flashchips.h: GD25Q80/16/32/64/128, each id
+    shared by its B/C/E variants, so the letter is written as x."""
+    (dev,) = esp32_micro.micro_labels(_docs(dict(DEVKIT, flash_jedec=jedec), host="rpi4-esp"))
+    assert dev.rows[1] == flash(part)
 
 
 def test_an_original_esp32_label():
