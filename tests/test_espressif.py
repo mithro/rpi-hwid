@@ -167,3 +167,41 @@ def test_the_docs_table_is_the_module_s():
     doc = (ROOT / "docs" / "ESPRESSIF.md").read_text()
     assert espressif.markdown() in doc
     assert espressif.sources_markdown() in doc
+
+
+@pytest.mark.parametrize(("family", "standards", "bands"), [
+    ("ESP8266", ("b", "g", "n"), ("2.4",)), ("ESP32", ("b", "g", "n"), ("2.4",)),
+    ("ESP32-S2", ("b", "g", "n"), ("2.4",)), ("ESP32-S3", ("b", "g", "n"), ("2.4",)),
+    ("ESP32-C2", ("b", "g", "n"), ("2.4",)), ("ESP32-C3", ("b", "g", "n"), ("2.4",)),
+    ("ESP32-C5", ("a", "b", "g", "n", "ac", "ax"), ("2.4", "5")),
+    ("ESP32-C6", ("b", "g", "n", "ax"), ("2.4",)),
+    ("ESP32-H2", (), ()), ("ESP32-P4", (), ()),
+])
+def test_the_wifi_standards_and_bands(family, standards, bands):
+    """What the label's Wi-Fi glyph prints: the 802.11 amendments and the
+    bands, each datasheet's own (Features > Wi-Fi)."""
+    (f,) = [f for f in espressif.FAMILIES if f.name == family]
+    assert f.wifi_standards == standards
+    assert f.wifi_band_ghz == bands
+
+
+@pytest.mark.parametrize(("family", "lp"), [
+    ("ESP8266", 0), ("ESP32", 1), ("ESP32-S2", 1), ("ESP32-S3", 1), ("ESP32-C2", 0),
+    ("ESP32-C3", 0), ("ESP32-C5", 1), ("ESP32-C6", 1), ("ESP32-H2", 0), ("ESP32-P4", 1),
+])
+def test_the_low_power_core_count(family, lp):
+    """The S2's and S3's two ULP coprocessors cannot run at once (their
+    datasheets' note), so each is one low-power core, not two."""
+    (f,) = [f for f in espressif.FAMILIES if f.name == family]
+    assert f.lp_cores == lp
+
+
+@pytest.mark.parametrize(("part", "pair"), [
+    ("ESP8266EX", (1, 0)), ("ESP32-D0WD-V3", (2, 1)), ("ESP32-S0WD", (1, 1)),
+    ("ESP32-S2FH4", (1, 1)), ("ESP32-S3R8", (2, 1)), ("ESP8684H2", (1, 0)),
+    ("ESP32-C3FH4", (1, 0)), ("ESP32-C5", (1, 1)), ("ESP32-C6FH4", (1, 1)),
+    ("ESP32-H2", (1, 0)), ("ESP32-P4", (2, 1)),
+])
+def test_a_part_s_core_pair(part, pair):
+    """(application cores, low-power cores): the two numbers on the label."""
+    assert espressif.BY_NAME[part].core_pair == pair

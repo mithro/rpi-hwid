@@ -43,6 +43,24 @@ C2; "support in Tasmota is just beginning" in its docs for the P4), and the
 table says so. The ESP8285 runs the ESP8266 builds. A single-core ESP32
 (the S0WD) takes `tasmota32solo1.bin`.
 
+## Cores and radios on the label
+
+The label's cores glyph prints two numbers: the application cores, then the
+low-power cores beside them (`Part.core_pair`). The low-power one is the
+ESP32's ULP FSM, the S2's and S3's ULP coprocessor, and the C5's, C6's and
+P4's LP RISC-V core; the ESP8266, C2, C3 and H2 have none, and print 0. The
+S2 and S3 have two ULP coprocessors, a RISC-V and an FSM, but their
+datasheets say the two "cannot work simultaneously", so they count as one.
+No part here has a processor of its own for its radio: the datasheets
+describe the Wi-Fi MAC and the Bluetooth link controller as hardware, with
+the protocol stacks above them running on the application cores (the
+`radio_cpu` citations below).
+
+The Wi-Fi glyph prints the bands and the 802.11 amendments from the Wi-Fi
+column (`Family.wifi_band_ghz`, `Family.wifi_standards`): 2.4 GHz and b/g/n
+for the ESP8266, ESP32, S2, S3, C2 and C3; 2.4 GHz and b/g/n/ax for the C6;
+2.4 and 5 GHz and a/b/g/n/ac/ax for the C5.
+
 ## The families and the parts
 
 | family | ISA | core | cores | LP core | max MHz | SRAM | ROM | RTC/LP SRAM | Wi-Fi | Bluetooth | 802.15.4 | USB | eFuse unique id | Tasmota |
@@ -121,7 +139,7 @@ table says so. The ESP8285 runs the ESP8266 builds. A single-core ESP32
 - **core, cores, max_mhz**: DS8266 § 3.1.1 CPU ('Tensilica L106 32-bit RISC processor ... maximum clock speed of 160 MHz'); Table 1-1
 - **sram_kb**: SDK8266 (dram0_0_seg 96 KB + iram0_0_seg 64 KB); the datasheet, § 3.1.2, gives only the ~50 KB left to an application
 - **rom_kb, rtc_sram_kb**: DS8266 § 3.1.2 Memory (no size given for either)
-- **wifi**: DS8266 § 1.1 Wi-Fi Key Features; Table 1-1 (802.11 b/g/n (HT20))
+- **wifi**: DS8266 § 1.1 Wi-Fi Key Features; Table 1-1 (802.11 b/g/n (HT20); '802.11 n support (2.4 GHz)')
 - **bluetooth, ieee802154, usb**: DS8266 § 1.1, Table 1-1: no USB, 802.15.4 or other radio in the datasheet's feature list
 - **chip_uid**: ESPTOOL esptool/targets/esp8266.py (no eFuse unique id; espefuse has no ESP8266 table)
 - **tasmota**: TASMOTA-OTA (tasmota.bin and its variants); TASMOTA-README
@@ -140,6 +158,7 @@ table says so. The ESP8285 runs the ESP8266 builds. A single-core ESP32
 - **bluetooth**: DS32 Features > Bluetooth; § 4.7.3
 - **ieee802154, usb**: DS32 Features, Chapter 4: no USB, 802.15.4 or other radio in the datasheet's feature list
 - **chip_uid**: EFUSE esp32.yaml (no OPTIONAL_UNIQUE_ID field)
+- **radio_cpu**: DS32 § 4.6.5 Wi-Fi MAC ('applies low-level protocol functions automatically'), § 4.7.4 Bluetooth Link Controller: hardware, no processor of the radio's own
 - **tasmota**: TASMOTA-OTA (tasmota32.bin; tasmota32solo1.bin for a single core); TASMOTA-DOCS
 - **ESP32-D0WD-V3**: part, flash_mb, psram_mb, status: DS32 § 1.2 Table 1-1 ESP32 Series Comparison
 - **ESP32-D0WDR2-V3**: part, flash_mb, psram_mb, status: DS32 § 1.2 Table 1-1 ESP32 Series Comparison
@@ -156,7 +175,7 @@ table says so. The ESP8285 runs the ESP8266 builds. A single-core ESP32
 ### ESP32-S2
 
 - **core, cores, max_mhz**: DSS2 Features > CPU and Memory ('Xtensa single-core 32-bit LX7 microprocessor, up to 240 MHz'); § 4.1.1.1
-- **lp_core**: DSS2 Features (ULP-RISC-V and ULP-FSM coprocessors); § 4.1.1.2
+- **lp_core**: DSS2 Features (ULP-RISC-V and ULP-FSM coprocessors); § 4.1.1.2 ('these two co-processors cannot work simultaneously': one low-power core)
 - **sram_kb, rom_kb, rtc_sram_kb**: DSS2 § 4.1.2.1 Internal Memory
 - **wifi, bluetooth, ieee802154**: DSS2 Features > Wi-Fi; cover (2.4 GHz Wi-Fi only)
 - **usb**: DSS2 Features ('Full-speed USB OTG'); § 4.2.1.11
@@ -171,7 +190,7 @@ table says so. The ESP8285 runs the ESP8266 builds. A single-core ESP32
 ### ESP32-S3
 
 - **core, cores, max_mhz**: DSS3 Features > CPU and Memory ('Xtensa dual-core 32-bit LX7', up to 240 MHz); § 4.1.1.1
-- **lp_core**: DSS3 Features (ULP-RISC-V, ULP-FSM); § 4.1.1.3
+- **lp_core**: DSS3 Features (ULP-RISC-V, ULP-FSM); § 4.1.1.3 ('these two coprocessors cannot work simultaneously': one low-power core)
 - **sram_kb, rom_kb, rtc_sram_kb**: DSS3 § 4.1.2.1 Internal Memory (384 KB ROM, 512 KB SRAM, 8 KB RTC FAST + 8 KB RTC SLOW)
 - **wifi**: DSS3 Features > Wi-Fi
 - **bluetooth**: DSS3 Features > Bluetooth ('Bluetooth 5, Bluetooth mesh'); § 4.3.3
@@ -225,7 +244,7 @@ table says so. The ESP8285 runs the ESP8266 builds. A single-core ESP32
 
 - **core, lp_core**: DSC5 § 4.1.1.1, § 4.1.1.3 ('RV32IMAC ISA')
 - **cores, max_mhz, sram_kb, rom_kb, rtc_sram_kb**: DSC5 Features > CPU and Memory (HP 240 MHz, LP 48 MHz, 320 KB ROM, 384 KB HP SRAM, 16 KB LP SRAM)
-- **wifi**: DSC5 Features > Wi-Fi (2.4 and 5 GHz dual band, 802.11ax/ac/a/b/g/n)
+- **wifi**: DSC5 Features > Wi-Fi ('1T1R in 2.4 and 5 GHz dual band'; 'IEEE 802.11ax-compliant', 'IEEE 802.11ac-compliant', 'Fully compatible with IEEE 802.11a/b/g/n protocol')
 - **bluetooth**: DSC5 Features > Bluetooth ('Bluetooth Core 6.0 certified'; the cover says Bluetooth 5 (LE))
 - **ieee802154**: DSC5 Features > IEEE 802.15.4 (Thread 1.4, Zigbee 3.0)
 - **usb**: DSC5 Features ('USB Serial/JTAG controller')
@@ -241,11 +260,12 @@ table says so. The ESP8285 runs the ESP8266 builds. A single-core ESP32
 - **core, lp_core**: DSC6 § 4.1.1.1, § 4.1.1.3 ('RV32IMAC ISA')
 - **cores, max_mhz**: DSC6 Features > CPU and Memory (HP 160 MHz, LP 20 MHz)
 - **sram_kb, rom_kb, rtc_sram_kb**: DSC6 § 4.1.2.1 Internal Memory (320 KB ROM, 512 KB HP SRAM, 16 KB LP SRAM)
-- **wifi**: DSC6 cover; Features > Wi-Fi (802.11ax, 2.4 GHz)
+- **wifi**: DSC6 cover ('2.4 GHz Wi-Fi 6 (802.11ax)'); Features > Wi-Fi ('IEEE 802.11ax-compliant', 'Fully compatible with IEEE 802.11b/g/n protocol')
 - **bluetooth**: DSC6 Features ('Bluetooth 5.3 certified')
 - **ieee802154**: DSC6 Features (Thread 1.3, Zigbee 3.0)
 - **usb**: DSC6 Features (USB Serial/JTAG controller)
 - **chip_uid**: EFUSE esp32c6.yaml (OPTIONAL_UNIQUE_ID)
+- **radio_cpu**: DSC6 § 4.3.2.2 Wi-Fi MAC; § 4.3.3 ('a hardware link controller, an RF/modem block and a feature-rich software protocol stack'): no processor of the radio's own
 - **tasmota**: TASMOTA-OTA (tasmota32c6.bin); TASMOTA-ENV; TASMOTA-DOCS
 - **ESP32-C6**: part: DSC6 § 1.2 Table 1-1; ESPTOOL esptool/targets/esp32c6.py#L121-L137 ('ESP32-C6 (QFN40)')
 - **ESP32-C6FH4**: part, flash_mb: DSC6 § 1.2 Table 1-1

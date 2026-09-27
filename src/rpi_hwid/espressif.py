@@ -121,6 +121,29 @@ class Family:
     sources: Mapping[str, str]
     notes: str = ""
 
+    @property
+    def wifi_standards(self) -> tuple[str, ...]:
+        """('b', 'g', 'n') from '802.11 b/g/n (HT20)': the 802.11 amendments
+        the radio implements, in the datasheet's order; () without Wi-Fi."""
+        m = re.match(r"^802\.11 ([a-z]+(?:/[a-z]+)*)", self.wifi or "")
+        return tuple(m.group(1).split("/")) if m else ()
+
+    @property
+    def wifi_band_ghz(self) -> tuple[str, ...]:
+        """('2.4', '5') from '2.4 + 5 GHz'; () without Wi-Fi."""
+        return tuple(re.findall(r"\d+(?:\.\d+)?", self.wifi_bands or ""))
+
+    @property
+    def lp_cores(self) -> int:
+        """How many low-power cores run beside the application cores: one
+        wherever there is an LP or ULP coprocessor. The S2's and S3's two
+        (ULP-RISC-V and ULP-FSM) count once: their datasheets say the two
+        "cannot work simultaneously". No family has a processor of its own
+        for the radio: the Wi-Fi MAC and the Bluetooth link controller are
+        hardware, and the stacks above them run on the application cores
+        (``sources["radio_cpu"]``)."""
+        return 1 if self.lp_core else 0
+
 
 @dataclass(frozen=True)
 class Part:
@@ -147,6 +170,11 @@ class Part:
     def mhz(self) -> int:
         return self.max_mhz or self.family.max_mhz
 
+    @property
+    def core_pair(self) -> tuple[int, int]:
+        """(application cores, low-power cores): the label's two numbers."""
+        return self.n_cores, self.family.lp_cores
+
 
 # --- the families ----------------------------------------------------------------
 
@@ -163,7 +191,8 @@ ESP8266 = Family(
         "sram_kb": "SDK8266 (dram0_0_seg 96 KB + iram0_0_seg 64 KB); the datasheet, "
                    "§ 3.1.2, gives only the ~50 KB left to an application",
         "rom_kb, rtc_sram_kb": "DS8266 § 3.1.2 Memory (no size given for either)",
-        "wifi": "DS8266 § 1.1 Wi-Fi Key Features; Table 1-1 (802.11 b/g/n (HT20))",
+        "wifi": "DS8266 § 1.1 Wi-Fi Key Features; Table 1-1 (802.11 b/g/n (HT20); "
+                "'802.11 n support (2.4 GHz)')",
         "bluetooth, ieee802154, usb": "DS8266 § 1.1, Table 1-1: " + _NONE,
         "chip_uid": "ESPTOOL esptool/targets/esp8266.py (no eFuse unique id; "
                     "espefuse has no ESP8266 table)",
@@ -188,6 +217,9 @@ ESP32 = Family(
         "bluetooth": "DS32 Features > Bluetooth; § 4.7.3",
         "ieee802154, usb": "DS32 Features, Chapter 4: " + _NONE,
         "chip_uid": "EFUSE esp32.yaml (no OPTIONAL_UNIQUE_ID field)",
+        "radio_cpu": "DS32 § 4.6.5 Wi-Fi MAC ('applies low-level protocol functions "
+                     "automatically'), § 4.7.4 Bluetooth Link Controller: hardware, no "
+                     "processor of the radio's own",
         "tasmota": "TASMOTA-OTA (tasmota32.bin; tasmota32solo1.bin for a single core); "
                    "TASMOTA-DOCS",
     })
@@ -200,7 +232,8 @@ ESP32_S2 = Family(
     sources={
         "core, cores, max_mhz": "DSS2 Features > CPU and Memory ('Xtensa single-core 32-bit "
                                 "LX7 microprocessor, up to 240 MHz'); § 4.1.1.1",
-        "lp_core": "DSS2 Features (ULP-RISC-V and ULP-FSM coprocessors); § 4.1.1.2",
+        "lp_core": "DSS2 Features (ULP-RISC-V and ULP-FSM coprocessors); § 4.1.1.2 ('these "
+                   "two co-processors cannot work simultaneously': one low-power core)",
         "sram_kb, rom_kb, rtc_sram_kb": "DSS2 § 4.1.2.1 Internal Memory",
         "wifi, bluetooth, ieee802154": "DSS2 Features > Wi-Fi; cover (2.4 GHz Wi-Fi only)",
         "usb": "DSS2 Features ('Full-speed USB OTG'); § 4.2.1.11",
@@ -217,7 +250,8 @@ ESP32_S3 = Family(
     sources={
         "core, cores, max_mhz": "DSS3 Features > CPU and Memory ('Xtensa dual-core 32-bit "
                                 "LX7', up to 240 MHz); § 4.1.1.1",
-        "lp_core": "DSS3 Features (ULP-RISC-V, ULP-FSM); § 4.1.1.3",
+        "lp_core": "DSS3 Features (ULP-RISC-V, ULP-FSM); § 4.1.1.3 ('these two coprocessors "
+                   "cannot work simultaneously': one low-power core)",
         "sram_kb, rom_kb, rtc_sram_kb": "DSS3 § 4.1.2.1 Internal Memory (384 KB ROM, 512 KB "
                                         "SRAM, 8 KB RTC FAST + 8 KB RTC SLOW)",
         "wifi": "DSS3 Features > Wi-Fi",
@@ -274,7 +308,9 @@ ESP32_C5 = Family(
         "cores, max_mhz, sram_kb, rom_kb, rtc_sram_kb":
             "DSC5 Features > CPU and Memory (HP 240 MHz, LP 48 MHz, 320 KB ROM, 384 KB HP "
             "SRAM, 16 KB LP SRAM)",
-        "wifi": "DSC5 Features > Wi-Fi (2.4 and 5 GHz dual band, 802.11ax/ac/a/b/g/n)",
+        "wifi": "DSC5 Features > Wi-Fi ('1T1R in 2.4 and 5 GHz dual band'; 'IEEE "
+                "802.11ax-compliant', 'IEEE 802.11ac-compliant', 'Fully compatible with IEEE "
+                "802.11a/b/g/n protocol')",
         "bluetooth": "DSC5 Features > Bluetooth ('Bluetooth Core 6.0 certified'; the cover "
                      "says Bluetooth 5 (LE))",
         "ieee802154": "DSC5 Features > IEEE 802.15.4 (Thread 1.4, Zigbee 3.0)",
@@ -293,11 +329,15 @@ ESP32_C6 = Family(
         "cores, max_mhz": "DSC6 Features > CPU and Memory (HP 160 MHz, LP 20 MHz)",
         "sram_kb, rom_kb, rtc_sram_kb": "DSC6 § 4.1.2.1 Internal Memory (320 KB ROM, 512 KB "
                                         "HP SRAM, 16 KB LP SRAM)",
-        "wifi": "DSC6 cover; Features > Wi-Fi (802.11ax, 2.4 GHz)",
+        "wifi": "DSC6 cover ('2.4 GHz Wi-Fi 6 (802.11ax)'); Features > Wi-Fi ('IEEE "
+                "802.11ax-compliant', 'Fully compatible with IEEE 802.11b/g/n protocol')",
         "bluetooth": "DSC6 Features ('Bluetooth 5.3 certified')",
         "ieee802154": "DSC6 Features (Thread 1.3, Zigbee 3.0)",
         "usb": "DSC6 Features (USB Serial/JTAG controller)",
         "chip_uid": "EFUSE esp32c6.yaml (OPTIONAL_UNIQUE_ID)",
+        "radio_cpu": "DSC6 § 4.3.2.2 Wi-Fi MAC; § 4.3.3 ('a hardware link controller, an "
+                     "RF/modem block and a feature-rich software protocol stack'): no "
+                     "processor of the radio's own",
         "tasmota": "TASMOTA-OTA (tasmota32c6.bin); TASMOTA-ENV; TASMOTA-DOCS",
     })
 
