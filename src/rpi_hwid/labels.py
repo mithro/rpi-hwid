@@ -1652,6 +1652,9 @@ def all_labels(docs, only, pinned_names=None, order=None):
                 yield host, b.kind, f"{b.short} {b.memory} {b.serial}", draw_board, b
         for row in attached.get(host, ()):
             yield (host,) + row
+    # Micro labels, four to a sticker, after every whole one (rpi_hwid.micro).
+    from rpi_hwid import micro
+    yield from micro.sticker_rows(docs, only)
 
 
 def label_origin(index):
@@ -1690,7 +1693,9 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="rpi-hwid labels", description=__doc__.split("\n")[0])
     ap.add_argument("--data", required=True, type=Path, help="directory of probe JSON documents")
     ap.add_argument("--out", default="hardware-labels.pdf", type=Path)
-    ap.add_argument("--only", action="append", choices=list(ONLY_CHOICES),
+    from rpi_hwid import micro
+    micro_kinds = list(micro.kinds())
+    ap.add_argument("--only", action="append", choices=list(ONLY_CHOICES) + micro_kinds,
                     metavar="KIND", help="rpi|opi|fpga|tt|usb, or one FPGA board kind "
                                          "(%s)" % "|".join(FPGA_KINDS))
     ap.add_argument("--start", type=int, default=0,
@@ -1705,7 +1710,7 @@ def main(argv=None):
     ARTWORK_DIR = str(args.artwork) if args.artwork else None
     docs = load_collected(args.data)
     pinned = json.loads(args.names.read_text()) if args.names else None
-    only = args.only or list(KINDS)
+    only = args.only or list(KINDS) + micro_kinds
     if args.list:
         rows = list(all_labels(docs, set(only), pinned))
         # The host column is as wide as the widest host and no wider: these

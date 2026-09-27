@@ -39,6 +39,7 @@ documents drive the images in the README.
 ```sh
 uv run docs/examples/render.py    # docs/examples/*.png, the label crops in the README
 uv run docs/social_preview.py     # docs/social-preview.png, 1280 x 640
+uv run docs/examples/render_micro.py   # docs/examples/micro-4up.png, one sticker of micro labels
 ```
 
 Both read `tests/conftest.py`, so the images track the generator. `render.py` cuts
