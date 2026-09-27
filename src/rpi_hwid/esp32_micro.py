@@ -21,29 +21,34 @@ most Tasmota plugs. Every label has the same parts in the same places:
                        JEDEC id, and for a Boya the unique id's length),
                        else its JEDEC id (with its vendor where that fits);
                        then its size
-                uid    one serial beyond the MAC, the first in SERIALS that
-                       the chip has: the flash's unique id ("uid"), 64 bits
-                       on one row or 128 on two; else the chip's own 128-bit
-                       eFuse OPTIONAL_UNIQUE_ID ("eFuse") over two
-              the flash and uid rows each print at one size on every label
-              (FLASH_PT, UID_PT), whatever the value's length
+                uid    the flash's unique id, its ff padding trimmed
+                       (trim_flash_uid): one row where that leaves twenty
+                       hex digits or fewer, else two
+                eFuse  the chip's own 128-bit OPTIONAL_UNIQUE_ID, over two
+                       rows
+              every id the chip and its flash have is printed (Tim,
+              2026-09-27), and each kind of row prints at one size on every
+              label (CHIP_PT, FLASH_PT, UID_PT), whatever the value's length
   foot and QR the base MAC, burned into eFuse: the identifier
 
 A fact that does not apply leaves its place empty rather than moving
 another into it: an ESP8266 reports no revision, so its chip row's place is
-blank (BLANK_ROW); a chip with neither serial has no uid rows. The crystal
+blank (BLANK_ROW); a chip with neither serial has no uid or eFuse rows. The crystal
 is read and kept in the document but not printed (Tim, 2026-09-27). Every
 value is either read or looked up; nothing is derived. The Bluetooth MAC, which
 ESP-IDF derives as base+2, is not printed: it is not read from anything,
 and the rows are for what was.
 
-One serial beyond the MAC, not two, because two 128-bit serials do not fit
-a quarter sticker. The MAC already identifies the chip's die, so the
-flash's id, the one that names a second part, comes first; the chip's
-eFuse id stands in where the flash has none to give. An ESP32-C3 has both
-(its in-package XMC's 128 bits and the eFuse id), so which one prints is a
-choice, made in one place: SERIALS. Both stay in the collected document
-whichever it is.
+Both serials where a chip has both, the flash's first. An ESP32-C3's
+in-package XMC reads out 128 bits of which its maker programmed the first
+80 -- the rest read ff, as an unprogrammed byte does -- so its uid, trimmed,
+takes one row and the chip's eFuse id the two under it; the rows under the
+spec strip are set one step tighter to hold them (``micro.SPEC_ROWS``). The
+collected document keeps both ids whole, as read. A flash uid that needs two
+rows beside an eFuse id -- a Boya's 128 bits beside an ESP32-S3, say, which
+no board in the fleet is -- would make six rows, one more than the label
+holds: there the chip row gives way, as it does on the 433 MHz node labels,
+its revision being the one fact every chip of a batch shares.
 
 A device whose chip was never read gets no label: the error names the host,
 the MAC and the commands that read it, which reset the chip. The USB tree
@@ -114,21 +119,22 @@ JEDEC_PART = {0xC84016: "GD25Q32x", 0x464016: "XM25QH32D", 0x684016: "BY25Q32xS"
 # one; the ESP32-CAM on rpi4-esp gave 128 bits (2026-09-27).
 PART_BY_UID_BITS = {0x684016: {64: "BY25Q32BS", 128: "BY25Q32ES"}}
 
-# Which serial the uid rows carry, in order of preference: the first of these
-# the chip has is printed, and only that one. "flash" is the flash's own
-# unique id (captioned "uid"), "efuse" the chip's OPTIONAL_UNIQUE_ID
-# (captioned "eFuse"). An ESP32-C3 has both, so for a C3 this order is the
-# whole decision; swap the two to print the chip's own id first.
-SERIALS = ("flash", "efuse")
-
 # The captions a row can have, and the one size each kind of row is set at
 # on every label (Tim, 2026-09-27: not one that changes with the value's
-# length). Each is what fits beside the widest caption, "eFuse": the flash
-# row's longest named part (XM25QH32D · 4 MiB) and a uid row's sixteen hex
-# digits. The chip row, a revision, fits at the full row size everywhere.
+# length). The flash row is what fits beside the widest caption, "eFuse":
+# its longest named part, XM25QH32D · 4 MiB. The serials -- uid and eFuse
+# rows alike -- are set at the size a C3's trimmed flash uid, twenty hex
+# digits, fits at on one row. That row is wide (micro.MicroRow.wide), its
+# digits starting right of its own short caption: at the smallest size the
+# labels print, twenty digits are wider than the column beside "eFuse". The
+# chip row matches the serials: at the rows' tighter pitch a larger one's
+# caption would bring the descender of "chip" onto the "h" of "flash".
 CAPTIONS = ("chip", "flash", "uid", "eFuse")
+CHIP_PT = 4.0
 FLASH_PT = 4.4
-UID_PT = 4.3
+UID_PT = 4.0
+# The hex digits one uid row holds whole at UID_PT beside its caption.
+UID_ROW_DIGITS = 20
 
 
 class Esp32NotReadError(labels.IdentifierNotReadError):
@@ -277,23 +283,46 @@ def valid_flash_uid(uid: str | None) -> bool:
     return bool(re.fullmatch(r"[0-9a-f]{16}|[0-9a-f]{32}", text)) and len(set(text)) > 1
 
 
-def uid_rows(caption: str, uid: str) -> list[MicroRow]:
-    """A 64-bit uid on one row, a 128-bit one over two: sixteen hex digits
-    is what a row holds whole at the smallest size."""
-    halves = [uid[i:i + 16] for i in range(0, len(uid), 16)]
-    return [MicroRow(caption if i == 0 else "", h, mono=True, size=UID_PT)
-            for i, h in enumerate(halves)]
+def trim_flash_uid(uid: str) -> str:
+    """The flash's unique id less its trailing ff bytes: whole bytes, only
+    at the end, and never below 64 bits.
+
+    A flash reads out a fixed 128 bits whatever its maker programmed, and a
+    byte nobody programmed reads ff: an ESP32-C3's XM25QH32D gives 80
+    programmed bits and six bytes of ff (240c1119088539540150ffffffffffff),
+    which say nothing and would take a second row (Tim, 2026-09-27: "Drop
+    the flash ID's ff padding"). Only the end is trimmed: an ff inside an id
+    (a Boya's 343738393844fa77fffcffff968f1f11) is part of it. And never
+    below 64 bits, the shortest id these parts have (GigaDevice's, a Boya
+    BY25Q32BS's): a 64-bit id stays whole as read, whatever its last byte.
+    A longer id whose last programmed byte happens to be ff would lose it
+    here; the collected document keeps every id whole, as read."""
+    while len(uid) > 16 and uid.endswith("ff"):
+        uid = uid[:-2]
+    return uid
+
+
+def uid_rows(caption: str, uid: str, wide: bool = False) -> list[MicroRow]:
+    """One row for up to UID_ROW_DIGITS hex digits, else two equal halves:
+    a C3's trimmed flash uid on one row, any 128-bit id over two."""
+    if len(uid) <= UID_ROW_DIGITS:
+        parts = [uid]
+    else:
+        half = (len(uid) + 1) // 2
+        parts = [uid[:half], uid[half:]]
+    return [MicroRow(caption if i == 0 else "", h, mono=True, size=UID_PT, wide=wide)
+            for i, h in enumerate(parts)]
 
 
 def serial_rows(dev: Esp32Device) -> list[MicroRow]:
-    """The uid rows: the first serial in SERIALS that this chip has."""
-    have = {"flash": ("uid", dev.flash_uid if valid_flash_uid(dev.flash_uid) else None),
-            "efuse": ("eFuse", dev.chip_uid)}
-    for which in SERIALS:
-        caption, value = have[which]
-        if value:
-            return uid_rows(caption, value)
-    return []
+    """Every serial the chip and its flash have: the flash's uid, trimmed,
+    on wide rows; then the chip's eFuse id over two rows in the column."""
+    rows = []
+    if valid_flash_uid(dev.flash_uid):
+        rows += uid_rows("uid", trim_flash_uid(dev.flash_uid or ""), wide=True)
+    if dev.chip_uid:
+        rows += uid_rows("eFuse", dev.chip_uid)
+    return rows
 
 
 def radio_icons(fam: espressif.Family) -> tuple[Icon, ...]:
@@ -360,11 +389,15 @@ def _label(host: str, dev: Esp32Device, part: espressif.Part) -> MicroLabel:
     fam = part.family
     # the chip row is the revision; an ESP8266 reports none, and leaves the
     # row's place empty so the flash row stays where it is on every label
-    rows = [MicroRow("chip", dev.revision) if dev.revision else BLANK_ROW]
+    rows = [MicroRow("chip", dev.revision, size=CHIP_PT) if dev.revision else BLANK_ROW]
     flash = flash_line(host, dev, part)
     if flash:
         rows.append(MicroRow("flash", flash, size=FLASH_PT))
     rows += serial_rows(dev)
+    if len(rows) > micro.SPEC_ROWS:
+        # a two-row flash uid beside an eFuse id: the chip row gives way (see
+        # the module docstring)
+        rows = rows[1:]
     return MicroLabel(
         host=host, title=part.part, mark=MARK, icons=radio_icons(fam),
         specs=spec_icons(part), ident_caption="Wi-Fi MAC" if fam.wifi else "MAC",
@@ -409,6 +442,9 @@ SAMPLE_FLASH = ((0xC84016, 64), (0x684016, 128))
 SAMPLE_IN_PACKAGE = {1: (0xC84014, 64, "GD"), 2: (0xC84015, 64, "GD"),
                      4: (0x464016, 128, "XMC"), 8: (0xC84017, 64, "GD"),
                      16: (0xC84018, 64, "GD")}
+# The XM25QH32D's 128-bit read holds this many programmed bits, then ff: the
+# three C3 SuperMinis read on rpi5-433mhz all do.
+XMC_PADDED = (0x464016, 80)
 
 
 def sample_device(part: espressif.Part, n: int) -> Esp32Device:
@@ -439,8 +475,11 @@ def sample_device(part: espressif.Part, n: int) -> Esp32Device:
             feats.append(f"Embedded Flash {size}MB ({vendor})")
     else:
         jedec, bits = SAMPLE_FLASH[n % len(SAMPLE_FLASH)]
-    # every other sample has no flash uid, to show the eFuse id in its place
+    # every other sample has no flash uid, to show the eFuse id alone; the
+    # XMC's is 80 programmed bits and ff after them, as the real C3s' are
     uid = _sample_hex(part, "flash uid", bits // 4) if n % 2 else ""
+    if uid and jedec == XMC_PADDED[0]:
+        uid = uid[:XMC_PADDED[1] // 4] + "f" * ((bits - XMC_PADDED[1]) // 4)
     efuse: dict[str, Any] = {}
     if fam.chip_uid:
         efuse["OPTIONAL_UNIQUE_ID"] = _sample_hex(part, "efuse uid", 32)

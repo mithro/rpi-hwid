@@ -20,15 +20,24 @@ from rpi_hwid.model import ProbeDocument
 # CH340 and a first-generation devkit behind a CP2102 (esptool 5.2.0).
 REAL = json.loads((pathlib.Path(__file__).parent / "esp32_devices.json").read_text())
 
-FLASH, UID = esp32_micro.FLASH_PT, esp32_micro.UID_PT
+FLASH, UID, CHIP = esp32_micro.FLASH_PT, esp32_micro.UID_PT, esp32_micro.CHIP_PT
+
+
+def chip(value):
+    return MicroRow("chip", value, size=CHIP)
 
 
 def flash(value):
     return MicroRow("flash", value, size=FLASH)
 
 
-def uid(caption, value):
-    return MicroRow(caption, value, mono=True, size=UID)
+def uid(caption, value, wide=False):
+    return MicroRow(caption, value, mono=True, size=UID, wide=wide)
+
+
+def fuid(caption, value):
+    """A flash uid row: set wide, its digits right of its own caption."""
+    return uid(caption, value, wide=True)
 
 
 def _real(host, mac):
@@ -67,9 +76,9 @@ def test_every_real_device_gets_a_label():
 
 def test_a_c3_label():
     """The part from the chip and its eFuse; the spec strip from the table;
-    the rows from the read. Its in-package XMC gave a 128-bit unique id,
-    which takes the uid rows (SERIALS); the chip's eFuse id stays in the
-    document."""
+    the rows from the read. Both its ids (Tim, 2026-09-27): its in-package
+    XMC's, 80 bits once its ff padding is trimmed, on one row, and the
+    chip's 128-bit eFuse id over the two under it."""
     (lab,) = esp32_micro.micro_labels(_docs(C3))
     assert lab.title == "ESP32-C3FH4"
     assert lab.mark == "espressif.svg"
@@ -79,27 +88,64 @@ def test_a_c3_label():
     assert lab.subtitle == ""
     assert lab.ident_caption == "Wi-Fi MAC"
     assert lab.ident == "e8:3d:c1:8c:3e:b8"
-    assert lab.rows == (MicroRow("chip", "v0.4"),
+    assert lab.rows == (chip("v0.4"),
                         flash("XM25QH32D · 4 MiB"),
-                        uid("uid", "1f2b10190882f754"),
-                        uid("", "0150ffffffffffff"))
+                        fuid("uid", "1f2b10190882f7540150"),
+                        uid("eFuse", "53b9b91842e41b19"),
+                        uid("", "ee00321402a8b49b"))
 
 
-def test_without_a_flash_uid_the_chip_s_efuse_id_stands_in():
+@pytest.mark.parametrize(("mac", "flash_uid", "efuse"), [
+    ("e8:3d:c1:8c:5c:88", "240c1119088539540150", ("89e4bec55c62671e", "ca93593f986fa7c9")),
+    ("44:1b:f6:2e:b3:80", "2c30041916712aca013a", ("4cd07386bef134a5", "3cd0e87a86d36603")),
+    ("e8:3d:c1:8c:3e:b8", "1f2b10190882f7540150", ("53b9b91842e41b19", "ee00321402a8b49b")),
+])
+def test_every_real_c3_prints_both_its_ids(mac, flash_uid, efuse):
+    (lab,) = esp32_micro.micro_labels(_docs(_real("rpi5-433mhz", mac)))
+    assert lab.rows[2:] == (fuid("uid", flash_uid), uid("eFuse", efuse[0]),
+                            uid("", efuse[1]))
+
+
+@pytest.mark.parametrize(("read", "shown"), [
+    # the C3s' XM25QH32D: 80 programmed bits, then six bytes of ff
+    ("240c1119088539540150ffffffffffff", "240c1119088539540150"),
+    ("2c30041916712aca013affffffffffff", "2c30041916712aca013a"),
+    # a Boya's 128 bits end in no ff, and the ff inside them are the id's
+    ("343738393844fa77fffcffff968f1f11", "343738393844fa77fffcffff968f1f11"),
+    # a 64-bit id is never trimmed, whatever its last byte
+    ("3130343531118566", "3130343531118566"),
+    ("31303435311185ff", "31303435311185ff"),
+    # nor is a longer one trimmed below 64 bits
+    ("3130343531118566ffffffffffffffff", "3130343531118566"),
+    ("313034353111ffffffffffffffffffff", "313034353111ffff"),
+    # only whole bytes: a lone f at the end is a digit of the id
+    ("240c11190885395401500fffffffffff", "240c11190885395401500f"),
+])
+def test_a_flash_uid_is_trimmed_of_its_ff_padding(read, shown):
+    assert esp32_micro.trim_flash_uid(read) == shown
+
+
+@pytest.mark.parametrize("flash_uid", ["ffffffffffffffffffffffffffffffff",
+                                       "00000000000000000000000000000000"])
+def test_an_all_ones_or_all_zeroes_uid_is_no_uid_not_a_trimmed_one(flash_uid):
+    (lab,) = esp32_micro.micro_labels(_docs(dict(C3, flash_uid=flash_uid)))
+    assert [r.caption for r in lab.rows] == ["chip", "flash", "eFuse", ""]
+
+
+def test_without_a_flash_uid_the_c3_prints_its_efuse_id_alone():
     (lab,) = esp32_micro.micro_labels(_docs(dict(C3, flash_uid=None)))
     assert lab.rows[2:] == (uid("eFuse", "53b9b91842e41b19"),
                             uid("", "ee00321402a8b49b"))
 
 
-def test_serials_decides_which_id_a_c3_prints(monkeypatch):
-    """The one switch between the two serials a C3 has."""
-    monkeypatch.setattr(esp32_micro, "SERIALS", ("efuse", "flash"))
-    (lab,) = esp32_micro.micro_labels(_docs(C3))
-    assert lab.rows[2:] == (uid("eFuse", "53b9b91842e41b19"),
-                            uid("", "ee00321402a8b49b"))
-    # an original ESP32 has no eFuse id, so it prints its flash's either way
-    (dev,) = esp32_micro.micro_labels(_docs(DEVKIT, host="rpi4-esp"))
-    assert dev.rows[2:] == (uid("uid", "3130343531118566"),)
+def test_a_two_row_flash_uid_beside_an_efuse_id_takes_the_chip_row_s_place():
+    """Six rows would be one more than the label holds: the chip row, the
+    fact every chip of a batch shares, gives way; every id is printed."""
+    boya = "343738393844fa77fffcffff968f1f11"
+    (lab,) = esp32_micro.micro_labels(_docs(dict(C3, flash_uid=boya)))
+    assert lab.rows == (flash("XM25QH32D · 4 MiB"),
+                        fuid("uid", "343738393844fa77"), fuid("", "fffcffff968f1f11"),
+                        uid("eFuse", "53b9b91842e41b19"), uid("", "ee00321402a8b49b"))
 
 
 @pytest.mark.parametrize(("bits", "part"), [(128, "BY25Q32ES"), (64, "BY25Q32BS"),
@@ -139,28 +185,32 @@ def test_an_original_esp32_label():
     assert cam.icons == (Icon("wifi", "2.4 n"), Icon("bluetooth"))
     assert cam.specs == (Icon("xtensa"), Icon("cores", "2+1"), Icon("memory", "520K"),
                          Icon("tasmota"))
-    assert cam.rows == (MicroRow("chip", "v3.1"),
+    # an original ESP32 has no eFuse id: its flash's is its one serial, the
+    # Boya's 128 bits (no ff to trim) over two rows, the GigaDevice's 64 on one
+    assert cam.rows == (chip("v3.1"),
                         flash("BY25Q32ES · 4 MiB"),
-                        uid("uid", "343738393844fa77"),
-                        uid("", "fffcffff968f1f11"))
+                        fuid("uid", "343738393844fa77"),
+                        fuid("", "fffcffff968f1f11"))
     (dev,) = esp32_micro.micro_labels(_docs(DEVKIT, host="rpi4-esp"))
-    assert dev.rows[1:] == (flash("GD25Q32x · 4 MiB"), uid("uid", "3130343531118566"))
+    assert dev.rows[1:] == (flash("GD25Q32x · 4 MiB"), fuid("uid", "3130343531118566"))
 
 
 def test_every_label_has_the_same_rows_in_the_same_places():
-    """chip, flash, then the uid rows: a fact that does not apply leaves its
-    place empty at the end, never moves another up into it."""
-    docs = {}
-    for host, devs in REAL.items():
-        docs.update(_docs(*devs, host=host))
-    labs = esp32_micro.micro_labels(docs)
-    labs += [esp32_micro.sample_label(p, i) for i, p in enumerate(espressif.PARTS)]
+    """chip, flash, then the flash's uid and the chip's eFuse id: a fact
+    that does not apply leaves its place empty at the end, never moves
+    another up into it -- but for the one label with six rows' worth, where
+    the chip row gives way."""
+    labs = _all_labels() + [esp32_micro.sample_label(p, i)
+                            for i, p in enumerate(espressif.PARTS)]
+    serials = ([], ["uid"], ["uid", ""], ["eFuse", ""], ["uid", "eFuse", ""])
     for lab in labs:
         caps = [r.caption for r in lab.rows]
+        if caps == ["flash", "uid", "", "eFuse", ""]:
+            continue
         # an ESP8266 reports no revision: its chip row's place is left empty
         assert caps[:2] == ["" if lab.rows[0] == BLANK_ROW else "chip", "flash"], (
             lab.title, caps)
-        assert caps[2:] in ([], ["uid"], ["uid", ""], ["eFuse", ""]), (lab.title, caps)
+        assert caps[2:] in serials, (lab.title, caps)
         assert [i.name for i in lab.specs[:3]] in (
             ["riscv", "cores", "memory"], ["xtensa", "cores", "memory"]), lab.title
 
@@ -238,7 +288,8 @@ def test_a_c3_whose_efuse_was_not_read_is_fatal():
         esp32_micro.micro_labels(_docs(d))
 
 
-@pytest.mark.parametrize("uid", ["ffffffffffffffff", "0000000000000000", "", None])
+@pytest.mark.parametrize("uid", ["ffffffffffffffff", "0000000000000000",
+                                 "ffffffffffffffffffffffffffffffff", "", None])
 def test_a_blank_flash_uid_is_left_off_not_printed(uid):
     (lab,) = esp32_micro.micro_labels(_docs(dict(DEVKIT, flash_uid=uid), host="rpi4-esp"))
     assert [r.caption for r in lab.rows] == ["chip", "flash"]
@@ -295,13 +346,69 @@ def test_every_flash_row_and_every_uid_row_prints_at_one_size(monkeypatch):
     monkeypatch.setattr(micro.Cell, "fit", fit)
     labs = _all_labels()
     micro.render_micro(labs, io.BytesIO())
-    values = {r.value: r.caption for lab in labs for r in lab.rows}
-    flash_sizes = {size for s, font, size in drawn if values.get(s) == "flash"}
-    uid_sizes = {size for s, font, size in drawn
-                 if s in values and values[s] in ("uid", "eFuse", "") and s}
-    assert flash_sizes == {FLASH}
-    assert uid_sizes == {UID}
-    assert min(FLASH, UID) >= micro.MIN_SIZE
+    kinds: dict[str, set[str]] = {}
+    for lab in labs:
+        kind = ""
+        for r in lab.rows:
+            kind = r.caption or kind            # a second row is its first's kind
+            kinds.setdefault(r.value, set()).add(kind)
+    sizes: dict[str, set[float]] = {}
+    for s, _font, size in drawn:
+        for kind in kinds.get(s, ()):
+            sizes.setdefault(kind, set()).add(size)
+    assert sizes == {"chip": {CHIP}, "flash": {FLASH}, "uid": {UID}, "eFuse": {UID}}
+    assert min(CHIP, FLASH, UID) >= micro.MIN_SIZE
+
+
+def _ink(s, size):
+    """How far `s` at `size` reaches above and below its baseline: to the
+    ascender line (Helvetica's 718/1000, which the digits and capitals of
+    both faces stay under, with a hair to spare), and below it only where a
+    letter has a descender (Helvetica's 207/1000)."""
+    descends = any(ch in "gjpqy,;()[]" for ch in s)
+    return size * 0.74, size * 0.21 if descends else 0.0
+
+
+@pytest.mark.parametrize("which", ["real", "samples"])
+def test_no_row_overflows_or_touches_another(monkeypatch, which):
+    """Every label, real and sample: every string under the spec strip lies
+    inside the label's margins, and no two touch -- each one's ink (_ink)
+    clear of every other's. The rows are set tighter to hold both a C3's
+    ids, and a larger chip row would put the p of "chip" on the h of
+    "flash" under it."""
+    import io
+
+    labs = (_all_labels()[:sum(len(d) for d in REAL.values())] if which == "real"
+            else [esp32_micro.sample_label(p, i) for i, p in enumerate(espressif.PARTS)]
+            + [esp32_micro.sample_label(p, i + 1) for i, p in enumerate(espressif.PARTS)])
+    below_strip = micro.band_top() + micro.SPEC_H
+    for lab in labs:
+        drawn = []
+        real = micro.Cell.text
+
+        def text(self, x, y, s, font=labels.SANS, size=8, align="left", color=None,
+                 _drawn=drawn, _real=real, **kw):
+            w = self.width(s, font, size)
+            left = x - w if align == "right" else x - w / 2 if align == "centre" else x
+            up, down = _ink(s, size)
+            base = y + size * 0.72
+            _drawn.append((s, left, left + w, base - up, base + down, base))
+            return _real(self, x, y, s, font, size, align,
+                         **({"color": color} if color else {}))
+
+        monkeypatch.setattr(micro.Cell, "text", text)
+        micro.render_micro([lab], io.BytesIO())
+        monkeypatch.setattr(micro.Cell, "text", real)
+        body = [d for d in drawn if d[3] > below_strip]
+        assert {r.value for r in lab.rows if r.value} <= {d[0] for d in body}, lab.title
+        for s, left, right, _top, _bottom, base in body:
+            assert left >= micro.MICRO_PAD - 0.01, (lab.title, s)
+            assert right <= micro.MICRO_W - micro.MICRO_PAD + 0.01, (lab.title, s)
+            assert base <= micro.MICRO_H - micro.MICRO_PAD + 0.01, (lab.title, s)
+        for i, a in enumerate(body):
+            for b in body[i + 1:]:
+                apart = a[2] <= b[1] or b[2] <= a[1] or a[4] <= b[3] or b[4] <= a[3]
+                assert apart, (lab.title, a[0], b[0])
 
 
 def test_the_wifi_glyph_carries_each_family_s_bands_and_standards():

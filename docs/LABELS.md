@@ -388,9 +388,9 @@ the same places:
   grey: `2|1` on an ESP32, `1|0` on a C3, which has none), the on-chip SRAM with any PSRAM in the package (`512K+8M`),
   and the Tasmota symbol where Tasmota ships a binary for the part.
 - **Rows,** read from this chip, always in this order:
-  - `chip`: the silicon revision. An ESP8266 reports none, so its row's
-    place is left blank. The crystal is read and kept in the document, but
-    not printed.
+  - `chip`: the silicon revision, at 4 pt. An ESP8266 reports none, so its
+    row's place is left blank. The crystal is read and kept in the document,
+    but not printed.
   - `flash`: the flash's part where the read settles it (`GD25Q32x`,
     `XM25QH32D`, or `BY25Q32ES` where a Boya's 128-bit unique id tells it
     from the 64-bit BS); then its size. A flash whose JEDEC id names no
@@ -401,21 +401,41 @@ the same places:
     every label, whatever the length of the part's name. In the package or beside it, the flash is on this row.
     [research/esp32-flash.md](research/esp32-flash.md) has the reads and the
     datasheets behind each name.
-  - `uid`: the flash's own unique id, 64 bits on one row or 128 over two.
-    Where the flash gives none, `eFuse` and the chip's 128-bit
-    `OPTIONAL_UNIQUE_ID` over two rows stand in its place. A chip with
-    neither has no uid rows. An ESP32-C3 has both; which one is printed is
-    `esp32_micro.SERIALS`, one line. The uid rows print at one size too,
-    4.3 pt, beside either caption.
+  - `uid`: the flash's own unique id, with its trailing `ff` padding
+    trimmed: on one row where that leaves 20 hex digits or fewer, else over
+    two equal halves.
+  - `eFuse`: the chip's own 128-bit `OPTIONAL_UNIQUE_ID`, over two rows.
+
+  Every id the chip and its flash have is printed, the flash's first. An
+  ESP32-C3 has both; an original ESP32 has no eFuse id, and a chip whose
+  flash gives none prints its eFuse id alone. The uid and eFuse rows print
+  at one size, 4 pt, on every label. A uid row's digits start right of its
+  own short caption rather than in the column beside `eFuse`: 20 digits do
+  not fit that column at the 4 pt the labels go down to. To hold a C3's
+  three rows of serials, the rows under the spec strip are five, one step
+  tighter than the four they were.
+
+  **Trimming.** A flash reads out a fixed 128 bits whatever its maker
+  programmed, and an unprogrammed byte reads `ff`. The C3s' XM25QH32D gives
+  80 programmed bits then six `ff` bytes: `240c1119088539540150ffffffffffff`
+  prints as `240c1119088539540150`. Only whole `ff` bytes at the end go, and
+  never below 64 bits, the shortest id these parts have. A 64-bit id
+  (GigaDevice) is printed as read, and a Boya's 128 bits
+  (`343738393844fa77fffcffff968f1f11`, whose `ff`s are inside it) go over
+  two rows untouched. An all-`ff` or all-zero id is no id and is not
+  printed. The collected document keeps every id whole, as read
+  (`flash_uid`, `flash_uid_raw`, `efuse.OPTIONAL_UNIQUE_ID`).
+
+  A flash uid that needs two rows beside an eFuse id would make six rows, one
+  more than the label holds. No board in the fleet has one (a Boya beside an
+  ESP32-S3 would); there the `chip` row gives way, as on the 433 MHz node
+  labels.
 - **Foot and QR:** the base MAC, burned into eFuse: the Wi-Fi station MAC,
   or on an H2, which has no Wi-Fi, the MAC.
 
 A fact that does not apply leaves its place empty rather than moving another
-into it. One serial is printed beyond the MAC, not two: two 128-bit serials do
-not fit a quarter sticker, and since the MAC already identifies the chip's die,
-the flash's id, which names a second part, comes first. Both stay in the
-collected document. Nothing on the label is derived; the Bluetooth MAC, which
-ESP-IDF derives as base+2, is not printed.
+into it. Nothing on the label is derived; the Bluetooth MAC, which ESP-IDF
+derives as base+2, is not printed.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-sticker-1.png" alt="Four ESP32 micro labels from real reads: an ESP32-CAM (ESP32-D0WD-V3) and a devkit (ESP32-D0WDQ6), Xtensa, over two ESP32-C3FH4 SuperMinis, RISC-V" width="98%">
@@ -423,8 +443,8 @@ ESP-IDF derives as base+2, is not printed.
 
 These are real reads, from `tests/esp32_devices.json`: an ESP32-CAM and a
 devkit on rpi4-esp, and two of the three C3 radio nodes on rpi5-433mhz. The
-C3s' in-package XMC flash gives a 128-bit unique id, so their uid rows carry
-it; the chip's eFuse id is in the document beside it.
+C3s print both their ids: the in-package XMC's, trimmed to its 80 programmed
+bits on one row, and the chip's eFuse id on the two under it.
 `docs/examples/render_esp32.py` regenerates them,
 and a sheet of synthetic samples, one for every part in the table:
 
