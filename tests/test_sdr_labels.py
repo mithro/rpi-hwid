@@ -34,8 +34,8 @@ def test_the_pluto_prints_what_it_said_of_itself():
     assert (p.rx_channels, p.tx_channels) == (1, 1)
     assert p.facts[0] == "30.72 MS/s  ·  12-bit"
     assert p.facts[1] == "40 MHz ref"
-    assert "Rev.B" in p.subtitle
-    assert "v0.39" not in p.subtitle      # firmware changes; the label does not
+    assert p.variant == "Rev.B"
+    assert "v0.39" not in (p.variant, p.radio, p.fpga)   # firmware changes; the label does not
     prov = dict(p.provenance)
     assert prov["RX range"].startswith("read: ip:192.168.2.1")
     assert prov["channels, ADC, SoC"].startswith("https://wiki.analog.com/")
@@ -126,7 +126,7 @@ def test_the_xsdr_is_keyed_on_its_flash_esn():
     assert x.maker == "Wavelet Lab"
     assert x.ident == "19040203090e9769"         # the programmed half; the rest is erased
     assert x.ident_caption == "flash uid"
-    assert "XC7A50T" in x.subtitle
+    assert x.fpga == "XC7A50T"
     assert (x.rx_channels, x.tx_channels) == (2, 2)
     prov = dict(x.provenance)
     assert prov["model"].startswith("read: HWID 8030012d")
@@ -157,3 +157,85 @@ def test_the_pluto_flash_uid_is_its_serial():
     p = records()["rpi-sdr-pluto"]
     assert p.flash_uid == p.ident
     assert p.flash is None          # the part was never read, so no part row
+
+
+# --- the radio chip and the FPGA, each captioned -------------------------------
+
+def test_each_radio_names_its_radio_chips():
+    r = records()
+    assert r["rpi-sdr-pluto"].radio == "AD9363"
+    assert r["rpi-sdr-xsdr"].radio == "LMS7002M"
+    # an RTL2832U radio is a tuner and a demodulator; a KrakenSDR has five
+    assert r["rpi-sdr-rtlsdr-v3"].radio == "R820T2 + RTL2832U"
+    assert r["rpi-sdr-kraken"].radio == "5 \u00d7 R820T2 + RTL2832U"
+
+
+def test_the_fpga_radios_name_their_fpga_and_the_rtl_ones_have_none():
+    r = records()
+    assert r["rpi-sdr-pluto"].fpga == "XC7Z010"
+    assert r["rpi-sdr-xsdr"].fpga == "XC7A50T"
+    assert r["rpi-sdr-rtlsdr-v3"].fpga is None
+    assert r["rpi-sdr-kraken"].fpga is None
+    # the Pluto's part is what it said of itself, not the wiki's
+    assert dict(r["rpi-sdr-pluto"].provenance)["FPGA"].startswith(
+        "read: ip:192.168.2.1 context hw_model")
+
+
+def test_a_pluto_that_did_not_say_its_part_takes_the_datasheets():
+    raw = copy.deepcopy(SDR_RAW["rpi-sdr-pluto"])
+    del raw["verdict"]["summary"]["sdr"][0]["hw_model"]
+    docs = {"rpi-sdr-pluto": ProbeDocument.from_dict("rpi-sdr-pluto", raw)}
+    (p,) = sdr_labels.sdr_records(docs)
+    assert p.fpga == "XC7Z010"
+    assert p.variant is None
+    assert dict(p.provenance)["channels, ADC, SoC"].startswith("https://wiki.analog.com/")
+
+
+def test_the_fpga_radios_say_their_device_dna_is_not_readable():
+    """Neither FPGA radio lets the host read the die's Device DNA, so each is
+    keyed on its flash, as an FPGA board with no DNA is, and says why."""
+    r = records()
+    for host in ("rpi-sdr-pluto", "rpi-sdr-xsdr"):
+        assert r[host].dna_note == "Device DNA not readable"
+        assert "DNA_PORT" in dict(r[host].provenance)["Device DNA"]
+    for host in ("rpi-sdr-rtlsdr-v3", "rpi-sdr-kraken"):
+        assert r[host].dna_note is None
+
+
+# --- receive and transmit, told apart --------------------------------------------
+
+def test_the_channels_are_grouped_by_direction_and_counted():
+    r = records()
+    assert sdr_labels.channel_groups(r["rpi-sdr-pluto"]) == [("RX", 1), ("TX", 1)]
+    assert sdr_labels.channel_groups(r["rpi-sdr-xsdr"]) == [("RX", 2), ("TX", 2)]
+    assert sdr_labels.channel_groups(r["rpi-sdr-kraken"]) == [("RX", 5)]
+    assert sdr_labels.channel_groups(r["rpi-sdr-rtlsdr-v3"]) == [("RX", 1)]
+
+
+def test_a_group_caption_is_its_direction_and_count():
+    assert sdr_labels.group_caption("RX", 2) == "RX \u00d72"
+    assert sdr_labels.group_caption("TX", 1) == "TX \u00d71"
+
+
+def _page_text(r, tmp_path):
+    from reportlab.pdfgen import canvas
+
+    out = tmp_path / "one.pdf"
+    c = canvas.Canvas(str(out), pageCompression=0)
+    sdr_labels.draw_sdr(labels.Label(c, 0, 0), r)
+    c.save()
+    return out.read_bytes()
+
+
+def test_the_label_prints_the_captioned_chips_and_groups(tmp_path):
+    r = records()
+    pluto = _page_text(r["rpi-sdr-pluto"], tmp_path)
+    for text in (b"(radio)", b"(AD9363)", b"(FPGA)", b"(XC7Z010)", b"(Rev.B)"):
+        assert text in pluto
+    xsdr = _page_text(r["rpi-sdr-xsdr"], tmp_path)
+    # reportlab writes the multiplication sign as its WinAnsi octal escape
+    assert b"(RX \\3272)" in xsdr
+    assert b"(TX \\3272)" in xsdr
+    v3 = _page_text(r["rpi-sdr-rtlsdr-v3"], tmp_path)
+    assert b"(FPGA)" not in v3
+    assert b"(TX" not in v3
