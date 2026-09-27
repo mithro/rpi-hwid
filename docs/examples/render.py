@@ -44,6 +44,8 @@ EXAMPLES = [
     ("rpi", "Pi 3", "rpi3bplus"),
     ("rpi", "Zero", "rpi-zero-w-bonnet"),
     ("opi", "Orange Pi PC", "orange-pi-pc"),
+    ("riscv", "SF105SZ212200391", "hifive-unmatched-1"),
+    ("riscv", "SF105SZ212200532", "hifive-unmatched-2"),
     ("usb", "AX88179", "usb-asix"),
     ("usb", "6c:1f:f7:51:2e:a3", "usb-wifi"),
     ("usb", "USB3GIGV1", "usb-linksys"),

@@ -708,6 +708,7 @@ def test_all_labels_order_and_count(docs):
     # Host by host in sorted order, and within a host the board first, then
     # what is attached to it: FPGA, Tiny Tapeout, then the USB adapters.
     assert rows == [
+        ("hifive-unmatched-1", "riscv"), ("hifive-unmatched-2", "riscv"),
         ("pi-sw1-p10", "rpi"),
         ("pi-sw2-p22", "opi"),
         ("pi-sw2-p33", "rpi"), ("pi-sw2-p33", "tt"),
@@ -730,6 +731,9 @@ def test_all_labels_order_and_count(docs):
                       "TTGF0p2 E66360B8A3C1D5F2"]
     only_opi = [k for _h, k, _t, _d, _r in labels.all_labels(docs, {"opi"})]
     assert only_opi == ["opi"]
+    only_riscv = [t for _h, _k, t, _d, _r in labels.all_labels(docs, {"riscv"})]
+    assert only_riscv == ["HiFive Unmatched 16 GB SF105SZ212200391",
+                          "HiFive Unmatched 16 GB SF105SZ212200532"]
 
 
 def test_order_puts_named_hosts_first_and_keeps_groups_whole(docs):
@@ -866,6 +870,8 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "7070c78090a6d6d8", "00000000110aeed6", "0000000067bdbf54",
         # pi-sw2-p48, the live Acorn CLE-215+ read 2026-09-21
         "0cd35697db04a4ab", "88:a2:9e:45:85:77", "0x0054b48664b04854",
+        # the HiFive Unmatched boards: the board EEPROM's serial, and the MAC
+        "SF105SZ212200391", "70:b3:d5:92:f8:de", "SF105SZ212200532", "70:b3:d5:92:f8:83",
     }
     # b8:27:eb:5f:bb:83 is deliberately absent: it is what the Broadcom rule
     # derives from the Model B's serial, and that board has no radio to
