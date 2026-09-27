@@ -10,6 +10,11 @@ name: Debian packages
 # bookworm is built because the NeTV2's host (rpi5-netv2) runs Raspberry Pi
 # OS bookworm.
 #
+# python3-rpi-hwid Depends on python3-spiflash, which is not in Debian. Each
+# build-deb job fetches it from spiflash's own signed repository and puts it
+# beside python3-rpi-hwid, so the install test and the published repository
+# both carry it: installing python3-rpi-hwid needs this repository alone.
+#
 # A green run of this workflow on main is also what publishes to PyPI:
 # publish-pypi.yml is triggered by it completing (workflow_run), so renaming
 # this workflow breaks that trigger.
@@ -113,13 +118,52 @@ jobs:
       # the version from the shared deb-version.py (with ~deb<R>, and ~pr<P>
       # on a pull request). Writes the .debs to built-debs/.
       - name: Build
+        id: build
         uses: mithro/apt-repo-action/build-deb@main
         with:
           suite: ${{ matrix.suite }}
           arch: ${{ matrix.arch }}
 
+      # python3-spiflash, republished here (see the top of this file). The
+      # newest version spiflash's repository has for the suite: both are
+      # rolling releases, and a pin here would only hold rpi-hwid's users back
+      # from parts spiflash has added since. The repository is the
+      # [[depends]] in .github/apt-packaging.toml, which build-deb resolved
+      # into steps.build.outputs.apt-sources: its key, fetched over https from
+      # https://mith.ro/spiflash/spiflash.gpg, is checked here against the
+      # fingerprint spiflash publishes, and apt then checks the suite's
+      # InRelease against that key and the .deb against the SHA256 in the
+      # Packages index InRelease signs. The version and checksum go in the log.
+      - name: Fetch python3-spiflash to republish
+        env:
+          SUITE: ${{ matrix.suite }}
+          APT_SOURCES: ${{ steps.build.outputs.apt-sources }}
+          SPIFLASH_KEY: B5286C61A99A9E6A5B8A8E5B6B2D7683DE01081D
+        run: |
+          set -eu
+          keyring="$APT_SOURCES/keyrings/spiflash.gpg"
+          got=$(gpg --show-keys --with-colons "$keyring" | awk -F: '$1 == "fpr" {print $10}')
+          if [ "$got" != "$SPIFLASH_KEY" ]; then
+            echo "::error::spiflash's apt key is $got, not the pinned $SPIFLASH_KEY: refusing to republish its packages"
+            exit 1
+          fi
+          docker run --rm \
+            -v "$APT_SOURCES:/apt-sources:ro" \
+            -v "${PWD}/built-debs:/debs" \
+            docker.io/library/debian:${SUITE} \
+            sh -ec 'sh /apt-sources/install.sh
+                    apt-cache policy python3-spiflash
+                    cd /debs
+                    apt-get download python3-spiflash
+                    for deb in python3-spiflash_*.deb; do
+                      echo "::notice title=python3-spiflash::republishing $(dpkg-deb -f "$deb" Package) $(dpkg-deb -f "$deb" Version) for '"$SUITE"', sha256 $(sha256sum "$deb" | cut -d" " -f1)"
+                    done'
+          ls -l built-debs
+
       # Install what was just built into a clean container of the same suite,
-      # with its dependencies from the Debian archive, and run it.
+      # with its dependencies from the Debian archive and python3-spiflash
+      # from beside it -- as a machine with only this repository configured
+      # would -- and run it.
       - name: Install test
         run: |
           docker run --rm \
@@ -128,7 +172,8 @@ jobs:
             sh -ec 'apt-get update -q && apt-get install -y -q --no-install-recommends /debs/*.deb
                     rpi-hwid revision c04170
                     rpi-hwid name --netv2 0x00742c4e63b9085c
-                    python3 -c "import rpi_hwid.probe, rpi_hwid.fpga, rpi_hwid.model"'
+                    python3 -c "import rpi_hwid.probe, rpi_hwid.fpga, rpi_hwid.model"
+                    python3 -c "from rpi_hwid import spi_flash_parts as p; n = p.name(0xc84016); print(p.version(), n); assert n.startswith(\"GD25Q32\")"'
 
       - name: Upload
         uses: actions/upload-artifact@v7

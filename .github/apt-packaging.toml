@@ -7,3 +7,11 @@ suites = ["bookworm", "trixie", "forky", "sid"]
 
 [exceptions]
 PKG-SUITES = "NeTV2 (the rpi5-netv2 host)"
+
+# python3-rpi-hwid Depends on python3-spiflash. The build and deb.yml's
+# republish step read it from spiflash's own signed repository; deb.yml then
+# publishes that .deb in this repository too, so installing python3-rpi-hwid
+# needs only this one configured.
+[[depends]]
+repo = "mithro/spiflash"
+reason = "python3-spiflash (the SPI flash part database the labels name flashes from) is not in Debian"
