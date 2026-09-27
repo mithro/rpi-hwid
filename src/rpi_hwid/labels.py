@@ -728,7 +728,9 @@ def draw_board(lab, b):
                       min_size=5)
     y = band_top + hat_rows
 
-    # MAC bands: eth then wlan, always both, fixed height
+    # MAC bands: eth then wlan, fixed height. A model with no radio at all
+    # has no wlan band -- a note saying so was a row spent on a device that
+    # is not there -- and its eth band takes both rows instead.
     macs = dict(b.macs)
     if "eth" not in macs:
         macs["eth"] = None
@@ -736,6 +738,9 @@ def draw_board(lab, b):
         macs["wlan"] = None
     reasons = {"eth": b.eth_note or "not read", "wlan": b.wlan_note or "not read"}
     cap_gap = 0.7 * mm
+    if b.radio is False and macs["wlan"] is None:
+        draw_single_mac(lab, x, tx, y, 2 * qr + qr_gap, "eth", macs["eth"], reasons["eth"])
+        return
     mac_size = lab.fitted_size("00:00:00:00:00:00", MONO, 13, col_w)
     block = CAPTION * 0.72 + cap_gap + mac_size * 0.72
     for kind in ("eth", "wlan"):
@@ -750,6 +755,38 @@ def draw_board(lab, b):
             lab.qr(x, y + 0.5 * mm, qr, mac)
         lab.text(tx, cy, text, font, size, color=colour)
         y += qr + qr_gap
+
+
+def draw_single_mac(lab, x, tx, y, band, kind, mac, reason):
+    """The one MAC band of a board with no radio, in the room two bands
+    would take: the code as tall as the band, and the MAC beside it in two
+    lines -- the maker's half over the board's own -- because two lines of
+    nine characters can be set far bigger than one of seventeen in what is
+    left of the width. Both halves are still read left to right, top to
+    bottom, and the trailing colon says the line goes on."""
+    cap_gap = 0.7 * mm
+    top = y + 0.5 * mm
+    if not mac:
+        # nothing to code: the note, in the text column as on every board
+        block = CAPTION * 0.72 + cap_gap + 8 * 0.72
+        cy = top + (band - block) / 2
+        lab.text(tx, cy, kind + " MAC", SANS, CAPTION, color=GREY)
+        lab.fit(tx, cy + CAPTION * 0.72 + cap_gap, reason, SANS, 8,
+                LABEL_W - PAD - tx, color=NOTE)
+        return
+    lab.qr(x, top, band, mac)
+    tx = x + band + 1.5 * mm
+    col_w = LABEL_W - PAD - tx
+    halves = (mac[:9], mac[9:])               # "02:81:2e:", "b7:a3:4e"
+    size = lab.fitted_size("00:00:00:", MONO, 20, col_w)
+    line_gap = 1.4 * mm
+    block = CAPTION * 0.72 + cap_gap + 2 * size * 0.72 + line_gap
+    cy = top + (band - block) / 2
+    lab.text(tx, cy, kind + " MAC", SANS, CAPTION, color=GREY)
+    cy += CAPTION * 0.72 + cap_gap
+    for half in halves:
+        lab.text(tx, cy, half, MONO, size)
+        cy += size * 0.72 + line_gap
 
 
 def draw_usb(lab, dev):
@@ -1303,7 +1340,10 @@ class BoardLabel:
     header: tuple[str, ...]
     hat_uuid: str | None = None
     eth_note: str | None = None      # why there is no eth MAC
-    wlan_note: str | None = None     # why there is no wlan MAC
+    wlan_note: str | None = None     # why a radio's MAC is not known
+    # False where the model has no radio at all: that board gets no wlan
+    # band, rather than a band saying there is nothing to put in it.
+    radio: bool | None = None
     # Pi 5 only, and None on every other model: the probe reports these as
     # None where the signal does not exist rather than as False, so a board
     # that cannot answer is never drawn as one that answered "no".
@@ -1380,8 +1420,9 @@ class UsbLabel:
 def board_record(doc):
     """The board label's record from a document. A missing wlan MAC is
     derived where the board's rule allows (the Broadcom-OUI Pis), and
-    otherwise explained: no radio on this model, or a radio whose MAC
-    cannot be derived and so was disabled when the probe ran."""
+    otherwise explained: a radio whose MAC cannot be derived and so was
+    disabled when the probe ran. A model with no radio gets no note; its
+    ``radio`` is False and the label has no wlan band."""
     s = doc.summary
     ident = boards.identify(s)
     if ident is None:                 # not a board this package labels
@@ -1396,8 +1437,6 @@ def board_record(doc):
             s.serial, [{"kind": m.kind, "mac": m.mac} for m in s.macs])
         if derived:
             macs.append(("wlan", derived))
-        elif ident.radio is False:
-            wlan_note = "no radio"
         elif ident.kind == "rpi" and not ident.radio_derivable:
             wlan_note = "radio disabled, not readable"
     order = {"eth": 0, "wlan": 1}
@@ -1407,7 +1446,7 @@ def board_record(doc):
         mark=ident.mark, serial=s.serial, memory=ident.memory, macs=tuple(macs),
         header=tuple(s.header), hat_uuid=s.hat_uuid,
         eth_note="no wired port" if ident.wired is False else None,
-        wlan_note=wlan_note,
+        wlan_note=wlan_note, radio=ident.radio,
         fan=s.fan, rtc_battery=s.rtc_battery,
     )
 

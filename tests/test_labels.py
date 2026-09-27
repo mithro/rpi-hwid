@@ -32,6 +32,16 @@ def test_board_record_pi5_without_radio_says_so(docs):
     assert p.header == ("Waveshare PoE M.2 HAT+ (B)",)
 
 
+def test_board_record_model_b_has_no_radio_and_no_derived_mac(docs):
+    """A Model B has no radio. The Broadcom rule would derive a wlan MAC
+    from its serial alone, so the model's radio fact has to stop it."""
+    p = labels.board_record(docs["rpib-serial"])
+    assert p.radio is False
+    assert p.macs == (("eth", "b8:27:eb:0a:ee:d6"),)
+    assert "b8:27:eb:5f:bb:83" not in dict(p.macs).values()
+    assert p.wlan_note is None
+
+
 def test_board_record_zero_has_no_wired_port(docs):
     p = labels.board_record(docs["rpiz-serial"])
     assert p.eth_note == "no wired port"
@@ -47,7 +57,9 @@ def test_board_record_orange_pi_pc(docs):
     assert p.mark == "orange-pi.png"
     assert p.serial == "02c000812eb7a34e"
     assert p.macs == (("eth", "02:81:2e:b7:a3:4e"),)
-    assert p.wlan_note == "no radio"
+    # no radio on a PC: a fact about the model, not a note to print
+    assert p.radio is False
+    assert p.wlan_note is None
     assert p.eth_note is None
     # The HAT band is the Pi's, not a special case: this board wears a
     # Digilent Pmod HAT Adaptor and its label says so exactly as the Pi 4
@@ -893,6 +905,46 @@ def test_list_and_names_cli(data_dir, capsys):
     assert "cynthion-alidade  267125df30c460de" in out
     assert cli_main(["revision", "c04170"]) == 0
     assert "Raspberry Pi 5, 4 GB, Rev 1.0" in capsys.readouterr().out
+
+
+def _board_drawn(monkeypatch, docs, host, tmp_path):
+    kind = labels.board_record(docs[host]).kind
+    return _drawn(monkeypatch, {host: docs[host]}, kind, tmp_path)
+
+
+@pytest.mark.parametrize("host", ["pi-sw2-p22", "rpib-serial"])
+def test_a_board_with_no_radio_gives_its_wlan_band_to_eth(host, docs, tmp_path, monkeypatch):
+    """A model with no radio has no wlan band at all -- not a "no radio"
+    note, and not an empty band: the eth band takes the room, with a bigger
+    code and a bigger MAC than a board with two bands gets."""
+    texts, codes, _ = _board_drawn(monkeypatch, docs, host, tmp_path)
+    seen = [t["s"] for t in texts]
+    assert "wlan MAC" not in seen
+    assert not [s for s in seen if "radio" in s]
+    assert "eth MAC" in seen
+
+    mac = dict(labels.board_record(docs[host]).macs)["eth"]
+    (code,) = [c for c in codes if c["content"] == mac]
+    two_band, two_codes, _ = _board_drawn(monkeypatch, docs, "pi-sw2-p47", tmp_path)
+    (small,) = [c for c in two_codes if c["content"] == "98:fe:54:13:f5:75"]
+    assert code["size"] > 2 * small["size"]
+    assert code["y"] + code["size"] <= labels.LABEL_H - labels.PAD
+    # the MAC, in however many pieces, is still the biggest type on the label
+    parts = [t for t in texts if t["s"] and t["s"] in mac and ":" in t["s"]]
+    assert "".join(t["s"] for t in parts) == mac
+    two_mac = [t for t in two_band if t["s"] == "98:fe:54:13:f5:75"]
+    assert min(t["size"] for t in parts) > two_mac[0]["size"]
+    assert min(t["size"] for t in parts) == max(t["size"] for t in texts)
+
+
+def test_a_radio_that_exists_but_was_not_read_keeps_its_band(docs, tmp_path, monkeypatch):
+    """A Pi 5 has a radio; with it disabled its MAC cannot be read, and the
+    label still says so in the wlan band."""
+    texts, _codes, _ = _board_drawn(monkeypatch, docs, "pi-sw2-p47", tmp_path)
+    seen = [t["s"] for t in texts]
+    assert "eth MAC" in seen
+    assert "wlan MAC" in seen
+    assert "radio disabled, not readable" in seen
 
 
 def test_awkward_records_still_fit(docs, tmp_path, monkeypatch):
