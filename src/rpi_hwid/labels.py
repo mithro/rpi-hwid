@@ -655,7 +655,8 @@ def draw_board(lab, b):
     on the right, sharing one left edge. The MACs are what people look for,
     so they are the largest thing on the label. A row whose MAC is not
     known says why, in grey; so does the header row on a board that has no
-    HAT convention to probe."""
+    HAT convention to probe. A model with no radio at all has no wlan row:
+    its eth row takes the room of both (``draw_single_mac``)."""
 
     # --- the spine: the serial's QR, the serial, its caption ---
     # The 16 digits are set as two columns of eight reading up, so they can

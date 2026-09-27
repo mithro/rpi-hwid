@@ -101,12 +101,17 @@ rule: same serial digits, XOR `55:55:55`), so it is printed even when the radio 
 off. On a Pi 4 or 5 it cannot be derived, so a disabled radio is stated as such.
 
 The boards older than the packed revision code get the same label, from a lookup
-rather than a decode: a Model B is `000f`, a Compute Module 1 `0011`. What they
-have *not* got is printed too, because on these boards a blank would be read as
-something unrecorded rather than something absent — a Model B says `no radio`
-and a Compute Module 1 says both `no radio` and `no wired port`. That is also
-why the wlan MAC is not derived for them: the Broadcom rule works off the serial
-alone and would happily supply one for a radio that is not there.
+rather than a decode: a Model B is `000f`, a Compute Module 1 `0011`. A board
+whose model has no radio at all gets no wlan band: a row saying `no radio` was a
+row spent on a device that is not there. The eth band takes both rows instead,
+with its QR as tall as the two and the MAC beside it in two lines, the maker's
+half over the board's own, set much larger than one line of seventeen characters
+fits. A radio that exists but whose MAC is not known still gets its band and its
+note, as on the Pi 5 above: that is something unrecorded, not something absent.
+The model's radio fact is also why the wlan MAC is not derived for these boards:
+the Broadcom rule works off the serial alone and would happily supply one for a
+radio that is not there. A Compute Module 1 has no wired port either, and its one
+band says `no wired port`.
 
 A Pi up to the 3B reaches Ethernet through a USB chip soldered beside the SoC,
 so its wired MAC sits on the Pi's own label and not on a dongle's — the port is
@@ -122,8 +127,9 @@ since Xunlong sells it by name with no part number. The HAT row is the Pi's row,
 read the same way and saying the same thing: the header is probed on any board
 that has one, so an Orange Pi wearing a Digilent Pmod HAT Adaptor says
 `HAT  Pmod HAT Adaptor` with the adaptor's uuid under it, exactly as a Pi
-wearing the same adaptor does. The wlan row says `no radio` on a PC or One. The SoC serial runs
-up the spine as on a Pi.
+wearing the same adaptor does. A PC or One has no radio, so, as on a Model B,
+there is no wlan band and the eth band takes its room. The SoC serial runs up the
+spine as on a Pi.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/orange-pi-pc.png" alt="Orange Pi PC; eth MAC derived by U-Boot from the SoC serial, no radio" width="49%">
