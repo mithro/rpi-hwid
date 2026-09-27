@@ -84,6 +84,9 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PT", "TC", "C4", "PIE", "RET"
 "src/rpi_hwid/tinytapeout.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
 # The ESP32 module is a probe too, sent over ssh like the three above.
 "src/rpi_hwid/esp32.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET"]
+# Research scripts copied to a Pi and run against its own esptool, kept as
+# the evidence they were (docs/research/esp32-flash.md).
+"docs/research/*.py" = ["UP", "SIM", "RUF", "B", "C4", "PIE", "RET", "PT"]
 # The label generator is ported from a proven script and drawn in points and
 # millimetres; its long argument lists read better unwrapped.
 "src/rpi_hwid/labels.py" = ["RUF", "B", "SIM", "C4", "PIE", "RET", "UP031", "UP032"]
