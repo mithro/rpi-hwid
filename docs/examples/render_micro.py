@@ -77,6 +77,21 @@ def main() -> None:
         left = round(x * PX)
         top = round(page.height - y * PX - labels.LABEL_H * PX)
         page.crop((left, top, left + box_w, top + box_h)).save(HERE / "micro-4up.png")
+        # A close-up of the radio node's header glyphs, the antenna whose
+        # mast is its band: the same 400 dpi pixels, enlarged four times with
+        # no smoothing so what is shown is exactly what was rendered.
+        radio = EXAMPLES[2]
+        glyphs_w = sum(micro._icon_width(micro.Cell(None, 0, 0), i) for i in radio.icons)
+        glyphs_w += micro.ICON_GAP * (len(radio.icons) - 1)
+        margin = 0.6 * mm
+        x0 = micro.MICRO_W - micro.MICRO_PAD - glyphs_w - margin
+        x1 = micro.MICRO_W - micro.MICRO_PAD + margin
+        y0 = micro.MICRO_H + micro.MICRO_PAD - margin           # quarter 3: second row
+        y1 = micro.MICRO_H + micro.MICRO_PAD + micro.HEAD_H + margin
+        close = page.crop((left + round(x0 * PX), top + round(y0 * PX),
+                           left + round(x1 * PX), top + round(y1 * PX)))
+        close.resize((close.width * 4, close.height * 4), Image.NEAREST).save(
+            HERE / "micro-antenna-closeup.png")
     pdf.unlink()
     print(f"micro-4up.png, {box_w} x {box_h}")
 

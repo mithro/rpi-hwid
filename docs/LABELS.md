@@ -245,8 +245,13 @@ slot once:
 
 It is the board label's layout, shrunk. The maker's mark and a bold title
 run across the top, with glyphs at the right: the Wi-Fi arcs, the USB trident
-and the RJ45 jack are the whole labels' own, and a chip package lettered with
-its die and an antenna naming its band are drawn for the micro layout. The
+and the RJ45 jack are the whole labels' own. Two more are drawn for the micro
+layout: a chip package lettered with its die, and an antenna. The antenna's
+mast can be its band: `Icon("antenna", "433")` sets "433" upright in bold,
+reading upwards and standing on the foot, with the waves either side of its
+top. At the 3.6 mm header that is about 5.1 pt. A band too long to stand
+there at 4 pt or more is refused when the label is made, rather than
+shrunk. The
 primary identifier is a QR on the left and, again, the largest thing on the
 label, in monospace along the whole foot. Beside the QR are a subtitle and up
 to three captioned rows, and under the rows is room for a section the caller

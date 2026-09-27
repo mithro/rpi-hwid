@@ -46,6 +46,7 @@ from typing import IO, TYPE_CHECKING, Any
 from reportlab.lib.colors import HexColor, black
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen import canvas
 
 from rpi_hwid import labels
@@ -174,10 +175,32 @@ def glyph_chip(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     return size
 
 
+MAST_RUN = 0.84        # of the glyph's height: how tall a lettered mast stands
+
+
+def mast_size(text: str, size: float) -> float:
+    """The bold point size at which `text`, set upright, is the mast of a
+    `size`-high antenna. Refused below MIN_SIZE rather than shrunk further:
+    a band that would print smaller than that belongs in a row instead."""
+    per_point = pdfmetrics.stringWidth(text, labels.SANS_BOLD, 1)
+    s = size * MAST_RUN / per_point
+    if s < MIN_SIZE:
+        raise ValueError(
+            f"the antenna's band {text!r} would stand as its mast at {s:.1f} pt, below "
+            f"the {MIN_SIZE:.0f} pt the micro labels print; give it fewer characters")
+    return s
+
+
 def glyph_antenna(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     """A mast on a foot with a wave either side: a radio that is not Wi-Fi.
-    The text, if any, is set small at the mast's foot, so
-    ``Icon("antenna", "433")`` names the band."""
+
+    With text -- ``Icon("antenna", "433")`` -- the text *is* the mast: set
+    bold and upright, reading upwards like the board labels' serial, standing
+    on the foot, with the waves either side of its top (Tim, 2026-09-27). At
+    the header's 3.6 mm "433" stands at about 5.1 pt. Without, the mast is a
+    plain line."""
+    if text:
+        return _lettered_antenna(cell, x, y, size, text)
     c = cell.c
     cx = x + size * 0.35
     top, bottom = cell.pt(cx, y + size * 0.1), cell.pt(cx, y + size)
@@ -195,12 +218,34 @@ def glyph_antenna(cell: Cell, x: float, y: float, size: float, text: str) -> flo
         c.arc(hx - rad, hy - rad, hx + rad, hy + rad, 140, 80)
     c.setLineWidth(1)
     c.setLineCap(0)
-    w = size * 0.75
-    if text:
-        s = max(MIN_SIZE, size * 0.45)
-        cell.text(x + w, y + size - s * 0.72, text, labels.SANS_BOLD, s)
-        w += cell.width(text, labels.SANS_BOLD, s)
-    return w
+    return size * 0.75
+
+
+def _lettered_antenna(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """The antenna whose mast is `text`, upright; a `size`-wide square."""
+    c = cell.c
+    s = mast_size(text, size)
+    run, thick = cell.width(text, labels.SANS_BOLD, s), s * 0.72
+    lw = size * 0.09
+    cx = x + size / 2
+    foot_y = y + size - lw / 2
+    bottom = foot_y - lw / 2 - size * 0.02
+    c.setStrokeColor(black)
+    c.setFillColor(black)
+    c.setLineWidth(lw)
+    c.setLineCap(1)
+    fx, fy = cell.pt(cx, foot_y)
+    foot = size * 0.25
+    c.line(fx - foot, fy, fx + foot, fy)
+    # the waves round the top of the lettering, clear of its sides
+    hx, hy = cell.pt(cx, bottom - run + size * 0.18)
+    for r in (thick / 2 + lw * 1.4, thick / 2 + lw * 2.9):
+        c.arc(hx - r, hy - r, hx + r, hy + r, -40, 80)
+        c.arc(hx - r, hy - r, hx + r, hy + r, 140, 80)
+    c.setLineWidth(1)
+    c.setLineCap(0)
+    cell.rotated(cx - thick / 2, bottom, text, labels.SANS_BOLD, s)
+    return size
 
 
 ICONS: dict[str, IconFn] = {
@@ -282,6 +327,11 @@ class MicroLabel:
             if i.name not in ICONS:
                 raise ValueError(f"{self.host}: no glyph called {i.name!r} "
                                  f"(have {', '.join(sorted(ICONS))})")
+            if i.name == "antenna" and i.text:
+                try:
+                    mast_size(i.text, HEAD_H)
+                except ValueError as exc:
+                    raise ValueError(f"{self.host}: {exc}") from None
 
     @property
     def qr_content(self) -> str:
@@ -372,11 +422,8 @@ def _icon_width(cell: Cell, icon: Icon) -> float:
     if icon.name == "ethernet":
         return h * 0.95
     if icon.name == "antenna":
-        w = h * 0.75
-        if icon.text:
-            s = max(MIN_SIZE, h * 0.45)
-            w += cell.width(icon.text, labels.SANS_BOLD, s)
-        return w
+        # the lettered mast stands in a square; the plain one is narrower
+        return h if icon.text else h * 0.75
     return h          # wifi, chip, and any registered glyph: a square
 
 

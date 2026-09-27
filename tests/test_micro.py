@@ -65,6 +65,66 @@ def test_a_caller_can_register_its_own_icon(monkeypatch):
     assert seen[0][1] == "AU"
 
 
+class _Canvas:
+    """Records what a glyph draws: enough of reportlab's canvas for them."""
+
+    def __init__(self):
+        self.calls = []
+
+    def __getattr__(self, name):
+        return lambda *a, **k: self.calls.append((name, a))
+
+
+def _glyph(monkeypatch, name, text):
+    cell = micro.Cell(_Canvas(), 0, 0)
+    rotated, flat = [], []
+    monkeypatch.setattr(micro.Cell, "rotated",
+                        lambda self, x, y, s, font, size, color=None: rotated.append(
+                            (x, y, s, font, size)))
+    monkeypatch.setattr(micro.Cell, "text",
+                        lambda self, x, y, s, font=None, size=8, **k: flat.append(s))
+    labels.register_fonts()
+    w = micro.ICONS[name](cell, 0, 0, micro.HEAD_H, text)
+    return cell, w, rotated, flat
+
+
+def test_the_antenna_s_text_is_its_mast_set_upright(monkeypatch):
+    """Tim, 2026-09-27: the band, "433", is the pole itself, rotated 90
+    degrees and reading upwards, not a caption beside the mast's foot."""
+    cell, w, rotated, flat = _glyph(monkeypatch, "antenna", "433")
+    assert flat == []
+    ((x, y, s, font, size),) = rotated
+    assert s == "433"
+    assert font == labels.SANS_BOLD
+    assert size >= micro.MIN_SIZE
+    run = cell.width("433", font, size)
+    # standing on the foot and reaching most of the way up the header
+    assert micro.HEAD_H * 0.75 <= run <= y
+    assert y <= micro.HEAD_H
+    # the column is centred in the glyph, with the waves either side of it
+    assert x + size * 0.72 / 2 == pytest.approx(w / 2)
+    assert w == pytest.approx(micro._icon_width(cell, Icon("antenna", "433")))
+    arcs = [a for name, a in cell.c.calls if name == "arc"]
+    assert len(arcs) == 4
+
+
+def test_the_plain_antenna_keeps_its_line_mast(monkeypatch):
+    cell, w, rotated, flat = _glyph(monkeypatch, "antenna", "")
+    assert rotated == []
+    assert flat == []
+    assert any(name == "line" for name, _ in cell.c.calls)
+    assert w == pytest.approx(micro._icon_width(cell, Icon("antenna")))
+
+
+def test_a_band_too_long_to_stand_as_the_mast_is_refused(monkeypatch):
+    """Below 4 pt it is an error, not a smaller mast -- and it is raised when
+    the label is made, naming the host, not half way through a sheet."""
+    with pytest.raises(ValueError, match=r"bench-1: .*'433\.92 MHz'.*4 pt"):
+        _label(icons=(Icon("antenna", "433.92 MHz"),))
+    with pytest.raises(ValueError, match=r"433\.92 MHz"):
+        _glyph(monkeypatch, "antenna", "433.92 MHz")
+
+
 def test_the_qr_defaults_to_the_identifier():
     assert _label().qr_content == "02:00:00:12:34:56"
     assert _label(qr="https://example.org/x").qr_content == "https://example.org/x"
