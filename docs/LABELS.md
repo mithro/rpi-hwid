@@ -326,21 +326,24 @@ one it is. The strip's glyphs are registered like the header's:
 
 | glyph | draws |
 |---|---|
-| `Icon("riscv")` | the RISC-V logo, RISC-V International's own file |
-| `Icon("xtensa")` | "Xtensa" set as a wordmark (Cadence publishes no logo for it) |
-| `Icon("cores", "2+1")` | a die with a filled square per core, and a small one for a low-power core |
+| `Icon("riscv")` | the RISC-V mark, the "RV" of RISC-V International's own file without its wordmark |
+| `Icon("xtensa")` | "Xt", set from the name in the RISC-V mark's box (Cadence publishes no logo for it) |
+| `Icon("cores", "2+1")` | a package with two numbers on its die: the application cores large and black, then past a divider the low-power cores small and grey |
 | `Icon("memory", "512K+8M")` | a memory module with its size lettered on it |
 | `Icon("tasmota")` | the Tasmota symbol, from the Tasmota repository |
 | `Icon("bluetooth")` | the Bluetooth rune |
 | `Icon("mesh")` | four linked nodes: an IEEE 802.15.4 (Thread, Zigbee) radio |
-| `Icon("wifi", "6")` | the Wi-Fi arcs with the generation in the corner they leave |
+| `Icon("wifi", "2.4/5 a/b/g/n/ac/ax")` | the Wi-Fi arcs with the band under them, the single-letter 802.11 standards beside them and the two-letter ones (ac, ax) beside the band, bold at 4 pt (a header glyph) |
 
 A strip too wide for the band is refused when the label is made.
 
 The same rules apply as on every other label. A micro label with no
 identifier raises when it is constructed, naming the host (and the command
 that reads it, when the caller says). A row with no value is refused rather
-than printed blank. A monospace row is taken to be an identifier someone
+than printed blank; `BLANK_ROW` keeps a row's place empty on purpose, so
+the rows under it stay where they are on other labels. A row with a `size`
+is set at that size on every label rather than shrunk to its value's
+length, and one whose value does not fit whole at it is refused. A monospace row is taken to be an identifier someone
 might type, so it is never elided: a value that will not fit whole at 4 pt
 is an error, not an ellipsis. Too many rows is an error too, not a silent
 drop.
@@ -375,27 +378,32 @@ the same places:
   printed whole: `ESP32-D0WD-V3`, or `ESP32-C3FH4`, where esptool names the
   die and the chip's eFuse the flash in its package (see
   [ESPRESSIF.md](ESPRESSIF.md#which-part-a-read-names)). Then the part's
-  radios: Wi-Fi with its generation (4 or 6), Bluetooth, and the 802.15.4
-  mesh on a C5, C6 or H2.
+  radios: Wi-Fi with its bands and 802.11 standards (`2.4` and `b/g/n`;
+  `b/g/n` and `ax` on a C6; `2.4/5`, `a/b/g/n` and `ac/ax` on a C5),
+  Bluetooth, and the 802.15.4 mesh on a C5, C6 or H2.
 - **Spec strip:** what every chip of that part is, from the table in
   `rpi_hwid.espressif` ([ESPRESSIF.md](ESPRESSIF.md), every value cited): the
-  ISA (the RISC-V logo, or the Xtensa wordmark), the cores (the ULP or LP
-  core small), the on-chip SRAM with any PSRAM in the package (`512K+8M`),
+  ISA (the RISC-V mark, or the Xtensa "Xt" in the same box), the cores as
+  two numbers (the application cores, then the ULP or LP cores, small and
+  grey: `2|1` on an ESP32, `1|0` on a C3, which has none), the on-chip SRAM with any PSRAM in the package (`512K+8M`),
   and the Tasmota symbol where Tasmota ships a binary for the part.
 - **Rows,** read from this chip, always in this order:
-  - `chip`: the silicon revision and the crystal. An ESP8266 reports no
-    revision, so its row is the crystal alone.
+  - `chip`: the silicon revision. An ESP8266 reports none, so its row's
+    place is left blank. The crystal is read and kept in the document, but
+    not printed.
   - `flash`: the flash's part where the read settles it (`GD25Q32x`,
     `XM25QH32D`, or `BY25Q32ES` where a Boya's 128-bit unique id tells it
-    from the 64-bit BS), else its vendor and JEDEC id (`XMC 0x464017`); then
-    its size. In the package or beside it, the flash is on this row.
+    from the 64-bit BS), else its JEDEC id (`0x464017`, with its vendor
+    where that fits); then its size. The row prints at one size, 4.4 pt, on
+    every label, whatever the length of the part's name. In the package or beside it, the flash is on this row.
     [research/esp32-flash.md](research/esp32-flash.md) has the reads and the
     datasheets behind each name.
   - `uid`: the flash's own unique id, 64 bits on one row or 128 over two.
     Where the flash gives none, `eFuse` and the chip's 128-bit
     `OPTIONAL_UNIQUE_ID` over two rows stand in its place. A chip with
     neither has no uid rows. An ESP32-C3 has both; which one is printed is
-    `esp32_micro.SERIALS`, one line.
+    `esp32_micro.SERIALS`, one line. The uid rows print at one size too,
+    4.3 pt, beside either caption.
 - **Foot and QR:** the base MAC, burned into eFuse: the Wi-Fi station MAC,
   or on an H2, which has no Wi-Fi, the MAC.
 
@@ -441,8 +449,9 @@ For a label that builds on this one (an ESP32 with a 433 MHz radio, say),
 ## Artwork
 
 The package ships the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax,
-Digilent, SQRL, Great Scott Gadgets, SiFive and Tiny Tapeout marks and the RISC-V logo (each its owner's trademark, drawn only on that
-maker's own hardware to identify it) and the public-domain USB trident; see
+Digilent, SQRL, Great Scott Gadgets, SiFive, Tiny Tapeout and Espressif marks, the RISC-V logo and
+its "RV" mark alone, and the Tasmota symbol (each its owner's mark, drawn only where it applies: on its
+maker's own hardware, on a RISC-V part, on a device Tasmota runs on) and the public-domain USB trident; see
 [`src/rpi_hwid/artwork/README.md`](../src/rpi_hwid/artwork/README.md) for the
 sources. A `--artwork DIR` overrides any of them and may add a `netv2.svg`. A
 board whose maker has no mark gets the name in type.
