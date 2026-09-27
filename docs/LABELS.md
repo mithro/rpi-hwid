@@ -316,8 +316,26 @@ there at 4 pt or more is refused when the label is made, rather than
 shrunk. The
 primary identifier is a QR on the left and, again, the largest thing on the
 label, in monospace along the whole foot. Beside the QR are a subtitle and up
-to three captioned rows, and under the rows is room for a section the caller
-draws itself.
+to four captioned rows (the last runs down beside the foot's caption, whose
+line is otherwise empty there), and under the rows is room for a section the
+caller draws itself.
+
+In place of the subtitle a label may carry a **spec strip**: a row of glyphs
+heading the band beside the QR, for what the device *is* rather than which
+one it is. The strip's glyphs are registered like the header's:
+
+| glyph | draws |
+|---|---|
+| `Icon("riscv")` | the RISC-V logo, RISC-V International's own file |
+| `Icon("xtensa")` | "Xtensa" set as a wordmark (Cadence publishes no logo for it) |
+| `Icon("cores", "2+1")` | a die with a filled square per core, and a small one for a low-power core |
+| `Icon("memory", "512K+8M")` | a memory module with its size lettered on it |
+| `Icon("tasmota")` | the Tasmota symbol, from the Tasmota repository |
+| `Icon("bluetooth")` | the Bluetooth rune |
+| `Icon("mesh")` | four linked nodes: an IEEE 802.15.4 (Thread, Zigbee) radio |
+| `Icon("wifi", "6")` | the Wi-Fi arcs with the generation in the corner they leave |
+
+A strip too wide for the band is refused when the label is made.
 
 The same rules apply as on every other label. A micro label with no
 identifier raises when it is constructed, naming the host (and the command
@@ -349,38 +367,67 @@ render_micro([MicroLabel(
 ## ESP32s
 
 Each ESP32 that `rpi-hwid esp32 --read` has read gets a micro label (`--only
-esp32`), laid out like this:
+esp32`), and so does an ESP8266EX or ESP8285, the chip in most Tasmota
+plugs, which esptool reads the same way. Every label has the same parts in
+the same places:
 
-- **Header:** the Espressif mark and the chip as the title, with the Wi-Fi arcs
-  and a chip glyph lettered with the family (`C3`, or `32` for an original ESP32).
-- **Subtitle:** the silicon revision and package, then the in-package flash or
-  the crystal.
-- **Foot and QR:** the base MAC, burned into eFuse, which is also the Wi-Fi
-  station MAC.
-- **BT row:** the Bluetooth MAC, which is the one derived value on the label.
-  ESP-IDF's default for a chip with four universal MACs is base+2 on the last
-  octet, so the row is printed only for the families that table covers.
-- **Second identifier:** where the chip has one in eFuse, its 128-bit
-  `OPTIONAL_UNIQUE_ID`, over two rows. Otherwise, the external flash and the
-  flash's own unique id.
+- **Header:** the Espressif mark, then the part number, which is always
+  printed whole: `ESP32-D0WD-V3`, or `ESP32-C3FH4`, where esptool names the
+  die and the chip's eFuse the flash in its package (see
+  [ESPRESSIF.md](ESPRESSIF.md#which-part-a-read-names)). Then the part's
+  radios: Wi-Fi with its generation (4 or 6), Bluetooth, and the 802.15.4
+  mesh on a C5, C6 or H2.
+- **Spec strip:** what every chip of that part is, from the table in
+  `rpi_hwid.espressif` ([ESPRESSIF.md](ESPRESSIF.md), every value cited): the
+  ISA (the RISC-V logo, or the Xtensa wordmark), the cores (the ULP or LP
+  core small), the on-chip SRAM with any PSRAM in the package (`512K+8M`),
+  and the Tasmota symbol where Tasmota ships a binary for the part.
+- **Rows,** read from this chip, always in this order:
+  - `chip`: the silicon revision and the crystal. An ESP8266 reports no
+    revision, so its row is the crystal alone.
+  - `flash`: the flash's part where its JEDEC id names one (`GD25Q32x`), else
+    its vendor and JEDEC id (`Boya 0x684016`); then its size. In the package
+    or beside it, the flash is on this row.
+  - `uid`: the flash's own unique id, 64 bits on one row or 128 over two.
+    Where the flash gives none, `eFuse` and the chip's 128-bit
+    `OPTIONAL_UNIQUE_ID` over two rows stand in its place. A chip with
+    neither has no uid rows.
+- **Foot and QR:** the base MAC, burned into eFuse: the Wi-Fi station MAC,
+  or on an H2, which has no Wi-Fi, the MAC.
+
+A fact that does not apply leaves its place empty rather than moving another
+into it. One serial is printed beyond the MAC, not two: two 128-bit serials do
+not fit a quarter sticker, and since the MAC already identifies the chip's die,
+the flash's id, which names a second part, comes first. Both stay in the
+collected document. Nothing on the label is derived; the Bluetooth MAC, which
+ESP-IDF derives as base+2, is not printed.
 
 <p>
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-sticker-1.png" alt="Four ESP32 micro labels from real reads: an ESP32-CAM and a devkit (original ESP32s, keyed on their flash's unique id) over two ESP32-C3 SuperMinis (keyed on the chip's OPTIONAL_UNIQUE_ID)" width="98%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-sticker-1.png" alt="Four ESP32 micro labels from real reads: an ESP32-CAM (ESP32-D0WD-V3) and a devkit (ESP32-D0WDQ6), Xtensa, over two ESP32-C3FH4 SuperMinis, RISC-V" width="98%">
 </p>
 
-These are real reads from 2026-09-26, from `tests/esp32_devices.json`: an
-ESP32-CAM and a devkit on rpi4-esp, and two of the three C3 radio nodes on
-rpi5-433mhz. `docs/examples/render_esp32.py` regenerates them. The C3s'
-in-package XMC flash answers Read Unique ID with zeroes, which is why their
-second identifier is the chip's own; a flash uid that reads back blank is left
-off rather than printed. What is *not* read is refused, as on every other label:
+These are real reads, from `tests/esp32_devices.json`: an ESP32-CAM and a
+devkit on rpi4-esp, and two of the three C3 radio nodes on rpi5-433mhz. The
+C3s' in-package XMC flash read back its unique id as zeroes, so their uid rows
+carry the chip's eFuse id. `docs/examples/render_esp32.py` regenerates them,
+and a sheet of synthetic samples, one for every part in the table:
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-parts.png" alt="Sample ESP32 micro labels with synthetic data, one for every part in rpi_hwid.espressif" width="98%">
+</p>
+
+What is *not* read is refused, as on every other label:
 
 - An ESP32 known only from the USB tree (a MAC and nothing else) is an error.
-- So is a C3 whose eFuse read failed.
+- So is a chip whose eFuse holds a unique id that was not read.
 
 Either error names the host, the MAC and both ways to read it: `rpi-hwid esp32
 --read PORT` on the host, or `rpi-hwid collect --esp32-read HOST=PORT`. Both
-reset the chip.
+reset the chip. A chip the table has no row for is an error too
+(`espressif.UnknownPartError`, naming the host, the MAC and the chip). The
+chip model is not an identifier, but a label without its spec strip would
+break the layout every other ESP32 label keeps, and the fix is one row in the
+table with its source.
 
 For a label that builds on this one (an ESP32 with a 433 MHz radio, say),
 `esp32_micro.esp32_label(host, device)` returns the plain `MicroLabel` for
