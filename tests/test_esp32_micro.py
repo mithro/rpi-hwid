@@ -10,7 +10,7 @@ import pathlib
 import pytest
 
 import conftest
-from rpi_hwid import esp32_micro, labels, micro
+from rpi_hwid import esp32_micro, espressif, labels, micro
 from rpi_hwid.micro import Icon, MicroRow
 from rpi_hwid.model import ProbeDocument
 
@@ -49,39 +49,113 @@ def test_every_real_device_gets_a_label():
     assert got == [
         ("rpi4-esp", "ESP32-D0WD-V3", "a4:f0:0f:76:46:64"),
         ("rpi4-esp", "ESP32-D0WDQ6", "24:0a:c4:11:44:e8"),
-        ("rpi5-433mhz", "ESP32-C3", "e8:3d:c1:8c:5c:88"),
-        ("rpi5-433mhz", "ESP32-C3", "44:1b:f6:2e:b3:80"),
-        ("rpi5-433mhz", "ESP32-C3", "e8:3d:c1:8c:3e:b8"),
+        ("rpi5-433mhz", "ESP32-C3FH4", "e8:3d:c1:8c:5c:88"),
+        ("rpi5-433mhz", "ESP32-C3FH4", "44:1b:f6:2e:b3:80"),
+        ("rpi5-433mhz", "ESP32-C3FH4", "e8:3d:c1:8c:3e:b8"),
     ]
 
 
-def test_a_c3_carries_its_chip_unique_id_over_two_rows():
-    """The C3's in-package flash answers Read Unique ID with zeroes on all
-    three boards, so the chip's own 128-bit OPTIONAL_UNIQUE_ID is what
-    identifies it past the MAC."""
+def test_a_c3_label():
+    """The part from the chip and its eFuse; the spec strip from the table;
+    the rows from the read. Its in-package flash read its unique id back as
+    zeroes, so the chip's own 128-bit eFuse id stands in its place."""
     (lab,) = esp32_micro.micro_labels(_docs(C3))
-    assert lab.title == "ESP32-C3"
+    assert lab.title == "ESP32-C3FH4"
     assert lab.mark == "espressif.svg"
-    assert lab.icons == (Icon("wifi"), Icon("chip", "C3"))
-    assert lab.subtitle == "v0.4 · QFN32 · 4 MiB XMC"
+    assert lab.icons == (Icon("wifi", "4"), Icon("bluetooth"))
+    assert lab.specs == (Icon("riscv"), Icon("cores", "1"), Icon("memory", "400K"),
+                         Icon("tasmota"))
+    assert lab.subtitle == ""
     assert lab.ident_caption == "Wi-Fi MAC"
     assert lab.ident == "e8:3d:c1:8c:3e:b8"
-    assert lab.rows == (MicroRow("BT", "e8:3d:c1:8c:3e:ba", mono=True),
-                        MicroRow("chip", "53b9b91842e41b19", mono=True),
+    assert lab.rows == (MicroRow("chip", "v0.4 · 40 MHz xtal"),
+                        MicroRow("flash", "XMC 0x464016 · 4 MiB"),
+                        MicroRow("eFuse", "53b9b91842e41b19", mono=True),
                         MicroRow("", "ee00321402a8b49b", mono=True))
 
 
-def test_an_original_esp32_carries_its_flash_and_the_flash_uid():
+def test_a_flash_uid_takes_the_uid_rows_before_the_chip_s():
+    """One serial beyond the MAC: the flash's, where it gives one, 128 bits
+    over two rows; the chip's eFuse id stays in the document."""
+    uid = "0123456789abcdef" + "fedcba9876543210"
+    (lab,) = esp32_micro.micro_labels(_docs(dict(C3, flash_uid=uid)))
+    assert lab.rows[2:] == (MicroRow("uid", "0123456789abcdef", mono=True),
+                            MicroRow("", "fedcba9876543210", mono=True))
+
+
+def test_an_original_esp32_label():
     (cam,) = esp32_micro.micro_labels(_docs(CAM, host="rpi4-esp"))
     assert cam.title == "ESP32-D0WD-V3"
-    assert cam.icons == (Icon("wifi"), Icon("chip", "32"))
-    assert cam.subtitle == "v3.1 · 40 MHz xtal"
-    assert cam.rows == (MicroRow("BT", "a4:f0:0f:76:46:66", mono=True),
+    assert cam.icons == (Icon("wifi", "4"), Icon("bluetooth"))
+    assert cam.specs == (Icon("xtensa"), Icon("cores", "2+1"), Icon("memory", "520K"),
+                         Icon("tasmota"))
+    assert cam.rows == (MicroRow("chip", "v3.1 · 40 MHz xtal"),
                         MicroRow("flash", "Boya 0x684016 · 4 MiB"),
                         MicroRow("uid", "343738393844fa77", mono=True))
     (dev,) = esp32_micro.micro_labels(_docs(DEVKIT, host="rpi4-esp"))
     assert dev.rows[1:] == (MicroRow("flash", "GD25Q32x · 4 MiB"),
                             MicroRow("uid", "3130343531118566", mono=True))
+
+
+def test_every_label_has_the_same_rows_in_the_same_places():
+    """chip, flash, then the uid rows: a fact that does not apply leaves its
+    place empty at the end, never moves another up into it."""
+    docs = {}
+    for host, devs in REAL.items():
+        docs.update(_docs(*devs, host=host))
+    labs = esp32_micro.micro_labels(docs)
+    labs += [esp32_micro.sample_label(p, i) for i, p in enumerate(espressif.PARTS)]
+    for lab in labs:
+        caps = [r.caption for r in lab.rows]
+        assert caps[:2] == ["chip", "flash"], (lab.title, caps)
+        assert caps[2:] in ([], ["uid"], ["uid", ""], ["eFuse", ""]), (lab.title, caps)
+        assert [i.name for i in lab.specs[:3]] in (
+            ["riscv", "cores", "memory"], ["xtensa", "cores", "memory"]), lab.title
+
+
+def test_an_esp8266_label():
+    d = dict(DEVKIT, chip="ESP8266EX", chip_description="ESP8266EX", revision=None,
+             features=["Wi-Fi", "160MHz"], crystal_mhz=26, efuse={},
+             read_errors={"efuse": "ModuleNotFoundError: espefuse.efuse.esp8266"})
+    (lab,) = esp32_micro.micro_labels(_docs(d, host="rpi4-esp"))
+    assert lab.title == "ESP8266EX"
+    assert lab.icons == (Icon("wifi", "4"),)
+    assert lab.specs == (Icon("xtensa"), Icon("cores", "1"), Icon("memory", "160K"),
+                         Icon("tasmota"))
+    assert lab.rows[0] == MicroRow("chip", "26 MHz xtal")
+
+
+def test_an_h2_has_no_wifi_and_no_tasmota():
+    lab = esp32_micro.sample_label(espressif.BY_NAME["ESP32-H2"])
+    assert lab.ident_caption == "MAC"
+    assert lab.icons == (Icon("bluetooth"), Icon("mesh"))
+    assert Icon("tasmota") not in lab.specs
+
+
+def test_in_package_psram_is_on_the_memory_glyph():
+    lab = esp32_micro.sample_label(espressif.BY_NAME["ESP32-S3R8"])
+    assert Icon("memory", "512K+8M") in lab.specs
+    assert lab.icons == (Icon("wifi", "4"), Icon("bluetooth"))
+
+
+def test_a_chip_the_table_does_not_know_is_an_error_naming_the_host():
+    d = dict(DEVKIT, chip="ESP32-C61", chip_description="ESP32-C61 (revision v1.0)")
+    with pytest.raises(espressif.UnknownPartError,
+                       match=r"rpi4-esp: the ESP32 24:0a:c4:11:44:e8 .*ESP32-C61"):
+        esp32_micro.micro_labels(_docs(d, host="rpi4-esp"))
+
+
+@pytest.mark.parametrize("part", espressif.PARTS, ids=lambda p: p.part)
+def test_every_part_s_sample_label_renders(part):
+    """Every row of the table makes a label that fits: nothing overflows,
+    no identifier is elided (render_micro raises if one would be)."""
+    import io
+
+    lab = esp32_micro.sample_label(part, 7)
+    assert lab.ident.startswith("02:")          # locally administered: a sample
+    assert lab.title == part.part
+    assert micro.title_fits(lab), "the part number would be elided"
+    micro.render_micro([lab], io.BytesIO())
 
 
 def test_an_esp32_found_only_on_usb_is_fatal_and_says_how_to_read_it():
@@ -112,28 +186,7 @@ def test_a_c3_whose_efuse_was_not_read_is_fatal():
 @pytest.mark.parametrize("uid", ["ffffffffffffffff", "0000000000000000", "", None])
 def test_a_blank_flash_uid_is_left_off_not_printed(uid):
     (lab,) = esp32_micro.micro_labels(_docs(dict(DEVKIT, flash_uid=uid), host="rpi4-esp"))
-    assert [r.caption for r in lab.rows] == ["BT", "flash"]
-
-
-def test_the_bt_mac_adds_to_the_last_octet_only():
-    assert esp32_micro.derived_mac("e8:3d:c1:8c:3e:fe", 2) == "e8:3d:c1:8c:3e:00"
-    assert esp32_micro.derived_mac("44:1b:f6:2e:b3:80", 2) == "44:1b:f6:2e:b3:82"
-
-
-@pytest.mark.parametrize(("chip", "family"), [
-    ("ESP32-C3", "ESP32-C3"), ("ESP32-S3", "ESP32-S3"), ("ESP32-D0WD-V3", "ESP32"),
-    ("ESP32-D0WDQ6", "ESP32"), ("ESP32-H2", "ESP32-H2"), ("ESP32-PICO-D4", "ESP32"),
-])
-def test_the_family_of_a_chip(chip, family):
-    assert esp32_micro.family(chip) == family
-
-
-def test_no_bt_row_for_a_chip_the_table_does_not_cover():
-    d = dict(C3, chip="ESP32-S2", chip_description="ESP32-S2 (revision v0.0)",
-             features=["WiFi", "Embedded Flash 4MB"])
-    (lab,) = esp32_micro.micro_labels(_docs(d))
-    assert [r.caption for r in lab.rows] == ["chip", ""]
-    assert lab.icons == (Icon("wifi"), Icon("chip", "S2"))
+    assert [r.caption for r in lab.rows] == ["chip", "flash"]
 
 
 def test_the_label_can_be_extended_by_a_caller():
@@ -151,6 +204,6 @@ def test_the_esp32_kind_is_found_and_printed(tmp_path):
     docs = _docs(*REAL["rpi5-433mhz"])
     rows = list(labels.all_labels(docs, {"esp32"}))
     assert [r[1] for r in rows] == ["micro"]
-    assert "ESP32-C3 44:1b:f6:2e:b3:80" in rows[0][2]
+    assert "ESP32-C3FH4 44:1b:f6:2e:b3:80" in rows[0][2]
     n, stickers, _ = micro.render_micro(esp32_micro.micro_labels(docs), tmp_path / "e.pdf")
     assert (n, stickers) == (3, 1)
