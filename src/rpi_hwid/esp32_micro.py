@@ -7,26 +7,33 @@ most Tasmota plugs. Every label has the same parts in the same places:
   header      the Espressif mark; the part number, as the read names it
               (``rpi_hwid.espressif.part_for``: ESP32-C3FH4, ESP32-D0WD-V3,
               ESP8285N08), always whole; then the chip's radios as glyphs --
-              Wi-Fi with its generation, Bluetooth, an 802.15.4 mesh
+              Wi-Fi with its bands and 802.11 standards, Bluetooth, an
+              802.15.4 mesh
   spec strip  what every chip of that part is, from the table: the ISA
-              (the RISC-V logo, or the Xtensa wordmark), the cores (the
-              low-power one small), the on-chip SRAM with any in-package
-              PSRAM, and the Tasmota mark where Tasmota ships a binary for it
+              (the RISC-V mark, or the Xtensa "Xt" in the same box), the
+              cores (two numbers: the application cores, then the
+              low-power ones, small and grey), the on-chip SRAM with any
+              in-package PSRAM, and the Tasmota mark where Tasmota ships a
+              binary for it
   rows        what was read from this chip, always in this order:
-                chip   its revision and its crystal
+                chip   its revision
                 flash  the flash's part where the read settles it (the
                        JEDEC id, and for a Boya the unique id's length),
-                       else its vendor and JEDEC id; then its size
+                       else its JEDEC id (with its vendor where that fits);
+                       then its size
                 uid    one serial beyond the MAC, the first in SERIALS that
                        the chip has: the flash's unique id ("uid"), 64 bits
                        on one row or 128 on two; else the chip's own 128-bit
                        eFuse OPTIONAL_UNIQUE_ID ("eFuse") over two
+              the flash and uid rows each print at one size on every label
+              (FLASH_PT, UID_PT), whatever the value's length
   foot and QR the base MAC, burned into eFuse: the identifier
 
 A fact that does not apply leaves its place empty rather than moving
-another into it: an ESP8266 reports no revision, so its chip row is the
-crystal alone; a chip with neither serial has no uid rows. Every value is
-either read or looked up; nothing is derived. The Bluetooth MAC, which
+another into it: an ESP8266 reports no revision, so its chip row's place is
+blank (BLANK_ROW); a chip with neither serial has no uid rows. The crystal
+is read and kept in the document but not printed (Tim, 2026-09-27). Every
+value is either read or looked up; nothing is derived. The Bluetooth MAC, which
 ESP-IDF derives as base+2, is not printed: it is not read from anything,
 and the rows are for what was.
 
@@ -59,8 +66,10 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from rpi_hwid import espressif, labels
-from rpi_hwid.micro import Icon, MicroLabel, MicroRow
+from reportlab.pdfbase import pdfmetrics
+
+from rpi_hwid import espressif, labels, micro
+from rpi_hwid.micro import BLANK_ROW, Icon, MicroLabel, MicroRow
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -100,6 +109,15 @@ PART_BY_UID_BITS = {0x684016: {64: "BY25Q32BS", 128: "BY25Q32ES"}}
 # (captioned "eFuse"). An ESP32-C3 has both, so for a C3 this order is the
 # whole decision; swap the two to print the chip's own id first.
 SERIALS = ("flash", "efuse")
+
+# The captions a row can have, and the one size each kind of row is set at
+# on every label (Tim, 2026-09-27: not one that changes with the value's
+# length). Each is what fits beside the widest caption, "eFuse": the flash
+# row's longest named part (XM25QH32D · 4 MiB) and a uid row's sixteen hex
+# digits. The chip row, a revision, fits at the full row size everywhere.
+CAPTIONS = ("chip", "flash", "uid", "eFuse")
+FLASH_PT = 4.4
+UID_PT = 4.3
 
 
 class Esp32NotReadError(labels.IdentifierNotReadError):
@@ -210,11 +228,29 @@ def flash_line(dev: Esp32Device, part: espressif.Part | None = None) -> str | No
     named = (PART_BY_UID_BITS.get(value, {}).get(dev.flash_uid_bits or 0)
              or info["part"] or JEDEC_PART.get(value))
     vendor = (inside[1] if inside else "") or info["vendor"] or JEDEC_VENDOR.get(value >> 16)
-    what = named or " ".join(x for x in (vendor, info["jedec"]) if x)
     size = info["size"] or (inside[0] if inside else None)
     if not size and part is not None and part.flash_mb:
         size = f"{part.flash_mb:g} MiB"
-    return " · ".join(x for x in (what, size) if x)
+
+    def line(what: str | None) -> str:
+        return " · ".join(x for x in (what, size) if x)
+
+    if named:
+        return line(named)
+    # an id no part is known for: its vendor too where that fits at the
+    # row's one size, else the id alone, whose first byte names the vendor
+    full = line(" ".join(x for x in (vendor, info["jedec"]) if x))
+    return full if fits_flash_row(full) else line(info["jedec"])
+
+
+def value_room() -> float:
+    """The width a row's value has beside the widest caption a row can have."""
+    widest = max(pdfmetrics.stringWidth(c, labels.SANS, micro.CAPTION) for c in CAPTIONS)
+    return micro.rows_w() - widest - labels.Label.CAPTION_GAP * 0.6
+
+
+def fits_flash_row(value: str) -> bool:
+    return pdfmetrics.stringWidth(value, labels.SANS, FLASH_PT) <= value_room()
 
 
 def valid_flash_uid(uid: str | None) -> bool:
@@ -228,7 +264,8 @@ def uid_rows(caption: str, uid: str) -> list[MicroRow]:
     """A 64-bit uid on one row, a 128-bit one over two: sixteen hex digits
     is what a row holds whole at the smallest size."""
     halves = [uid[i:i + 16] for i in range(0, len(uid), 16)]
-    return [MicroRow(caption if i == 0 else "", h, mono=True) for i, h in enumerate(halves)]
+    return [MicroRow(caption if i == 0 else "", h, mono=True, size=UID_PT)
+            for i, h in enumerate(halves)]
 
 
 def serial_rows(dev: Esp32Device) -> list[MicroRow]:
@@ -249,7 +286,9 @@ def radio_icons(fam: espressif.Family) -> tuple[Icon, ...]:
     keeps it."""
     icons = []
     if fam.wifi:
-        icons.append(Icon("wifi", str(fam.wifi_gen or "")))
+        # the bands and the 802.11 standards: "2.4 b/g/n", "2.4/5 a/b/g/n/ac/ax"
+        icons.append(Icon("wifi", "/".join(fam.wifi_band_ghz) + " "
+                          + "/".join(fam.wifi_standards)))
     if fam.bluetooth:
         icons.append(Icon("bluetooth"))
     if fam.ieee802154:
@@ -260,7 +299,7 @@ def radio_icons(fam: espressif.Family) -> tuple[Icon, ...]:
 def spec_icons(part: espressif.Part) -> tuple[Icon, ...]:
     """The spec strip: ISA, cores, memory, and Tasmota where it builds."""
     fam = part.family
-    cores = f"{part.n_cores}" + ("+1" if fam.lp_core else "")
+    cores = "{}+{}".format(*part.core_pair)
     memory = f"{fam.sram_kb}K" + (f"+{part.psram_mb:g}M" if part.psram_mb else "")
     specs = [Icon("riscv" if fam.isa == espressif.RISCV else "xtensa"),
              Icon("cores", cores), Icon("memory", memory)]
@@ -303,16 +342,17 @@ def esp32_label(host: str, dev: Esp32Device) -> MicroLabel:
 
 def _label(host: str, dev: Esp32Device, part: espressif.Part) -> MicroLabel:
     fam = part.family
-    rows = [MicroRow("chip", " · ".join(x for x in (
-        dev.revision, f"{dev.crystal_mhz} MHz xtal" if dev.crystal_mhz else None) if x))]
+    # the chip row is the revision; an ESP8266 reports none, and leaves the
+    # row's place empty so the flash row stays where it is on every label
+    rows = [MicroRow("chip", dev.revision) if dev.revision else BLANK_ROW]
     flash = flash_line(dev, part)
     if flash:
-        rows.append(MicroRow("flash", flash))
+        rows.append(MicroRow("flash", flash, size=FLASH_PT))
     rows += serial_rows(dev)
     return MicroLabel(
         host=host, title=part.part, mark=MARK, icons=radio_icons(fam),
         specs=spec_icons(part), ident_caption="Wi-Fi MAC" if fam.wifi else "MAC",
-        ident=dev.mac or "", rows=tuple(r for r in rows if r.value),
+        ident=dev.mac or "", rows=tuple(rows),
         read_with=read_command(host, dev))
 
 
@@ -340,8 +380,8 @@ def micro_labels(docs: Mapping[str, Any]) -> list[MicroLabel]:
 
 def sample_device(part: espressif.Part, n: int) -> Esp32Device:
     """A clearly synthetic device of `part`: a locally administered MAC
-    (02:...), revision v9.9, and ids counting up from n. For the sample
-    sheet only; it was read from nothing."""
+    (02:...), revision v9.9 (none for an ESP8266, which reports none), and ids
+    counting up from n. For the sample sheet only; it was read from nothing."""
     fam = part.family
     mac = f"02:00:00:00:{n >> 8 & 0xff:02x}:{n & 0xff:02x}"
     size = f"{part.flash_mb:g}" if part.flash_mb else "4"
@@ -359,7 +399,8 @@ def sample_device(part: espressif.Part, n: int) -> Esp32Device:
         efuse["OPTIONAL_UNIQUE_ID"] = f"5a{n:02x}" * 8
     return Esp32Device(
         tty=None, transport="sample", mac=mac, chip=part.part,
-        chip_description=part.part, revision="v9.9", features=tuple(feats),
+        chip_description=part.part,
+        revision=None if fam is espressif.ESP8266 else "v9.9", features=tuple(feats),
         crystal_mhz=26 if fam is espressif.ESP8266 else 40, flash_jedec=jedec,
         flash_uid=uid, efuse=efuse)
 

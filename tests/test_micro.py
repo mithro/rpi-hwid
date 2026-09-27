@@ -7,7 +7,6 @@ import shutil
 import subprocess
 
 import pytest
-
 from reportlab.pdfbase import pdfmetrics
 
 from rpi_hwid import labels, micro
@@ -375,8 +374,10 @@ def test_the_wifi_glyph_letters_its_bands_and_standards(monkeypatch, text, lines
         assert font == labels.SANS_BOLD
         width = pdfmetrics.stringWidth(s, font, size)
         left = x - width if align == "right" else x
-        assert -0.01 <= left and left + width <= w + 0.01, s
-        assert 0 <= y and y + size * 0.72 <= micro.HEAD_H + 0.01, s
+        assert left >= -0.01, s
+        assert left + width <= w + 0.01, s
+        assert y >= 0, s
+        assert y + size * 0.72 <= micro.HEAD_H + 0.01, s
     band = flat[0]
     assert band[2] == max(f[2] for f in flat)        # the band is on the bottom line
     # the standards are right of the arcs, and of the band under them
@@ -425,9 +426,10 @@ def test_the_cores_glyph_is_two_numbers_in_a_package(monkeypatch, text, numbers)
     grey; a part without a low-power core says 0."""
     w, flat = _glyph_text(monkeypatch, "cores", text, micro.SPEC_H)
     assert [f[0] for f in flat] == numbers
-    (main, _, _, main_font, main_size, _, main_colour), (lp, x, _, _, lp_size, _, lp_colour) = flat
+    (_, _, _, _, main_size, _, main_colour), (_, x, _, _, lp_size, _, lp_colour) = flat
     assert main_size > lp_size >= micro.MIN_SIZE
-    assert main_colour != labels.GREY and lp_colour == labels.GREY
+    assert main_colour != labels.GREY
+    assert lp_colour == labels.GREY
     assert flat[0][1] < x < w
 
 
@@ -501,7 +503,7 @@ def test_the_two_isa_marks_take_the_same_box():
 
 
 def test_the_xtensa_mark_is_its_x_and_t(monkeypatch):
-    w, flat = _glyph_text(monkeypatch, "xtensa", "", micro.SPEC_H)
+    _, flat = _glyph_text(monkeypatch, "xtensa", "", micro.SPEC_H)
     assert [f[0] for f in flat] == ["X", "t"]
 
 
