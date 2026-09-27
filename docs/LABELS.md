@@ -164,9 +164,11 @@ The same layout again, for a PC that describes itself through DMI/SMBIOS rather
 than a device tree — the fleet's two MinnowBoards. The board's project mark (the
 MinnowBoard fish) takes the raspberry's box; the title is the DMI board name and
 the subtitle the fitted RAM, the CPU and the platform revision the firmware
-reports (`rev D0` on a Turbot, `rev B3` on a MAX). A PC has no HAT header, so
-that band carries the board's maker instead, mark and name: ADI Engineering for
-the Turbot, CircuitCo for the MAX, from the DMI vendor string. The serial up the
+reports (`rev D0` on a Turbot, `rev B3` on a MAX). The board's maker, from the
+DMI vendor string, is a mark beside the fish with no text: ADI Engineering's on
+the Turbot, CircuitCo's on the MAX. A PC has no HAT header, so the title and
+subtitle drop into the band a Pi uses for its HAT, leaving the header to the two
+marks; a maker with no mark on file is named in that band instead. The serial up the
 spine is the firmware's DMI serial, which on both MinnowBoards is the Ethernet
 MAC without its colons; the wlan row says `no radio`, since neither board has
 one.

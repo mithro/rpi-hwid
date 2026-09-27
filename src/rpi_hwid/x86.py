@@ -16,8 +16,8 @@ board. They are all in the collected document.
 
 Two tables say what the DMI strings alone cannot: which project a board
 belongs to, for the mark in the header (the MinnowBoard fish), and who made
-it, for the maker's mark in the band a Pi uses for its HAT (ADI Engineering
-made the Turbot, CircuitCo the MAX). A board in neither table is still
+it, for the maker's mark beside the fish (ADI Engineering made the Turbot,
+CircuitCo the MAX). A board in neither table is still
 labelled, in its firmware's own words, with no mark and no claim about a
 radio it may or may not have.
 """

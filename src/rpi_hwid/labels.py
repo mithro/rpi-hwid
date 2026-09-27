@@ -700,6 +700,17 @@ def draw_board_columns(lab, b, x):
     mark_fitted(lab, b.mark, x, PAD, qr, logo_h)
     y = PAD + max(0, (logo_h - title_h) / 2)
 
+    # A PC has no HAT header, so it has no HAT band to fill. Its maker's
+    # mark goes beside the project's (ADI Engineering's or CircuitCo's
+    # beside the MinnowBoard fish) across the header, with no word of text,
+    # and the title and subtitle drop into the band the HAT line would use.
+    # The MAC bands stay where they are on every board label.
+    maker_path = artwork(b.maker_mark) if b.kind == "x86" and b.maker_mark else None
+    if maker_path:
+        mark_in_box(lab, maker_path, tx, PAD + logo_h * 0.1, col_w, logo_h * 0.8,
+                    align="left")
+        y = PAD + logo_h + 0.1 * mm
+
     # What the board is wearing that is not a HAT and has no MAC: a fan on
     # the header, a cell behind the RTC. Both are Pi 5 signals and both are
     # None on every other model, so nothing is drawn where nothing could
@@ -734,16 +745,12 @@ def draw_board_columns(lab, b, x):
         # harts and the board's PCB and BOM revisions.
         return draw_riscv_band(lab, b, x, tx, y, qr, col_w, hat_rows, qr_gap)
     if b.kind == "x86":
-        # A PC has no HAT header, so the band carries its maker instead: the
-        # mark in the left column, as wide as a QR, and the name beside it
-        # where the HAT line would be, centred on the band.
-        if b.maker_mark:
-            path = artwork(b.maker_mark)
-            if path:
-                mark_in_box(lab, path, x, y, qr, hat_rows - 0.8 * mm)
-        name_y = y + (hat_rows - 0.8 * mm - 7 * 0.72) / 2
-        lab.captioned(x, tx, name_y, "" if b.maker_mark else "maker",
-                      b.maker or "maker not named", SANS, 7, col_w)
+        # With its mark in the header the title is in this band (see
+        # above); a maker with no mark on file is named here instead.
+        if not maker_path:
+            name_y = y + (hat_rows - 0.8 * mm - 7 * 0.72) / 2
+            lab.captioned(x, tx, name_y, "maker", b.maker or "maker not named",
+                          SANS, 7, col_w)
     elif b.header:
         lab.captioned(x, tx, y, "HAT", "; ".join(b.header), SANS, 7, col_w)
     else:

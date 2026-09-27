@@ -341,7 +341,7 @@ def test_a_pc_whose_firmware_has_no_serial_still_gets_a_label(docs, tmp_path):
 
 
 def test_the_label_draws_every_mark_it_names(docs, tmp_path, monkeypatch):
-    """The fish in the header box and the maker's mark in the band, each
+    """The fish in the header box and the maker's mark beside it, each
     from the package's own artwork."""
     drawn = []
     real = labels.mark_in_box
@@ -354,3 +354,32 @@ def test_the_label_draws_every_mark_it_names(docs, tmp_path, monkeypatch):
                   tmp_path / "x.pdf", only=("x86",))
     assert drawn == ["minnowboard.svg", "circuitco.png", "minnowboard.svg",
                      "adi-engineering.png"]
+
+
+def _texts(docs, host, tmp_path, monkeypatch):
+    """Every string a board label draws, whichever Label method draws it."""
+    seen = []
+    real_text = labels.Label.text
+
+    def spy(self, x, y, s, *a, **k):
+        seen.append(s)
+        return real_text(self, x, y, s, *a, **k)
+    monkeypatch.setattr(labels.Label, "text", spy)
+    labels.render({host: docs[host]}, tmp_path / "x.pdf", only=("x86",))
+    return seen
+
+
+def test_a_maker_with_a_mark_is_not_named_in_text(docs, tmp_path, monkeypatch):
+    """The mark beside the fish names the maker: no word of it is printed,
+    and the title still is."""
+    seen = _texts(docs, "minnow-turbot-2", tmp_path, monkeypatch)
+    assert "MinnowBoard Turbot" in seen
+    assert not any("ADI" in s or "maker" in s for s in seen)
+
+
+def test_a_maker_with_no_mark_on_file_is_named(docs, tmp_path, monkeypatch):
+    """With no mark to draw, the maker goes in the band as text instead."""
+    monkeypatch.setitem(x86.MAKERS, "adi", ("ADI Engineering", "no-such-mark.png"))
+    seen = _texts(docs, "minnow-turbot-2", tmp_path, monkeypatch)
+    assert "ADI Engineering" in seen
+    assert "maker" in seen

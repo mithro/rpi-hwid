@@ -50,7 +50,7 @@ Archive after an earlier look concluded there was none (the
 SquirrelsResearch GitHub avatar is a generated identicon, and
 squirrelsresearch.com no longer serves the file).
 
-An x86 board has no HAT header, so its label's HAT band carries the board's
-maker instead: the maker's mark (ADI Engineering's, CircuitCo's) fitted into
-the band's left-hand box, a QR's width, with the maker's name beside it.
+An x86 board's label draws its maker's mark (ADI Engineering's, CircuitCo's)
+in the header beside the project's mark (the MinnowBoard fish), with no name in
+text; the title moves down into the HAT band, which a PC has no use for.
 Which mark goes with which DMI vendor is `rpi_hwid.x86.MAKERS`.
