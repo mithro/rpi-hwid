@@ -700,16 +700,15 @@ def draw_board_columns(lab, b, x):
     mark_fitted(lab, b.mark, x, PAD, qr, logo_h)
     y = PAD + max(0, (logo_h - title_h) / 2)
 
-    # A PC has no HAT header, so it has no HAT band to fill. Its maker's
-    # mark goes beside the project's (ADI Engineering's or CircuitCo's
-    # beside the MinnowBoard fish) across the header, with no word of text,
-    # and the title and subtitle drop into the band the HAT line would use.
-    # The MAC bands stay where they are on every board label.
+    # A PC's maker is a mark beside the project's (ADI Engineering's or
+    # CircuitCo's beside the MinnowBoard fish), in a box the fish's size,
+    # with no word of text; the title and subtitle move over past it.
+    head_x = tx
     maker_path = artwork(b.maker_mark) if b.kind == "x86" and b.maker_mark else None
     if maker_path:
-        mark_in_box(lab, maker_path, tx, PAD + logo_h * 0.1, col_w, logo_h * 0.8,
-                    align="left")
-        y = PAD + logo_h + 0.1 * mm
+        mark_in_box(lab, maker_path, tx, PAD, qr, logo_h)
+        head_x = tx + qr + 1.5 * mm
+    head_w = LABEL_W - PAD - head_x
 
     # What the board is wearing that is not a HAT and has no MAC: a fan on
     # the header, a cell behind the RTC. Both are Pi 5 signals and both are
@@ -728,9 +727,9 @@ def draw_board_columns(lab, b, x):
     # the title gives up the room the icons take, rather than running under
     # them: lab.fit shrinks and then ellipsises, so a long name degrades
     # gracefully instead of colliding.
-    title_w = col_w - (icons_w + 1.5 * mm if icons else 0)
-    lab.fit(tx, y, b.title, SANS_BOLD, 11, title_w)
-    lab.fit(tx, y + 4.6 * mm, b.subtitle, SANS, 6.5, col_w)
+    title_w = head_w - (icons_w + 1.5 * mm if icons else 0)
+    lab.fit(head_x, y, b.title, SANS_BOLD, 11, title_w)
+    lab.fit(head_x, y + 4.6 * mm, b.subtitle, SANS, 6.5, head_w)
 
     # HAT band: the HAT line, then the uuid line centred in the rest of the
     # band (regular weight: bold mono at 6 pt fills in under toner). Every
@@ -745,8 +744,8 @@ def draw_board_columns(lab, b, x):
         # harts and the board's PCB and BOM revisions.
         return draw_riscv_band(lab, b, x, tx, y, qr, col_w, hat_rows, qr_gap)
     if b.kind == "x86":
-        # With its mark in the header the title is in this band (see
-        # above); a maker with no mark on file is named here instead.
+        # A PC has no HAT header, so the band is empty unless its maker has
+        # no mark on file, in which case the maker is named here instead.
         if not maker_path:
             name_y = y + (hat_rows - 0.8 * mm - 7 * 0.72) / 2
             lab.captioned(x, tx, name_y, "maker", b.maker or "maker not named",

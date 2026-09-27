@@ -51,6 +51,6 @@ SquirrelsResearch GitHub avatar is a generated identicon, and
 squirrelsresearch.com no longer serves the file).
 
 An x86 board's label draws its maker's mark (ADI Engineering's, CircuitCo's)
-in the header beside the project's mark (the MinnowBoard fish), with no name in
-text; the title moves down into the HAT band, which a PC has no use for.
+in the header beside the project's mark (the MinnowBoard fish), in a box the
+fish's size, with no name in text.
 Which mark goes with which DMI vendor is `rpi_hwid.x86.MAKERS`.
