@@ -8,7 +8,8 @@ SX1278). Their label is the plain ESP32 label from
 chip's revision, package and flash, its 128-bit unique id -- with the radio
 added:
 
-  * an antenna glyph with the band, "433", beside the Wi-Fi and chip glyphs;
+  * an antenna whose mast is the band, "433" set upright, beside the Wi-Fi
+    and chip glyphs;
   * under the unique id, a line naming the radio: the chip maker's mark and
     the board maker's where there is one to draw, then the chip and the
     board: "[TI] CC1101 · E07-M1101D", "[Semtech] [Ai-Thinker] SX1278 · Ra-02".

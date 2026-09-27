@@ -548,8 +548,8 @@ An ESP32 wired to a 433 MHz radio board by
 `rpi-hwid esp32 --radio PORT` (or `collect --esp32-radio HOST=PORT`) has read,
 gets the ESP32 label with the radio added (`--only esp32-433`):
 
-- **Header:** an antenna glyph with the band, `433`, after the Wi-Fi and chip
-  glyphs.
+- **Header:** an antenna whose mast is the band, `433` set upright, after the
+  Wi-Fi and chip glyphs.
 - **Radio line:** under the chip's unique id, the chip maker's mark (TI for the
   CC1101, Semtech for the SX1278), the board maker's where there is one
   (Ai-Thinker for the Ra-02), then the chip and the board: `CC1101 ·
