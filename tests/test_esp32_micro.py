@@ -307,3 +307,23 @@ def test_the_cores_glyph_is_the_part_s_core_pair(part):
     hp, lp = part.core_pair
     assert Icon("cores", f"{hp}+{lp}") in lab.specs
     assert micro.strip_width(lab.specs) <= micro.rows_w() + 0.01
+
+
+def test_sample_devices_look_like_real_ones():
+    """Every sample on the sheet has its own MAC, flash uid and eFuse id,
+    none a counting pattern, and every MAC has a hex letter in it, as real
+    ones do: a MAC of digits alone would come out as a Micro QR code (Tim,
+    2026-09-27: "Why are all the flash ids identical?", "Why do some of the
+    wifi MAC qrcodes look different?")."""
+    import segno
+    devs = [esp32_micro.sample_device(p, i + 1) for i, p in enumerate(espressif.PARTS)]
+    macs = [d.mac for d in devs]
+    uids = [d.flash_uid for d in devs if d.flash_uid]
+    efuse = [d.efuse["OPTIONAL_UNIQUE_ID"] for d in devs if "OPTIONAL_UNIQUE_ID" in d.efuse]
+    assert len(set(macs)) == len(macs)
+    assert len(set(uids)) == len(uids)
+    assert len(set(efuse)) == len(efuse)
+    assert all(m.startswith("02:") for m in macs)
+    assert all(segno.make(m, error="m").designator.startswith("2-") for m in macs)
+    assert all(len({u[i:i + 4] for i in range(0, len(u), 4)}) > 1 for u in uids)
+    assert len({d.flash_jedec for d in devs}) > 2

@@ -62,6 +62,7 @@ table, for the docs' sample sheet.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -377,31 +378,56 @@ def micro_labels(docs: Mapping[str, Any]) -> list[MicroLabel]:
 # --- samples ---------------------------------------------------------------------
 
 
+def _sample_hex(part: espressif.Part, what: str, digits: int) -> str:
+    """`digits` hex digits that look like a real id and differ from part to
+    part: a SHA-256 of the part's name and the field, not a counting pattern."""
+    return hashlib.sha256(f"{part.part} {what}".encode()).hexdigest()[:digits]
+
+
+# The external flash parts the real boards carry, taken in turn by the
+# samples so the sheet shows each way a flash row can read: (JEDEC id, uid
+# bits). The Boya's 128 bits are what name it a BY25Q32ES.
+SAMPLE_FLASH = ((0xC84016, 64), (0x684016, 128))
+
+
 def sample_device(part: espressif.Part, n: int) -> Esp32Device:
     """A clearly synthetic device of `part`: a locally administered MAC
-    (02:...), revision v9.9 (none for an ESP8266, which reports none), and ids
-    counting up from n. For the sample sheet only; it was read from nothing."""
+    (02:...), revision v9.9 (none for an ESP8266, which reports none), and
+    ids made up from the part's name, so every sample's differ and none is a
+    pattern. Its MAC always has a hex letter in it, as real ones do: one of
+    digits alone would be drawn as a Micro QR code. For the sample sheet
+    only; it was read from nothing."""
     fam = part.family
-    mac = f"02:00:00:00:{n >> 8 & 0xff:02x}:{n & 0xff:02x}"
+    salt = 0
+    while True:
+        tail = _sample_hex(part, f"mac {salt}", 10)
+        if re.search("[a-f]", tail):
+            break
+        salt += 1
+    mac = "02:" + ":".join(tail[i:i + 2] for i in range(0, 10, 2))
     size = f"{part.flash_mb:g}" if part.flash_mb else "4"
     feats = ["Wi-Fi"] if fam.wifi else []
     if part.flash_mb and fam not in (espressif.ESP8266, espressif.ESP32):
         # the eFuse of the later chips names the in-package flash's size and
         # vendor; esptool says only "Embedded Flash" for the older two
         feats.append(f"Embedded Flash {size}MB (XMC)")
-    # 0x16: 4 MiB; a GigaDevice outside the package, an XMC inside it
-    capacity = {1: 0x14, 2: 0x15, 4: 0x16, 8: 0x17}.get(int(part.flash_mb or 4), 0x16)
-    jedec = f"0x{0x46 if part.flash_mb else 0xc8:02x}40{capacity:02x}"
-    uid = f"{n:04x}" * 4 if n % 2 else ""
+    if part.flash_mb:
+        # in the package: XMC's second vendor code, as on the real C3s
+        capacity = {1: 0x14, 2: 0x15, 4: 0x16, 8: 0x17}.get(int(part.flash_mb), 0x16)
+        jedec, bits = 0x464000 | capacity, 128
+    else:
+        jedec, bits = SAMPLE_FLASH[n % len(SAMPLE_FLASH)]
+    # every other sample has no flash uid, to show the eFuse id in its place
+    uid = _sample_hex(part, "flash uid", bits // 4) if n % 2 else ""
     efuse: dict[str, Any] = {}
     if fam.chip_uid:
-        efuse["OPTIONAL_UNIQUE_ID"] = f"5a{n:02x}" * 8
+        efuse["OPTIONAL_UNIQUE_ID"] = _sample_hex(part, "efuse uid", 32)
     return Esp32Device(
         tty=None, transport="sample", mac=mac, chip=part.part,
         chip_description=part.part,
         revision=None if fam is espressif.ESP8266 else "v9.9", features=tuple(feats),
-        crystal_mhz=26 if fam is espressif.ESP8266 else 40, flash_jedec=jedec,
-        flash_uid=uid, efuse=efuse)
+        crystal_mhz=26 if fam is espressif.ESP8266 else 40, flash_jedec=f"0x{jedec:06x}",
+        flash_uid=uid, flash_uid_bits=bits if uid else None, efuse=efuse)
 
 
 def sample_label(part: espressif.Part, n: int = 1) -> MicroLabel:
