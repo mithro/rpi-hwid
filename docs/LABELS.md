@@ -300,18 +300,19 @@ esp32`), laid out like this:
   octet, so the row is printed only for the families that table covers.
 - **Second identifier:** where the chip has one in eFuse, its 128-bit
   `OPTIONAL_UNIQUE_ID`, over two rows. Otherwise, the external flash and the
-  flash's own unique id.
+  flash's own unique id: one row for 64 bits, two for 128, which then take the
+  BT row's place.
 
 <p>
 <img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-sticker-1.png" alt="Four ESP32 micro labels from real reads: an ESP32-CAM and a devkit (original ESP32s, keyed on their flash's unique id) over two ESP32-C3 SuperMinis (keyed on the chip's OPTIONAL_UNIQUE_ID)" width="98%">
 </p>
 
-These are real reads from 2026-09-26, from `tests/esp32_devices.json`: an
+These are real reads from 2026-09-27, from `tests/esp32_devices.json`: an
 ESP32-CAM and a devkit on rpi4-esp, and two of the three C3 radio nodes on
 rpi5-433mhz. `docs/examples/render_esp32.py` regenerates them. The C3s'
-in-package XMC flash answers Read Unique ID with zeroes, which is why their
-second identifier is the chip's own; a flash uid that reads back blank is left
-off rather than printed. What is *not* read is refused, as on every other label:
+in-package XMC flash has a 128-bit unique id of its own, kept in the document;
+their label carries the chip's. A flash uid that reads back blank is left off
+rather than printed. What is *not* read is refused, as on every other label:
 
 - An ESP32 known only from the USB tree (a MAC and nothing else) is an error.
 - So is a C3 whose eFuse read failed.

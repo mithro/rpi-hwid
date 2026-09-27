@@ -7,13 +7,14 @@ identifier: in the QR and along the foot. Beside the QR, the Bluetooth MAC
 and then the second identifier the chip has:
 
   * a chip with an OPTIONAL_UNIQUE_ID in eFuse (the C3, measured on three
-    SuperMinis on 2026-09-26) carries those 128 bits, over two rows. The
-    C3's in-package flash answered Read Unique ID with zeroes on all three,
-    so there the flash has none to give, and its size and vendor go in the
-    subtitle instead;
+    SuperMinis on 2026-09-26) carries those 128 bits, over two rows. Its
+    in-package flash has a unique id too (an XMC's 128 bits, read on
+    2026-09-27), which stays in the document: the chip's own is the one
+    printed, and the flash's size and vendor go in the subtitle;
   * an original ESP32 has no such field, so its external flash is named on
-    a row of its own with the flash's own unique id under it -- an
-    ESP32-CAM's Boya and a devkit's GigaDevice both answered one.
+    a row of its own with the flash's own unique id under it: 64 bits on
+    one row (a devkit's GigaDevice), or 128 over two (an ESP32-CAM's Boya),
+    which then takes the row the derived Bluetooth MAC would have had.
 
 Everything on it was read from the chip, except the Bluetooth MAC, which is
 derived. ESP-IDF hands out the MACs of a chip with four universally
@@ -67,11 +68,19 @@ CHIP_UID = {"ESP32-C3"}
 
 # JEDEC manufacturer codes rpi_hwid.labels does not name, as flashrom's
 # include/flashchips.h has them (BOYA_BOHONG_ID 0x68): an ESP32-CAM's flash.
-JEDEC_VENDOR = {0x68: "Boya"}
+# 0x46 is not in flashrom: it is ESP-IDF's SPI_FLASH_XMC_2 (esp_mspi's
+# spi_flash_defs.h), whose generic driver calls a 0x46 part "XMC-D" -- the
+# flash inside the ESP32-C3 SuperMinis, whose eFuse FLASH_VENDOR says XMC.
+JEDEC_VENDOR = {0x68: "Boya", 0x46: "XMC"}
 # ...and parts, with the letters the id cannot settle written as x, as
 # rpi_hwid.labels.JEDEC_PART does: flashrom's GIGADEVICE_GD25Q32 0x4016,
 # "Same as GD25Q32B" -- the devkit on rpi4-esp.
-JEDEC_PART = {0xC84016: "GD25Q32x"}
+JEDEC_PART = {0xC84016: "GD25Q32x", 0x684016: "BY25Q32xS"}
+# Parts that share an id and an SFDP but not the length of their unique id,
+# which the read measures. BYTe's BY25Q32BS datasheet (Rev. 2.4, 7.3.5) gives
+# a 64-bit id and its BY25Q32ES (Rev. 2.2, 7.3.5) a 128-bit one, with the SFDP
+# headers of the two identical; the ESP32-CAM's gave 128 bits (2026-09-27).
+PART_BY_UID_BITS = {0x684016: {64: "BY25Q32BS", 128: "BY25Q32ES"}}
 
 
 class Esp32NotReadError(labels.IdentifierNotReadError):
@@ -93,6 +102,8 @@ class Esp32Device:
     crystal_mhz: int | None = None
     flash_jedec: str | None = None
     flash_uid: str | None = None
+    flash_uid_bits: int | None = None
+    flash_sfdp: str | None = None
     efuse: Mapping[str, Any] | None = None
     bridge: str | None = None
     usb_serial: str | None = None
@@ -108,6 +119,7 @@ class Esp32Device:
             revision=d.get("revision"), package=d.get("package"),
             features=tuple(d.get("features") or ()), crystal_mhz=d.get("crystal_mhz"),
             flash_jedec=d.get("flash_jedec"), flash_uid=d.get("flash_uid"),
+            flash_uid_bits=d.get("flash_uid_bits"), flash_sfdp=d.get("flash_sfdp"),
             efuse=d.get("efuse") or {}, bridge=d.get("bridge"),
             usb_serial=d.get("usb_serial"), tty_links=tuple(d.get("tty_links") or ()),
             read_error=d.get("read_error"), read_errors=d.get("read_errors") or {},
@@ -183,21 +195,24 @@ def flash_line(dev: Esp32Device) -> str | None:
     if inside:
         size, vendor = inside
         return " ".join(x for x in (size, vendor) if x)
-    info = labels.flash_from_jedec(dev.flash_jedec)
+    info = labels.flash_from_jedec(dev.flash_jedec, sfdp=dev.flash_sfdp)
     if not info["jedec"]:
         return None
     value = int(info["jedec"], 16)
     # A named part says its vendor already, and at a micro label's width the
     # vendor's name is what would push the size off the end of the row.
-    part = info["part"] or JEDEC_PART.get(value)
+    part = (PART_BY_UID_BITS.get(value, {}).get(dev.flash_uid_bits or 0)
+            or info["part"] or JEDEC_PART.get(value))
     what = part or " ".join(x for x in (
         info["vendor"] or JEDEC_VENDOR.get(value >> 16), info["jedec"]) if x)
     return " · ".join(x for x in (what, info["size"]) if x)
 
 
 def valid_flash_uid(uid: str | None) -> bool:
-    """A read uid, not the all-ones or all-zeroes a flash without one gives."""
-    return bool(re.fullmatch(r"[0-9a-f]{16}", uid or "")) and len(set(uid or "")) > 1
+    """A read uid -- 64 or 128 bits -- not the all-ones or all-zeroes a flash
+    without one gives."""
+    return (bool(re.fullmatch(r"[0-9a-f]{16}|[0-9a-f]{32}", uid or ""))
+            and len(set(uid or "")) > 1)
 
 
 def read_command(host: str, dev: Esp32Device) -> str:
@@ -233,9 +248,13 @@ def esp32_label(host: str, dev: Esp32Device) -> MicroLabel:
     icons = ((Icon("wifi"),) if dev.wifi else ()) + (Icon("chip", short),)
     rows = []
     bt = bt_mac(dev)
-    if bt:
-        rows.append(MicroRow("BT", bt, mono=True))
     flash = flash_line(dev)
+    uid = dev.flash_uid if valid_flash_uid(dev.flash_uid) else None
+    # A 128-bit flash uid takes two rows, and the Bluetooth MAC -- derived,
+    # not read -- gives up its row to the half of it that would not fit.
+    uid_rows = 0 if chip_uid or not uid else len(uid) // 16
+    if bt and uid_rows < 2:
+        rows.append(MicroRow("BT", bt, mono=True))
     # Single spaces round the dots, unlike the whole labels' subtitles: at the
     # micro label's width the doubled ones cost the line its last fact.
     if chip_uid:
@@ -248,8 +267,9 @@ def esp32_label(host: str, dev: Esp32Device) -> MicroLabel:
             f"{dev.crystal_mhz} MHz xtal" if dev.crystal_mhz else None) if x)
         if flash:
             rows.append(MicroRow("flash", flash))
-        if valid_flash_uid(dev.flash_uid):
-            rows.append(MicroRow("uid", dev.flash_uid or "", mono=True))
+        if uid:
+            rows += [MicroRow("uid", uid[:16], mono=True)] + (
+                [MicroRow("", uid[16:], mono=True)] if uid[16:] else [])
     return MicroLabel(
         host=host, title=dev.chip, subtitle=subtitle, mark=MARK, icons=icons,
         ident_caption="Wi-Fi MAC" if dev.wifi else "MAC", ident=dev.mac, rows=tuple(rows),

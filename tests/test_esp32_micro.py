@@ -76,9 +76,10 @@ def test_an_original_esp32_carries_its_flash_and_the_flash_uid():
     assert cam.title == "ESP32-D0WD-V3"
     assert cam.icons == (Icon("wifi"), Icon("chip", "32"))
     assert cam.subtitle == "v3.1 · 40 MHz xtal"
-    assert cam.rows == (MicroRow("BT", "a4:f0:0f:76:46:66", mono=True),
-                        MicroRow("flash", "Boya 0x684016 · 4 MiB"),
-                        MicroRow("uid", "343738393844fa77", mono=True))
+    # a 128-bit flash uid over two rows, where the (derived) BT MAC was
+    assert cam.rows == (MicroRow("flash", "BY25Q32ES · 4 MiB"),
+                        MicroRow("uid", "343738393844fa77", mono=True),
+                        MicroRow("", "fffcffff968f1f11", mono=True))
     (dev,) = esp32_micro.micro_labels(_docs(DEVKIT, host="rpi4-esp"))
     assert dev.rows[1:] == (MicroRow("flash", "GD25Q32x · 4 MiB"),
                             MicroRow("uid", "3130343531118566", mono=True))

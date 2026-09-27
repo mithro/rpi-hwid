@@ -4,7 +4,7 @@
     uv run docs/examples/render_esp32.py
 
 The records are tests/esp32_devices.json: what `rpi-hwid collect
---esp32-read` wrote on 2026-09-26 for the three ESP32-C3 SuperMinis on
+--esp32-read` wrote on 2026-09-27 for the three ESP32-C3 SuperMinis on
 rpi5-433mhz and the ESP32-CAM and devkit on rpi4-esp. Five labels make two
 stickers, four and one; each is cut out of the rendered sheet by the label
 grid at 400 dpi, as render_micro.py does. Needs pdftoppm (poppler-utils).
