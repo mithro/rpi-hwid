@@ -163,17 +163,101 @@ class Cell(labels.Label):
 IconFn = Callable[[Cell, float, float, float, str], float]
 
 
+# The 802.11 amendments the Wi-Fi glyph letters: the classic single letters
+# on the line beside the arcs, the later two-letter ones on the line under it.
+WIFI_STANDARDS = ("a", "b", "g", "n", "ac", "ax", "be")
+WIFI_TYPE = MIN_SIZE           # the glyph's lettering: the smallest the labels print
+WIFI_FAN = 40.0                # degrees either side of upright the arcs sweep
+WIFI_GAP = 0.25 * mm           # arcs or band to the standards beside them
+
+
+def wifi_lines(text: str) -> tuple[str, str, str]:
+    """'2.4/5 a/b/g/n/ac/ax' -> ('2.4/5', 'a/b/g/n', 'ac/ax'): the bands in
+    GHz, then the standards, which split into the classic single-letter
+    amendments and the later two-letter ones. Refused unless it is that."""
+    bands, _, standards = text.partition(" ")
+    got = standards.split("/")
+    if (not all(b.replace(".", "", 1).isdigit() for b in bands.split("/"))
+            or not standards or any(g not in WIFI_STANDARDS for g in got)):
+        raise ValueError(
+            "a Wi-Fi glyph's text is its bands and its 802.11 standards, "
+            f"'2.4/5 a/b/g/n/ac/ax', not {text!r}")
+    return (bands, "/".join(g for g in got if len(g) == 1),
+            "/".join(g for g in got if len(g) > 1))
+
+
+def _wifi_baseline(size: float) -> float:
+    """The bottom line's baseline, below the glyph's top: its descenders
+    (the g of b/g/n) just reach the glyph's foot."""
+    return size - WIFI_TYPE * 0.21
+
+
+def _wifi_geometry(size: float) -> tuple[float, float, float, float]:
+    """The lettered glyph's arcs: their box's height, the line width, the
+    dot's radius and the outer arc's, at a glyph `size` high. The bottom
+    line of lettering stands on the glyph's foot; the arcs fill the rest."""
+    box_h = _wifi_baseline(size) - WIFI_TYPE * 0.72 - 0.25 * mm
+    lw, dot = box_h * 0.11, box_h * 0.08
+    return box_h, lw, dot, box_h - dot - lw / 2
+
+
+def wifi_arcs_width(size: float) -> float:
+    """How wide the lettered glyph's arcs are, round caps and all."""
+    _, lw, _, r = _wifi_geometry(size)
+    return 2 * (r * math.sin(math.radians(WIFI_FAN)) + lw / 2)
+
+
+def _bold(s: str) -> float:
+    return pdfmetrics.stringWidth(s, labels.SANS_BOLD, WIFI_TYPE) if s else 0.0
+
+
+def wifi_width(size: float, text: str) -> float:
+    if not text:
+        return size
+    bands, first, second = wifi_lines(text)
+    arcs = wifi_arcs_width(size)
+    return max(arcs + (WIFI_GAP + _bold(first) if first else 0.0),
+               max(_bold(bands), arcs if not first else 0.0)
+               + (WIFI_GAP + _bold(second) if second else 0.0))
+
+
 def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
-    """The Wi-Fi arcs. With text -- ``Icon("wifi", "6")`` -- the generation
-    is set in the corner the arcs leave empty, under the outer arc's right
-    end and beside the dot, so the glyph keeps its width."""
+    """The Wi-Fi arcs. With text -- ``Icon("wifi", "2.4/5 a/b/g/n/ac/ax")``
+    -- the bands and the 802.11 standards the radio has (Tim, 2026-09-27):
+    the band in GHz under the arcs, as the source they spread from; the
+    classic single-letter standards beside the arcs, and the two-letter
+    ones (ac, ax), where there are any, beside the band. The standards are
+    set flush right, so each line takes only the room it needs; all of it
+    bold, at the smallest size the labels print."""
     if not text:
         return float(labels.mark_wifi(cell, x, y, size))
-    labels.mark_wifi(cell, x, y, size * 0.86)
-    s = size * 0.5 / 0.72
-    cell.text(x + size - cell.width(text, labels.SANS_BOLD, s), y + size - s * 0.72, text,
-              labels.SANS_BOLD, s)
-    return size
+    bands, first, second = wifi_lines(text)
+    w = wifi_width(size, text)
+    box_h, lw, dot, r = _wifi_geometry(size)
+    arcs_w, band_w = wifi_arcs_width(size), _bold(bands)
+    # the band is centred under the arcs; one wider than them (2.4/5) runs
+    # on to the right from under their left end
+    bx = x + (arcs_w - band_w) / 2 if band_w <= arcs_w else x
+    c = cell.c
+    cx, cy = cell.pt(x + arcs_w / 2, y + box_h - dot)
+    c.setStrokeColor(black)
+    c.setFillColor(black)
+    c.circle(cx, cy, dot, stroke=0, fill=1)
+    c.setLineWidth(lw)
+    c.setLineCap(1)
+    for k in (0.36, 0.68, 1.0):
+        rad = r * k
+        c.arc(cx - rad, cy - rad, cx + rad, cy + rad, 90 - WIFI_FAN, 2 * WIFI_FAN)
+    c.setLineWidth(1)
+    c.setLineCap(0)
+    bottom = y + _wifi_baseline(size) - WIFI_TYPE * 0.72
+    cell.text(bx, bottom, bands, labels.SANS_BOLD, WIFI_TYPE)
+    if first:
+        cell.text(x + w, bottom - WIFI_TYPE * 1.12, first, labels.SANS_BOLD, WIFI_TYPE,
+                  align="right")
+    if second:
+        cell.text(x + w, bottom, second, labels.SANS_BOLD, WIFI_TYPE, align="right")
+    return w
 
 
 def glyph_usb(cell: Cell, x: float, y: float, size: float, text: str) -> float:
@@ -297,10 +381,19 @@ def glyph_tasmota(cell: Cell, x: float, y: float, size: float, text: str) -> flo
     return float(cell.svg(path, x, y, size))
 
 
+RISCV_MARK = "risc-v-simple.svg"
+
+
+def isa_width(size: float) -> float:
+    """The box both ISA marks take: the RISC-V mark's, at `size` high."""
+    return _artwork_width(RISCV_MARK, size) or size
+
+
 def glyph_riscv(cell: Cell, x: float, y: float, size: float, text: str) -> float:
-    """The RISC-V logo, RISC-V International's own file (artwork/README.md):
-    the processor implements the RISC-V ISA."""
-    path = labels.artwork("risc-v.svg")
+    """The RISC-V mark: RISC-V International's "RV" without the "RISC-V"
+    wordmark under it, cut from their own file (artwork/README.md). The
+    processor implements the RISC-V ISA."""
+    path = labels.artwork(RISCV_MARK)
     if not path:
         return 0.0
     return float(cell.svg(path, x, y, size))
@@ -309,90 +402,108 @@ def glyph_riscv(cell: Cell, x: float, y: float, size: float, text: str) -> float
 XTENSA_FONT = "Helvetica-BoldOblique"
 
 
-def _xtensa_sizes(size: float) -> tuple[float, float]:
-    """The X's point size and the rest of the name's: the X stands the
-    glyph's full height, and "tensa" sits on its baseline at half that."""
-    return size * 0.86 / 0.72, size * 0.4 / 0.72
+def _xtensa_sizes(size: float) -> tuple[float, float, float]:
+    """The X's point size, the t's, and how wide the pair runs: the X
+    stands 86 % of the glyph's height and the t sits on its baseline at
+    60 % of its size, both shrunk together where the pair would be wider
+    than the RISC-V mark's box."""
+    big = size * 0.86 / 0.72
+    small = big * 0.6
+    run = (pdfmetrics.stringWidth("X", XTENSA_FONT, big) * 0.92
+           + pdfmetrics.stringWidth("t", XTENSA_FONT, small))
+    k = min(1.0, isa_width(size) / run)
+    return big * k, small * k, run * k
 
 
 def xtensa_width(size: float) -> float:
-    big, small = _xtensa_sizes(size)
-    return (pdfmetrics.stringWidth("X", XTENSA_FONT, big) * 0.92
-            + pdfmetrics.stringWidth("tensa", XTENSA_FONT, small))
+    return isa_width(size)
 
 
 def glyph_xtensa(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     """The processor is a Cadence Xtensa. Cadence registers "Xtensa" as a
     word mark and publishes no logo for the architecture that could be
-    fetched (docs/ESPRESSIF.md), so the name is set as a wordmark: a tall
-    bold oblique X with "tensa" on its baseline, the same weight the RISC-V
-    logo it stands in for on other labels carries in its own wordmark."""
-    big, small = _xtensa_sizes(size)
+    fetched (docs/ESPRESSIF.md), so the glyph is set from the name: its
+    "Xt", a tall bold oblique X with a small t on its baseline, in the box
+    the RISC-V mark takes on other labels (Tim, 2026-09-27)."""
+    big, small, run = _xtensa_sizes(size)
+    left = x + (isa_width(size) - run) / 2
     top = y + (size - big * 0.72) / 2
-    cell.text(x, top, "X", XTENSA_FONT, big)
+    cell.text(left, top, "X", XTENSA_FONT, big)
     xw = pdfmetrics.stringWidth("X", XTENSA_FONT, big) * 0.92
-    cell.text(x + xw, top + (big - small) * 0.72, "tensa", XTENSA_FONT, small)
+    cell.text(left + xw, top + (big - small) * 0.72, "t", XTENSA_FONT, small)
     return xtensa_width(size)
 
 
-MAX_CORES = 4
-
-
 def core_counts(text: str) -> tuple[int, int]:
-    """'2+1' -> (2, 1): the high-performance cores, then the low-power ones.
-    Only what the glyph can draw legibly: 1 to MAX_CORES of the first and
-    at most one of the second."""
+    """'2+1' -> (2, 1): the application cores, then the low-power ones; a
+    bare '2' has none of the second. One digit each, and at least one
+    application core."""
     head, plus, tail = text.partition("+")
-    if not head.isdigit() or (plus and not tail.isdigit()):
-        raise ValueError(f"a core count is 'N' or 'N+M', not {text!r}")
-    hp, lp = int(head), int(tail or 0)
-    if not 1 <= hp <= MAX_CORES or lp > 1:
-        raise ValueError(f"the cores glyph draws 1 to {MAX_CORES} cores and at most one "
-                         f"low-power core, not {text!r}")
-    return hp, lp
+    if (len(head) != 1 or not head.isdigit() or head == "0"
+            or (plus and (len(tail) != 1 or not tail.isdigit()))):
+        raise ValueError(f"a core count is 'N' or 'N+M', one digit each, not {text!r}")
+    return int(head), int(tail or 0)
+
+
+CORES_MAIN = 0.64              # the application cores' figure: its cap height, of the die's
+CORES_PAD = 0.3 * mm           # the die's edge, and the divider, to a figure
+
+
+def _cores_sizes(size: float) -> tuple[float, float, float]:
+    """The die's height, and the two figures' point sizes."""
+    body = size * 0.8
+    return body, body * CORES_MAIN / 0.72, MIN_SIZE
+
+
+def cores_width(size: float, text: str) -> float:
+    hp, lp = core_counts(text)
+    body, big, small = _cores_sizes(size)
+    return (pdfmetrics.stringWidth(str(hp), labels.SANS_BOLD, big)
+            + pdfmetrics.stringWidth(str(lp), labels.SANS_BOLD, small)
+            + 4 * CORES_PAD + (size - body))
 
 
 def glyph_cores(cell: Cell, x: float, y: float, size: float, text: str) -> float:
-    """A die with its cores in it: ``Icon("cores", "2+1")`` is two filled
-    squares side by side for the two cores, and a small one under them for
-    the low-power core."""
+    """A package with two numbers on its die (Tim, 2026-09-27):
+    ``Icon("cores", "2+1")`` is the application cores, large and black,
+    and past a divider the low-power cores, small and grey. A part
+    without a low-power core says 0."""
     hp, lp = core_counts(text)
-    c = cell.c
-    body = size * 0.8
+    body, big, small = _cores_sizes(size)
+    w = cores_width(size, text)
     inset = (size - body) / 2
+    bw = w - 2 * inset
+    c = cell.c
     px, py = cell.pt(x + inset, y + inset + body)
+    lw = size * 0.06
     c.setStrokeColor(black)
     c.setFillColor(black)
-    c.setLineWidth(size * 0.06)
-    c.rect(px, py, body, body, stroke=1, fill=0)
-    pins, pin_w, pin_l = 3, size * 0.07, inset * 0.9
-    step = body / (pins + 1)
-    for i in range(1, pins + 1):
-        o = i * step - pin_w / 2
-        c.rect(px + o, py + body, pin_w, pin_l, stroke=0, fill=1)        # top
-        c.rect(px + o, py - pin_l, pin_w, pin_l, stroke=0, fill=1)       # bottom
-        c.rect(px - pin_l, py + o, pin_l, pin_w, stroke=0, fill=1)       # left
-        c.rect(px + body, py + o, pin_l, pin_w, stroke=0, fill=1)        # right
-    # the cores fill the top of the die, two to a row; the low-power core
-    # sits centred under them, a third of the die across
-    inner = body * 0.74
-    ix, iy = px + (body - inner) / 2, py + (body - inner) / 2      # bottom-left
-    gap = inner * 0.14
-    per_row = 2 if hp > 1 else 1
-    rows = (hp + per_row - 1) // per_row
-    lp_side = inner * 0.34 if lp else 0.0
-    room = inner - (lp_side + gap if lp else 0.0)
-    side = min((inner - gap * (per_row - 1)) / per_row, (room - gap * (rows - 1)) / rows)
-    left = ix + (inner - side * per_row - gap * (per_row - 1)) / 2
-    top = iy + inner
-    for i in range(hp):
-        r, col = divmod(i, per_row)
-        c.rect(left + col * (side + gap), top - (r + 1) * side - r * gap, side, side,
-               stroke=0, fill=1)
-    if lp:
-        c.rect(ix + (inner - lp_side) / 2, iy, lp_side, lp_side, stroke=0, fill=1)
+    c.setLineWidth(lw)
+    c.rect(px, py, bw, body, stroke=1, fill=0)
+    pin_w, pin_l = size * 0.07, inset * 0.9
+    for n, run, along in ((4, bw, True), (3, body, False)):
+        step = run / (n + 1)
+        for i in range(1, n + 1):
+            o = i * step - pin_w / 2
+            if along:
+                c.rect(px + o, py + body, pin_w, pin_l, stroke=0, fill=1)       # top
+                c.rect(px + o, py - pin_l, pin_w, pin_l, stroke=0, fill=1)      # bottom
+            else:
+                c.rect(px - pin_l, py + o, pin_l, pin_w, stroke=0, fill=1)      # left
+                c.rect(px + bw, py + o, pin_l, pin_w, stroke=0, fill=1)         # right
+    divider = x + inset + 2 * CORES_PAD + cell.width(str(hp), labels.SANS_BOLD, big)
+    dx, _ = cell.pt(divider, 0)
+    c.setLineWidth(lw * 0.6)
+    c.setStrokeColor(labels.GREY)
+    c.line(dx, py + body * 0.2, dx, py + body * 0.8)
+    c.setStrokeColor(black)
     c.setLineWidth(1)
-    return size
+    # both figures stand on one baseline, the large one centred in the die
+    base = y + inset + (body + big * 0.72) / 2
+    cell.text(x + inset + CORES_PAD, base - big * 0.72, str(hp), labels.SANS_BOLD, big)
+    cell.text(divider + CORES_PAD, base - small * 0.72, str(lp), labels.SANS_BOLD, small,
+              color=labels.GREY)
+    return w
 
 
 def memory_type(size: float) -> float:
@@ -574,6 +685,8 @@ class MicroLabel:
                     mast_size(i.text, HEAD_H)
                 if i.name == "cores":
                     core_counts(i.text)
+                if i.name == "wifi" and i.text:
+                    wifi_lines(i.text)
             except ValueError as exc:
                 raise ValueError(f"{self.host}: {exc}") from None
         if self.specs:
@@ -718,7 +831,9 @@ WIDTHS: dict[str, Callable[[float, str], float]] = {
     "ethernet": lambda h, t: h * 0.95,
     # the lettered mast stands in a square; the plain one is narrower
     "antenna": lambda h, t: h if t else h * 0.75,
-    "riscv": lambda h, t: _artwork_width("risc-v.svg", h),
+    "riscv": lambda h, t: isa_width(h),
+    "cores": cores_width,
+    "wifi": wifi_width,
     "tasmota": lambda h, t: _artwork_width("tasmota.svg", h),
     "memory": lambda h, t: memory_width(h, t),
     "bluetooth": lambda h, t: h * BLUETOOTH_W,

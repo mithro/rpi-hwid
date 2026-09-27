@@ -8,6 +8,8 @@ import subprocess
 
 import pytest
 
+from reportlab.pdfbase import pdfmetrics
+
 from rpi_hwid import labels, micro
 from rpi_hwid.micro import Icon, MicroLabel, MicroRow
 
@@ -323,9 +325,11 @@ def test_the_spec_glyphs_are_registered():
 
 
 @pytest.mark.parametrize(("name", "text"), [
-    ("riscv", ""), ("xtensa", ""), ("cores", "1"), ("cores", "2+1"), ("memory", "400K"),
-    ("memory", "512K+8M"), ("tasmota", ""), ("bluetooth", ""), ("mesh", ""), ("wifi", "6"),
-    ("wifi", ""), ("chip", "C3"), ("antenna", "433"), ("usb", ""),
+    ("riscv", ""), ("xtensa", ""), ("cores", "1"), ("cores", "2+1"), ("cores", "1+0"),
+    ("memory", "400K"), ("memory", "512K+8M"), ("tasmota", ""), ("bluetooth", ""),
+    ("mesh", ""), ("wifi", "2.4 b/g/n"), ("wifi", "2.4 b/g/n/ax"),
+    ("wifi", "2.4/5 a/b/g/n/ac/ax"), ("wifi", ""), ("chip", "C3"), ("antenna", "433"),
+    ("usb", ""),
 ])
 def test_a_glyph_takes_the_width_the_layout_reserves_for_it(name, text):
     """The header and the strip are laid out from ``_icon_width`` before
@@ -333,17 +337,64 @@ def test_a_glyph_takes_the_width_the_layout_reserves_for_it(name, text):
     from reportlab.pdfgen import canvas
 
     labels.register_fonts()
-    # the lettered antenna is a header glyph only: its mast needs the height
-    for h in (micro.HEAD_H,) if name == "antenna" else (micro.HEAD_H, micro.SPEC_H):
+    # the lettered antenna and the lettered Wi-Fi arcs are header glyphs
+    # only: their lettering needs the height
+    header_only = name == "antenna" or (name == "wifi" and text)
+    for h in (micro.HEAD_H,) if header_only else (micro.HEAD_H, micro.SPEC_H):
         cell = micro.Cell(canvas.Canvas(_null_pdf()), 0, 0)
         w = micro.ICONS[name](cell, 0, 0, h, text)
         assert w > 0
         assert w == pytest.approx(micro._icon_width(cell, Icon(name, text), h))
 
 
-def test_the_wifi_glyph_carries_its_generation(monkeypatch):
-    _, w, _, flat = _glyph(monkeypatch, "wifi", "6")
-    assert flat == ["6"]
+def _glyph_text(monkeypatch, name, text, size=None):
+    """(string, x, y, font, size, colour) for everything a glyph letters."""
+    cell = micro.Cell(_Canvas(), 0, 0)
+    flat = []
+    monkeypatch.setattr(micro.Cell, "text",
+                        lambda self, x, y, s, font=None, size=8, align="left", color=None,
+                        **k: flat.append((s, x, y, font, size, align, color)))
+    labels.register_fonts()
+    w = micro.ICONS[name](cell, 0, 0, size or micro.HEAD_H, text)
+    return w, flat
+
+
+@pytest.mark.parametrize(("text", "lines"), [
+    ("2.4 b/g/n", ["2.4", "b/g/n"]),
+    ("2.4 b/g/n/ax", ["2.4", "b/g/n", "ax"]),
+    ("2.4/5 a/b/g/n/ac/ax", ["2.4/5", "a/b/g/n", "ac/ax"]),
+])
+def test_the_wifi_glyph_letters_its_bands_and_standards(monkeypatch, text, lines):
+    """Tim, 2026-09-27: the Wi-Fi logo says which bands and which 802.11
+    standards. The band under the arcs; the single-letter standards beside
+    the arcs, the two-letter ones (ac, ax) on a second line under them."""
+    w, flat = _glyph_text(monkeypatch, "wifi", text)
+    assert [f[0] for f in flat] == lines
+    for s, x, y, font, size, align, _ in flat:
+        assert size >= micro.MIN_SIZE
+        assert font == labels.SANS_BOLD
+        width = pdfmetrics.stringWidth(s, font, size)
+        left = x - width if align == "right" else x
+        assert -0.01 <= left and left + width <= w + 0.01, s
+        assert 0 <= y and y + size * 0.72 <= micro.HEAD_H + 0.01, s
+    band = flat[0]
+    assert band[2] == max(f[2] for f in flat)        # the band is on the bottom line
+    # the standards are right of the arcs, and of the band under them
+    arcs_right = micro.wifi_arcs_width(micro.HEAD_H)
+    for s, x, *_ in flat[1:]:
+        assert x - pdfmetrics.stringWidth(s, labels.SANS_BOLD, micro.MIN_SIZE) >= min(
+            arcs_right, pdfmetrics.stringWidth(band[0], labels.SANS_BOLD, micro.MIN_SIZE))
+
+
+@pytest.mark.parametrize("text", ["6", "2.4", "b/g/n", "x b/g/n", "2.4 b/q/n", "2.4 b//n"])
+def test_a_wifi_text_the_glyph_cannot_letter_is_refused(text):
+    with pytest.raises(ValueError, match="bench-1"):
+        _label(icons=(Icon("wifi", text),))
+
+
+def test_the_plain_wifi_glyph_is_the_arcs_alone(monkeypatch):
+    w, flat = _glyph_text(monkeypatch, "wifi", "")
+    assert flat == []
     assert w == pytest.approx(micro.HEAD_H)
 
 
@@ -355,25 +406,29 @@ def test_the_memory_glyph_is_as_wide_as_its_size_needs(monkeypatch):
 
 
 @pytest.mark.parametrize(("text", "counts"), [("1", (1, 0)), ("2", (2, 0)), ("2+1", (2, 1)),
-                                              ("1+1", (1, 1))])
-def test_the_cores_glyph_reads_high_and_low_power_cores(text, counts):
+                                              ("1+1", (1, 1)), ("1+0", (1, 0))])
+def test_the_cores_glyph_reads_application_and_low_power_cores(text, counts):
     assert micro.core_counts(text) == counts
 
 
-@pytest.mark.parametrize("text", ["", "0", "x", "5", "2+3", "2+"])
+@pytest.mark.parametrize("text", ["", "0", "x", "10", "2+", "2+10", "+1"])
 def test_a_core_count_the_glyph_cannot_draw_is_refused(text):
     with pytest.raises(ValueError, match="bench-1"):
         _label(specs=(Icon("cores", text),))
 
 
-def test_the_cores_glyph_draws_one_block_per_core(monkeypatch):
-    """Each core is a filled square in the die: two big ones for a dual
-    core, and a small one beside them for the low-power core."""
-    cell1, _, _, _ = _glyph(monkeypatch, "cores", "1")
-    cell3, _, _, _ = _glyph(monkeypatch, "cores", "2+1")
-    n1 = sum(1 for name, _ in cell1.c.calls if name == "rect")
-    n3 = sum(1 for name, _ in cell3.c.calls if name == "rect")
-    assert n3 == n1 + 2
+@pytest.mark.parametrize(("text", "numbers"), [("2+1", ["2", "1"]), ("1+0", ["1", "0"]),
+                                               ("1", ["1", "0"])])
+def test_the_cores_glyph_is_two_numbers_in_a_package(monkeypatch, text, numbers):
+    """Tim, 2026-09-27: no little squares, two numbers. The application
+    cores large and black, the low-power cores beside them smaller and
+    grey; a part without a low-power core says 0."""
+    w, flat = _glyph_text(monkeypatch, "cores", text, micro.SPEC_H)
+    assert [f[0] for f in flat] == numbers
+    (main, _, _, main_font, main_size, _, main_colour), (lp, x, _, _, lp_size, _, lp_colour) = flat
+    assert main_size > lp_size >= micro.MIN_SIZE
+    assert main_colour != labels.GREY and lp_colour == labels.GREY
+    assert flat[0][1] < x < w
 
 
 def _spy_glyphs(monkeypatch):
@@ -434,6 +489,39 @@ def test_the_foot_caption_must_leave_room_for_the_rows_beside_it():
     with pytest.raises(ValueError, match=r"bench-1.*caption"):
         micro.render_micro([_label(ident_caption="A Very Long Foot Caption Indeed",
                                    rows=rows)], _null_pdf())
+
+
+def test_the_two_isa_marks_take_the_same_box():
+    """Tim, 2026-09-27: the Xtensa mark as big as the RISC-V one, which is
+    RISC-V International's mark without its wordmark."""
+    for h in (micro.SPEC_H, micro.HEAD_H):
+        assert micro._icon_width(None, Icon("xtensa"), h) == pytest.approx(
+            micro._icon_width(None, Icon("riscv"), h))
+        assert micro._icon_width(None, Icon("riscv"), h) == pytest.approx(h, rel=0.05)
+
+
+def test_the_xtensa_mark_is_its_x_and_t(monkeypatch):
+    w, flat = _glyph_text(monkeypatch, "xtensa", "", micro.SPEC_H)
+    assert [f[0] for f in flat] == ["X", "t"]
+
+
+def test_the_riscv_glyph_draws_the_simplified_mark(monkeypatch):
+    drawn = []
+    monkeypatch.setattr(micro.Cell, "svg", lambda self, path, x, y, h: drawn.append(path) or h)
+    micro.ICONS["riscv"](micro.Cell(_Canvas(), 0, 0), 0, 0, micro.SPEC_H, "")
+    assert [p.rsplit("/", 1)[-1] for p in map(str, drawn)] == ["risc-v-simple.svg"]
+
+
+def test_the_full_riscv_logo_is_kept_byte_for_byte():
+    """risc-v.svg is RISC-V International's file, shared with the board
+    labels' branch: it stays byte for byte what their site serves."""
+    import hashlib
+
+    data = (micro.labels.artwork("risc-v.svg") or "").encode()
+    assert data
+    with open(micro.labels.artwork("risc-v.svg"), "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    assert digest == "38bd6ca96a81a16a5d5dda173327cafd5ad45fa22df0df1e54f1b80fd128085b"
 
 
 def test_title_fits_says_when_the_header_would_elide_the_title():
