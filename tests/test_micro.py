@@ -362,10 +362,11 @@ def _glyph_text(monkeypatch, name, text, size=None):
     ("2.4 b/g/n", ["2.4", "b/g/n"]),
     ("2.4 b/g/n/ax", ["2.4", "b/g/n", "ax"]),
     ("2.4/5 a/b/g/n/ac/ax", ["2.4/5", "a/b/g/n", "ac/ax"]),
-    # the newest standard alone, as the ESP32 labels print it: beside the
-    # arcs, whether it has one letter or two
-    ("2.4 n", ["2.4", "n"]),
-    ("2.4/5 ax", ["2.4/5", "ax"]),
+    # the newest standard alone, as the ESP32 labels print it: joined to the
+    # band under the arcs, "2.4n", "2.4/5ax" (Tim, 2026-09-27)
+    ("2.4 n", ["2.4n"]),
+    ("2.4 ax", ["2.4ax"]),
+    ("2.4/5 ax", ["2.4/5ax"]),
 ])
 def test_the_wifi_glyph_letters_its_bands_and_standards(monkeypatch, text, lines):
     """Tim, 2026-09-27: the Wi-Fi logo says which bands and which 802.11

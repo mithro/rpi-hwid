@@ -183,9 +183,10 @@ def wifi_lines(text: str) -> tuple[str, str, str]:
             "a Wi-Fi glyph's text is its bands and its 802.11 standards, "
             f"'2.4/5 a/b/g/n/ac/ax', not {text!r}")
     if len(got) == 1:
-        # one standard alone (the newest, as the ESP32 labels print it) goes
-        # beside the arcs, whether it has one letter or two
-        return bands, got[0], ""
+        # one standard alone (the newest, as the ESP32 labels print it) is
+        # joined to the band under the arcs: "2.4n", "2.4/5ax" (Tim,
+        # 2026-09-27)
+        return bands + got[0], "", ""
     return (bands, "/".join(g for g in got if len(g) == 1),
             "/".join(g for g in got if len(g) > 1))
 
