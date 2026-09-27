@@ -212,6 +212,8 @@ rpi-hwid revision CODE…                               decode Pi revision codes
   document the rest of the package consumes, and reading it from Python.
 - [docs/LABELS.md](docs/LABELS.md) — the derived names, the five label layouts,
   the label options and the artwork.
+- [docs/ESPRESSIF.md](docs/ESPRESSIF.md) — the Espressif parts the ESP32 labels
+  know (ISA, cores, SRAM, radios, Tasmota support), every value cited.
 - [docs/DEVELOPING.md](docs/DEVELOPING.md) — contributor notes.
 - [RELEASING.md](RELEASING.md) — how a version reaches PyPI and apt.
 
