@@ -54,7 +54,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-from rpi_hwid import boards, riscv, tt_boards, x86
+from rpi_hwid import boards, riscv, spi_flash_parts, tt_boards, x86
 from rpi_hwid import names as naming
 from rpi_hwid import tinytapeout as tt_data
 from rpi_hwid.collect import load_collected
@@ -1143,6 +1143,12 @@ JEDEC_VENDOR = {
 # name a person can read and search for; the id's hex is not, and one of the
 # parts would be a part number nobody read. Which parts share an id is taken
 # from flashrom's include/flashchips.h, which lists them beside each id.
+#
+# An id not here is looked up in the spiflash package's SPI NOR tables
+# (rpi_hwid.spi_flash_parts), and one neither knows stops label generation
+# (UnknownFlashPartError). A line belongs here when it can say more than
+# spiflash -- a better family name, argued from the datasheets -- or when
+# spiflash lacks the id: one per id, with the datasheet that gives it.
 JEDEC_PART = {
     # MX25L6405, 6405D, 6406E, 6408E, 6436E, 6445E, 6465E, 6473E: the NeTV2's
     0xC22017: "MX25L64xx",
@@ -1231,7 +1237,14 @@ def extended_part(value, extended, sfdp=None):
 
 def flash_from_jedec(jedec, extended=None, sfdp=None):
     """Vendor, part and density from a JEDEC id, as far as each is known --
-    the part as precisely as the extended id, where there is one, allows."""
+    the part as precisely as the extended id, where there is one, allows.
+
+    The tables above come first: each entry is argued from a datasheet or a
+    real read, and several settle what the id alone cannot. Then the
+    spiflash package's SPI NOR tables (rpi_hwid.spi_flash_parts), merged
+    from flashrom's, Linux's and others', which name far more parts but only
+    as precisely as the id and their own entries allow. An id neither
+    names has no part here, and all_labels refuses to print it."""
     out = {"vendor": None, "part": None, "size": None, "jedec": None,
            # "unknown" until a part is met: distinct from None, which is this
            # part having no unique id to read at all
@@ -1246,13 +1259,35 @@ def flash_from_jedec(jedec, extended=None, sfdp=None):
     if manufacturer in FLASH_UID_METHOD:
         out["uid_read_with"] = FLASH_UID_METHOD[manufacturer]
     out["jedec"] = "0x%06x" % value
-    out["vendor"] = JEDEC_VENDOR.get(value >> 16)
     out["part"] = extended_part(value, extended, sfdp) or JEDEC_PART.get(value)
+    if out["part"]:
+        out["vendor"] = JEDEC_VENDOR.get(manufacturer) or spi_flash_parts.vendor(value, extended)
+    else:
+        # A part spiflash names comes with spiflash's maker: the manufacturer
+        # byte alone is unique only within a JEP106 bank, and 0x204016 is
+        # XMC's XM25QH32 although 0x20 is Micron's in JEDEC_VENDOR.
+        out["part"] = spi_flash_parts.name(value, extended)
+        out["vendor"] = (spi_flash_parts.vendor(value, extended)
+                         or JEDEC_VENDOR.get(manufacturer))
     capacity = value & 0xFF
-    # the third byte is log2 of the part's size in bytes on every vendor here
+    # The third byte is log2 of the part's size in bytes on every vendor in
+    # JEDEC_VENDOR, and so is as measured as the id. Some others number
+    # their parts instead (Atmel's AT25DF321A answers 0x1f4701), and there
+    # spiflash gives the size where its entries agree on it.
     if 0x10 <= capacity <= 0x1B:
         out["size"] = "%d MiB" % (1 << (capacity - 20))
+    else:
+        out["size"] = size_text(spi_flash_parts.size(value, extended))
     return out
+
+
+def size_text(size):
+    """Bytes as a label prints them: MiB, or KiB below one, or None."""
+    if not size:
+        return None
+    if size >= 1 << 20 and not size % (1 << 20):
+        return "%d MiB" % (size >> 20)
+    return "%d KiB" % (size >> 10)
 
 
 def flash_text(info):
@@ -1265,8 +1300,13 @@ def flash_text(info):
     on a number several parts can answer to. 0xc22017 is MX25L6405,
     MX25L6406E, MX25L6433F and others; openFPGALoader's database labels it
     MX25L6405 and says as much with `size_source: database`. Printing that
-    would put a part number on a sticker that nobody read, so an id whose
-    part is not pinned down prints as itself.
+    would put a part number on a sticker that nobody read, so what prints is
+    the family every part at the id belongs to (flash_from_jedec).
+
+    An id nothing names still comes out here as its own hex, so that the
+    record says what the chip answered -- but that is a bare JEDEC id, a
+    placeholder rather than a part, and all_labels stops on it
+    (UnknownFlashPartError) before it reaches a sticker.
     """
     part = info.get("part") or info.get("jedec")
     named = " ".join(x for x in (info.get("vendor"), part) if x)
@@ -1296,6 +1336,65 @@ class FlashNotReadError(Exception):
     A part that has no unique id is not this error: that is a fact, and it
     prints.
     """
+
+
+class UnknownFlashPartError(Exception):
+    """A board's configuration flash answered a JEDEC id that names no part.
+
+    The sibling of FlashNotReadError: the flash was read, and what it said
+    is in the document, but neither the hand-written tables in this module
+    nor the spiflash package's (rpi_hwid.spi_flash_parts) know the part, so
+    the flash row would print the id's own hex. That is a placeholder, and a
+    sticker is printed, peeled and stuck to hardware with whatever it says.
+    The fix is a line of table with a datasheet behind it, and generation
+    time is when someone is looking.
+    """
+
+
+# Where a bare id's part goes, which the error spells out.
+JEDEC_PART_HOME = "JEDEC_PART in src/rpi_hwid/labels.py"
+
+
+def flash_part_unknown(r):
+    """Why this record's flash would print as a bare JEDEC id, or None.
+
+    Only a flash that was read and answered a real id can be one: a board
+    whose flash was never read is FlashNotReadError's, and a Cynthion named
+    from its bill of materials has a part without asking the chip.
+    """
+    info = flash_from_jedec(r.flash_jedec, r.flash_extended_id, r.flash_sfdp)
+    if not info["jedec"] or info["part"]:
+        return None
+    answered = ["JEDEC id %s" % info["jedec"]]
+    if r.flash_extended_id:
+        answered.append("extended id %s" % r.flash_extended_id)
+    if r.flash_sfdp:
+        answered.append("SFDP %s" % r.flash_sfdp)
+    code = int(info["jedec"], 16) >> 16
+    guess = spi_flash_parts.manufacturer(code)
+    maker = ("made by %s" % info["vendor"] if info["vendor"]
+             else "manufacturer 0x%02x, which spiflash's other parts give to %s" % (code, guess)
+             if guess else None)
+    known = [x for x in (maker, info["size"]) if x]
+    return (
+        "%s: the %s board's configuration flash answered %s%s, and no table names "
+        "that part -- not %s, nor the spiflash package's SPI NOR tables (spiflash %s, "
+        "merged from Linux, U-Boot, flashrom, flashprog, OpenOCD and openFPGALoader) "
+        "-- so its label would print the bare id. Identify the chip from its package "
+        "marking or the board's bill of materials, then either add it to %s, one "
+        "line per id: `0x%s: \"<part>\",  # <vendor> <datasheet title and revision>, "
+        "<the table giving this id>`, naming every part the datasheet gives this id "
+        "and writing the letters it cannot settle as x (W25Q32xx)%s; or report it to "
+        "spiflash at %s with the id and that datasheet, and upgrade spiflash (`uv "
+        "lock --upgrade-package spiflash`, or `apt upgrade python3-spiflash`) once a "
+        "release names it." % (
+            r.host, r.kind, ", ".join(answered),
+            " (%s)" % "; ".join(known) if known else "",
+            JEDEC_PART_HOME, spi_flash_parts.version(), JEDEC_PART_HOME,
+            info["jedec"][2:].upper(),
+            "" if info["vendor"] else
+            ", and its maker to JEDEC_VENDOR beside it as `0x%02X: \"<vendor>\"`" % code,
+            spi_flash_parts.ISSUES))
 
 
 def flash_not_read(r):
@@ -1383,6 +1482,8 @@ class FpgaLabel:
     serial: str | None = None
     flash: str | None = None          # one line: vendor, part, density
     flash_jedec: str | None = None
+    flash_extended_id: str | None = None  # RDID bytes 4-6, where read
+    flash_sfdp: str | None = None         # SFDP revision, or "none"
     flash_uid: str | None = None      # the flash's own unique id, where read
     flash_uid_state: str | None = None   # read | blank | none
     flash_uid_note: str | None = None    # why, where the part itself says so
@@ -1561,6 +1662,8 @@ def fpga_records(docs, pinned_names=None):
                              flash_uid=b.flash_uid or (
                                  b.serial if b.kind == "cynthion" else None),
                              flash_jedec=b.flash_jedec,
+                             flash_extended_id=b.flash_extended_id,
+                             flash_sfdp=b.flash_sfdp,
                              # A Cynthion's serial is its configuration flash's
                              # unique id, read off that chip by the gateware
                              # and published as a descriptor -- so where the
@@ -1711,6 +1814,9 @@ def all_labels(docs, only, pinned_names=None, order=None):
                         # above will stop the same way until this is fixed
                         + (" The last attempt stopped: %s." % r.flash_error
                            if r.flash_error else ""))
+                unknown = flash_part_unknown(r)
+                if unknown:
+                    raise UnknownFlashPartError(unknown)
                 # the identifier the sticker is keyed on, as a Pi row carries
                 # its serial and a USB row its MAC
                 ident = r.ident or r.serial or ""
