@@ -135,8 +135,8 @@ that the datasheet's vendor id is 20h
 "Serial Flash Discoverable Parameters (SFDP) Signature and Parameter
 Identification Data Value"). So: an **XMC XM25QH32D-family die, 32 Mbit,
 coded 0x46**, not the XM25QH32C (0x204016) the eFuse vendor alone suggests.
-The label keeps printing "4 MiB XMC" from eFuse; `esp32_micro.JEDEC_VENDOR`
-now names 0x46 XMC for a board where the same die is external.
+The label's flash row names it `XM25QH32D` (`esp32_micro.JEDEC_PART`);
+`esp32_micro.JEDEC_VENDOR` names 0x46 XMC for any other 0x46 part.
 
 **Unique id.** The datasheet: "The Read Unique ID Number instruction (4Bh)
 is unique to each device by accessing a factory-set and read-only 128-bit
@@ -281,14 +281,15 @@ tried. On the S3 the in-package PSRAM's capacity and vendor are in eFuse
 
 The label, as `esp32_micro` now draws it (`docs/examples/esp32-sticker-1.png`):
 
-- **External flash** (original ESP32): the `flash` row is part and density --
-  `BY25Q32ES · 4 MiB`, `GD25Q32x · 4 MiB` -- or vendor and JEDEC id where no
-  part is known, as the FPGA flash line does. The `uid` row is the flash's
-  unique id at its own length: one row for 64 bits, two for 128, and a
-  128-bit id takes the Bluetooth MAC's row (that MAC is derived, not read).
-- **In-package flash** (C3): unchanged. The subtitle keeps eFuse's `4 MiB
-  XMC`; the chip's `OPTIONAL_UNIQUE_ID` keeps its two rows; the flash's
-  128-bit id goes in the document only.
+- **The `flash` row**, in the package or beside it, is part and density --
+  `XM25QH32D · 4 MiB`, `BY25Q32ES · 4 MiB`, `GD25Q32x · 4 MiB` -- or vendor
+  and JEDEC id where no part is known (`XMC 0x464017 · 8 MiB`), as the FPGA
+  flash line does. A Boya whose uid length was not measured is `BY25Q32xS`.
+- **The `uid` rows** are the flash's unique id at its own length: one row
+  for 64 bits, two for 128. A C3 has a second serial, its eFuse
+  `OPTIONAL_UNIQUE_ID`; only one fits, and `esp32_micro.SERIALS` says which
+  (the flash's, for now). The other stays in the document; a chip whose
+  flash gives no uid prints its eFuse id as `eFuse`.
 - The SFDP revision is not printed, as on the FPGA labels; like there, it can
   settle a part name (`labels.flash_from_jedec(..., sfdp=)` is passed it).
 
