@@ -73,7 +73,7 @@ def test_a_c3_label():
     (lab,) = esp32_micro.micro_labels(_docs(C3))
     assert lab.title == "ESP32-C3FH4"
     assert lab.mark == "espressif.svg"
-    assert lab.icons == (Icon("wifi", "2.4 b/g/n"), Icon("bluetooth"))
+    assert lab.icons == (Icon("wifi", "2.4 n"), Icon("bluetooth"))
     assert lab.specs == (Icon("riscv"), Icon("cores", "1+0"), Icon("memory", "400K"),
                          Icon("tasmota"))
     assert lab.subtitle == ""
@@ -123,7 +123,7 @@ def test_a_flash_no_part_is_known_for_is_its_id_and_size():
 def test_an_original_esp32_label():
     (cam,) = esp32_micro.micro_labels(_docs(CAM, host="rpi4-esp"))
     assert cam.title == "ESP32-D0WD-V3"
-    assert cam.icons == (Icon("wifi", "2.4 b/g/n"), Icon("bluetooth"))
+    assert cam.icons == (Icon("wifi", "2.4 n"), Icon("bluetooth"))
     assert cam.specs == (Icon("xtensa"), Icon("cores", "2+1"), Icon("memory", "520K"),
                          Icon("tasmota"))
     assert cam.rows == (MicroRow("chip", "v3.1"),
@@ -158,7 +158,7 @@ def test_an_esp8266_label():
              read_errors={"efuse": "ModuleNotFoundError: espefuse.efuse.esp8266"})
     (lab,) = esp32_micro.micro_labels(_docs(d, host="rpi4-esp"))
     assert lab.title == "ESP8266EX"
-    assert lab.icons == (Icon("wifi", "2.4 b/g/n"),)
+    assert lab.icons == (Icon("wifi", "2.4 n"),)
     assert lab.specs == (Icon("xtensa"), Icon("cores", "1+0"), Icon("memory", "160K"),
                          Icon("tasmota"))
     # no revision to print, and the crystal is not printed: the chip row's
@@ -177,7 +177,7 @@ def test_an_h2_has_no_wifi_and_no_tasmota():
 def test_in_package_psram_is_on_the_memory_glyph():
     lab = esp32_micro.sample_label(espressif.BY_NAME["ESP32-S3R8"])
     assert Icon("memory", "512K+8M") in lab.specs
-    assert lab.icons == (Icon("wifi", "2.4 b/g/n"), Icon("bluetooth"))
+    assert lab.icons == (Icon("wifi", "2.4 n"), Icon("bluetooth"))
 
 
 def test_a_chip_the_table_does_not_know_is_an_error_naming_the_host():
@@ -294,9 +294,9 @@ def test_every_flash_row_and_every_uid_row_prints_at_one_size(monkeypatch):
 def test_the_wifi_glyph_carries_each_family_s_bands_and_standards():
     got = {esp32_micro.sample_label(p).title: esp32_micro.radio_icons(p.family)[:1]
            for p in espressif.PARTS if not p.listed_only}
-    assert got["ESP32-C3FH4"] == (Icon("wifi", "2.4 b/g/n"),)
-    assert got["ESP32-C6"] == (Icon("wifi", "2.4 b/g/n/ax"),)
-    assert got["ESP32-C5"] == (Icon("wifi", "2.4/5 a/b/g/n/ac/ax"),)
+    assert got["ESP32-C3FH4"] == (Icon("wifi", "2.4 n"),)
+    assert got["ESP32-C6"] == (Icon("wifi", "2.4 ax"),)
+    assert got["ESP32-C5"] == (Icon("wifi", "2.4/5 ax"),)
     assert got["ESP32-H2"] == (Icon("bluetooth"),)
     assert got["ESP32-P4"] == ()
 

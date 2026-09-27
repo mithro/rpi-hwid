@@ -205,3 +205,15 @@ def test_the_low_power_core_count(family, lp):
 def test_a_part_s_core_pair(part, pair):
     """(application cores, low-power cores): the two numbers on the label."""
     assert espressif.BY_NAME[part].core_pair == pair
+
+
+@pytest.mark.parametrize(("family", "newest"), [
+    ("ESP8266", "n"), ("ESP32", "n"), ("ESP32-S2", "n"), ("ESP32-S3", "n"),
+    ("ESP32-C2", "n"), ("ESP32-C3", "n"), ("ESP32-C5", "ax"), ("ESP32-C6", "ax"),
+    ("ESP32-H2", None), ("ESP32-P4", None),
+])
+def test_the_newest_wifi_standard_is_the_one_printed(family, newest):
+    """Tim, 2026-09-27: the label's Wi-Fi glyph names only the newest
+    802.11 standard the radio has -- n for Wi-Fi 4, ax for Wi-Fi 6."""
+    fam = {f.name: f for f in espressif.FAMILIES}[family]
+    assert fam.wifi_newest == newest

@@ -96,6 +96,13 @@ XTENSA, RISCV = "Xtensa", "RISC-V"
 TASMOTA_BINARY = {"release", "experimental"}
 
 
+# The 802.11 amendments in the order they were ratified, oldest first, so
+# that the newest a radio has can be told whatever order a datasheet lists
+# them in: 802.11a and b (1999), g (2003), n (2009), ac (2013), ax (2021),
+# be (2024).
+WIFI_ORDER = ("a", "b", "g", "n", "ac", "ax", "be")
+
+
 @dataclass(frozen=True)
 class Family:
     """What every part of one die shares."""
@@ -127,6 +134,15 @@ class Family:
         the radio implements, in the datasheet's order; () without Wi-Fi."""
         m = re.match(r"^802\.11 ([a-z]+(?:/[a-z]+)*)", self.wifi or "")
         return tuple(m.group(1).split("/")) if m else ()
+
+    @property
+    def wifi_newest(self) -> str | None:
+        """The newest 802.11 standard the radio implements -- 'n' (Wi-Fi 4)
+        for b/g/n, 'ax' (Wi-Fi 6) for a C5 or C6 -- which is what the
+        label's Wi-Fi glyph names (Tim, 2026-09-27); None without Wi-Fi.
+        Ranked by WIFI_ORDER, not by where the datasheet lists it."""
+        got = self.wifi_standards
+        return max(got, key=WIFI_ORDER.index) if got else None
 
     @property
     def wifi_band_ghz(self) -> tuple[str, ...]:

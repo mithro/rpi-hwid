@@ -286,9 +286,8 @@ def radio_icons(fam: espressif.Family) -> tuple[Icon, ...]:
     keeps it."""
     icons = []
     if fam.wifi:
-        # the bands and the 802.11 standards: "2.4 b/g/n", "2.4/5 a/b/g/n/ac/ax"
-        icons.append(Icon("wifi", "/".join(fam.wifi_band_ghz) + " "
-                          + "/".join(fam.wifi_standards)))
+        # the bands and the newest 802.11 standard: "2.4 n", "2.4/5 ax"
+        icons.append(Icon("wifi", "/".join(fam.wifi_band_ghz) + " " + str(fam.wifi_newest)))
     if fam.bluetooth:
         icons.append(Icon("bluetooth"))
     if fam.ieee802154:
