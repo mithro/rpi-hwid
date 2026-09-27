@@ -218,8 +218,11 @@ class Label:
     def qr(self, x, y, size, content, error="m"):
         """A QR code whose top-left is (x, y), `size` points square. Error
         level M unless told otherwise, and no drawn quiet zone: the label
-        stock is white, and the caller keeps the surrounding area clear."""
-        code = segno.make(content, error=error)
+        stock is white, and the caller keeps the surrounding area clear.
+        Always a full QR code, never a Micro QR: segno makes one wherever
+        the content fits (a MAC or serial of digits and colons alone), and
+        many phone scanners cannot read its single finder square."""
+        code = segno.make(content, error=error, micro=False)
         matrix = list(code.matrix)
         n = len(matrix)
         module = size / n
