@@ -466,13 +466,16 @@ def test_the_spec_strip_heads_the_band_beside_the_qr(monkeypatch):
     assert xs == sorted(xs)
 
 
-def test_four_rows_under_the_strip_stop_at_the_foot_caption(monkeypatch):
+def test_five_rows_under_the_strip_stop_at_the_foot_caption(monkeypatch):
     """Right of the QR the rows may run down beside the foot's caption: the
-    last one sits on that caption's baseline, clear of the identifier."""
+    last one sits on that caption's baseline, clear of the identifier.
+    Under a strip there are SPEC_ROWS of them, set at most SPEC_ROW."""
     drawn = _spy_text(monkeypatch)
     rows = (MicroRow("rev", "v0.4 · 40 MHz"), MicroRow("flash", "XMC 0x464016 · 4 MiB"),
+            MicroRow("uid", "0123456789", mono=True),
             MicroRow("chip", "0123456789abcdef", mono=True),
             MicroRow("", "fedcba9876543210", mono=True))
+    assert len(rows) == micro.SPEC_ROWS
     micro.render_micro([_label(specs=_strip(), rows=rows)], _null_pdf())
     last = next(d for d in drawn if d[0] == "fedcba9876543210")
     ident = next(d for d in drawn if d[0] == "02:00:00:12:34:56")
@@ -480,7 +483,7 @@ def test_four_rows_under_the_strip_stop_at_the_foot_caption(monkeypatch):
     assert last[1] >= micro.rows_x() - 0.01
     assert caption[2] < micro.rows_x()
     # its cap height ends on or above the caption's baseline
-    size = micro.ROW
+    size = micro.SPEC_ROW
     assert last[3] + size * 0.72 <= caption[3] + micro.CAPTION * 0.72 + 0.01
     assert last[3] + size * 0.72 < ident[3]
 
@@ -591,3 +594,38 @@ def test_a_blank_row_keeps_its_place_empty(monkeypatch):
     b = _row_sizes(monkeypatch, _label(specs=_strip(), rows=gap))
     assert a["GD25Q32x · 4 MiB"] == b["GD25Q32x · 4 MiB"]
     assert "" not in b
+
+
+def test_under_a_strip_a_label_holds_one_row_more_set_tighter():
+    rows = tuple(MicroRow(f"r{i}", "v") for i in range(micro.SPEC_ROWS + 1))
+    with pytest.raises(ValueError, match="bench-1"):
+        _label(specs=_strip(), rows=rows)
+    assert len(_label(specs=_strip(), rows=rows[:-1]).rows) == micro.SPEC_ROWS
+    assert micro.SPEC_ROWS == micro.MAX_ROWS + 1
+    assert micro.spec_pitch() < micro.ROW_PITCH
+    assert micro.SPEC_ROW < micro.ROW
+
+
+def test_an_unsized_row_under_a_strip_is_set_at_most_spec_row(monkeypatch):
+    seen = _row_sizes(monkeypatch, _label(specs=_strip(), rows=(MicroRow("chip", "v0.4"),)))
+    assert seen["v0.4"][0] == micro.SPEC_ROW
+
+
+def test_a_wide_row_starts_right_of_its_own_caption(monkeypatch):
+    """A value longer than the column holds starts sooner: right of the
+    widest caption among the wide rows, which share that column."""
+    drawn = _spy_text(monkeypatch)
+    rows = (MicroRow("flash", "GD25Q32x · 4 MiB", size=4.4),
+            MicroRow("uid", "240c1119088539540150", mono=True, size=4.0, wide=True),
+            MicroRow("", "0123", mono=True, size=4.0, wide=True),
+            MicroRow("eFuse", "89e4bec55c62671e", mono=True, size=4.0))
+    micro.render_micro([_label(specs=_strip(), rows=rows)], _null_pdf())
+    at = {d[0]: d[1] for d in drawn}
+    gap = labels.Label.CAPTION_GAP * 0.6
+    uid_w = pdfmetrics.stringWidth("uid", labels.SANS, micro.CAPTION)
+    efuse_w = pdfmetrics.stringWidth("eFuse", labels.SANS, micro.CAPTION)
+    assert at["240c1119088539540150"] == pytest.approx(micro.rows_x() + uid_w + gap)
+    assert at["0123"] == at["240c1119088539540150"]
+    assert at["uid"] == pytest.approx(micro.rows_x())
+    assert at["89e4bec55c62671e"] == pytest.approx(micro.rows_x() + efuse_w + gap)
+    assert at["GD25Q32x · 4 MiB"] == at["89e4bec55c62671e"]

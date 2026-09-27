@@ -28,8 +28,9 @@ The layout is device-neutral. What a caller fills in is a ``MicroLabel``:
                            for what the device *is* (``Icon("riscv")``,
                            ``Icon("cores", "2+1")``, ``Icon("memory",
                            "400K")``), in place of a line of text
-    rows                   up to MAX_ROWS captioned facts beside the QR; the
-                           last may run down beside the foot's caption
+    rows                   up to MAX_ROWS captioned facts beside the QR, or
+                           SPEC_ROWS under a spec strip; the last may run
+                           down beside the foot's caption
     extra                  a callable drawing a section of the caller's own
                            in the room left under the rows
 
@@ -88,6 +89,14 @@ ROW_PITCH = 2.1 * mm
 MAX_ROWS = 4                   # beside the subtitle's line, which is always kept
 SPEC_H = 2.4 * mm              # the spec strip's glyphs, in the subtitle's place
 SPEC_GAP = 0.3 * mm            # the strip to the first line under it
+# Under a spec strip the rows are one step tighter than ROW and ROW_PITCH:
+# five of them, none larger than SPEC_ROW, at spec_pitch -- room for a
+# flash row and three rows of serials under a chip row (the ESP32-C3's
+# flash uid and its chip's eFuse id, Tim, 2026-09-27).
+SPEC_ROWS = 5
+SPEC_ROW = 4.4
+EXTRA_GAP = 0.6 * mm           # the last row to an extra section under it
+SPEC_EXTRA_GAP = 0.3 * mm      # ...closed up with the rows under a spec strip
 SPEC_ICON_GAP = 0.45 * mm      # between the strip's glyphs
 
 GUIDE = HexColor("#999999")    # the cut guides, lighter than any caption
@@ -124,11 +133,17 @@ def caption_baseline() -> float:
 
 
 def spec_pitch() -> float:
-    """The row pitch under a spec strip: MAX_ROWS rows of ROW-point type
-    between the strip and the caption's baseline. A little tighter than
-    ROW_PITCH, which is what buys the strip its height."""
+    """The row pitch under a spec strip: SPEC_ROWS rows of at most
+    SPEC_ROW-point type between the strip and the caption's baseline.
+    Tighter than ROW_PITCH, which is what buys the strip its height and
+    the fifth row its place."""
     first = band_top() + SPEC_H + SPEC_GAP
-    return (caption_baseline() - first - ROW * 0.72) / (MAX_ROWS - 1)
+    return (caption_baseline() - first - SPEC_ROW * 0.72) / (SPEC_ROWS - 1)
+
+
+def max_rows(specs: bool) -> int:
+    """How many rows a label holds: more under a spec strip, set tighter."""
+    return SPEC_ROWS if specs else MAX_ROWS
 
 
 # --- the drawing context ------------------------------------------------------
@@ -643,12 +658,19 @@ class MicroRow:
     A row shrinks to fit its value unless it has a ``size``: then it is set
     at exactly that size, so a kind of row a caller prints on every label
     reads the same on all of them, and a value that does not fit whole at
-    it is refused rather than shrunk. ``BLANK_ROW`` keeps a place empty."""
+    it is refused rather than shrunk. ``BLANK_ROW`` keeps a place empty.
+
+    The values start in one column, right of the widest caption. A ``wide``
+    row's value starts sooner, right of the widest caption among the wide
+    rows: the room for a value longer than the column holds (an ESP32-C3's
+    twenty-digit flash uid beside its "eFuse" rows). Its caption stays flush
+    against it, as every caption is."""
 
     caption: str
     value: str
     mono: bool = False
     size: float | None = None
+    wide: bool = False
 
     @property
     def blank(self) -> bool:
@@ -686,11 +708,11 @@ class MicroLabel:
             raise IdentifierMissingError(
                 f"{self.host}: the {self.title} label has no {self.ident_caption}, so it "
                 f"would carry nothing that identifies the device.{how}")
-        if len(self.rows) > MAX_ROWS:
+        if len(self.rows) > max_rows(bool(self.specs)):
             raise ValueError(
                 f"{self.host}: the {self.title} label has {len(self.rows)} rows and a micro "
-                f"label holds {MAX_ROWS}; put the rest in an extra section or leave them "
-                "in the document")
+                f"label holds {max_rows(bool(self.specs))}; put the rest in an extra "
+                "section or leave them in the document")
         for r in self.rows:
             if not r.blank and not (r.value or "").strip():
                 raise ValueError(
@@ -779,19 +801,26 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
             raise ValueError(
                 f"{m.host}: the {m.title} label's foot caption {m.ident_caption!r} runs "
                 "under the rows beside it; shorten the caption or drop a row")
-    cap_w = max([cell.width(r.caption, labels.SANS, CAPTION) for r in m.rows] or [0])
-    vx = rx + cap_w + (labels.Label.CAPTION_GAP * 0.6 if cap_w else 0)
+    def column(rows: list[MicroRow]) -> float:
+        cap_w = max([cell.width(r.caption, labels.SANS, CAPTION) for r in rows] or [0])
+        return rx + cap_w + (labels.Label.CAPTION_GAP * 0.6 if cap_w else 0)
+
+    columns = {False: column([r for r in m.rows if not r.wide]),
+               True: column([r for r in m.rows if r.wide])}
+    largest = SPEC_ROW if m.specs else ROW
+    last_h = ROW * 0.72
     for r in m.rows:
         if r.blank:
             y += pitch
             continue
         font = labels.MONO_REGULAR if r.mono else labels.SANS
+        vx = columns[r.wide]
         vw = right - vx
         if r.size is not None and cell.width(r.value, font, r.size) > vw + 0.01:
             raise ValueError(
                 f"{m.host}: the {r.caption} row of the {m.title} label ({r.value!r}) does "
                 f"not fit whole at its {r.size:g} pt")
-        size = r.size or cell.fitted_size(r.value, font, ROW, vw, min_size=MIN_SIZE)
+        size = r.size or cell.fitted_size(r.value, font, largest, vw, min_size=MIN_SIZE)
         if r.mono and cell.width(r.value, font, size) > vw + 0.01:
             raise ValueError(
                 f"{m.host}: the {r.caption} row of the {m.title} label ({r.value!r}) does "
@@ -801,10 +830,14 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
             cell.text(vx - (labels.Label.CAPTION_GAP * 0.6), baseline - CAPTION * 0.72,
                       r.caption, labels.SANS, CAPTION, align="right", color=labels.GREY)
         cell.fit(vx, y, r.value, font, size, vw, min_size=MIN_SIZE)
+        # under a spec strip, what an extra section clears is the last row as
+        # it is set; elsewhere, a row at ROW
+        last_h = size * 0.72 if m.specs else ROW * 0.72
         y += pitch
 
     if m.extra is not None:
-        ey = (y - pitch + ROW * 0.72 + 0.6 * mm if m.rows or m.subtitle
+        gap = SPEC_EXTRA_GAP if m.specs else EXTRA_GAP
+        ey = (y - pitch + last_h + gap if m.rows or m.subtitle
               else y if m.specs else top)
         # under a spec strip the rows run down beside the foot's caption, and
         # so does the room left under them
