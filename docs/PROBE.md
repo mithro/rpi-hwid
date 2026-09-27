@@ -300,16 +300,28 @@ its ROM bootloader through the port's DTR/RTS lines and asks for:
 
 - the chip description, features and crystal;
 - the base MAC;
-- the SPI flash's JEDEC id (`0x9F`) and Read Unique ID (`0x4B`);
+- the SPI flash's JEDEC id and the first eight bytes of its RDID (`0x9F`), its
+  status registers (`0x05`, `0x35`, `0x15`), its Read Unique ID (`0x4B`), and
+  its SFDP (`0x5A`), whole;
 - the eFuse fields that are not secret: MAC, custom MAC, `OPTIONAL_UNIQUE_ID`,
   the wafer, block and package versions, and the flash and PSRAM capacity and
   vendor.
 
-The unique id takes two SPI commands. esptool reads at most 32 bits back from
-one, 4.7 and 5.2 alike, and `0x4B` takes no address. So the second half is
-reached by clocking the four dummy bytes and the first half out on MOSI before
-reading. A third read, offset by two bytes, must agree with the two halves
-joined, or the uid is dropped.
+The flash is asked through the SPI controller's registers, which the ROM loader
+reads and writes for anyone: the same "user command" esptool's
+`run_spiflash_command` sets up, but with the controller's whole 64-byte buffer
+read back, where esptool returns only its first word and refuses to ask for more
+than 32 bits (4.7 and 5.2 alike). No flasher stub and no program in RAM is
+needed. Only read opcodes are sent. A command's dummy bytes are clocked as an
+address phase and dummy cycles, never as data: on an ESP32-C3 a command with a
+data-out phase reads back nothing but zeroes, which is why the first version of
+this read, which did that, found no unique id on any C3.
+
+The unique id is read as 32 bytes, twice, and the two must agree. How long it is
+is the part's to say: 64 or 128 bits, followed by `0xFF` or by the id again, and
+`flash_uid_bits` records which. SFDP is read whole -- the 256-byte header region
+and any parameter table beyond it -- and kept as hex beside a summary of its
+revision, tables and density. docs/research/esp32-flash.md has the reads.
 
 Each step records its own error and the rest carry on, so a flash that will not
 answer does not cost the chip, MAC and eFuse already read. Whatever happens, a
@@ -328,12 +340,14 @@ else that a reset would interrupt. On `collect` the ports are named per host, as
 HOST that is not being collected is an error, reported before anything is
 probed.
 
-What the reads of 2026-09-26 found:
+What the reads of 2026-09-26 and 27 found:
 
-- **ESP32-C3 SuperMinis:** their in-package XMC flash answers Read Unique ID with
-  zeroes, so their second identifier is the chip's own `OPTIONAL_UNIQUE_ID`.
-- **An ESP32-CAM's Boya flash and a devkit's GigaDevice flash:** both answered
-  Read Unique ID.
+- **ESP32-C3 SuperMinis:** their in-package flash is an XMC (JEDEC `0x464016`,
+  which ESP-IDF files as XMC's D series) with SFDP 1.6 and a 128-bit unique id
+  whose last six bytes are `0xFF`. The first read, which sent the dummy bytes as
+  data, got zeroes; the chip's own `OPTIONAL_UNIQUE_ID` is there as well.
+- **An ESP32-CAM's Boya flash:** a 128-bit unique id, SFDP 1.0.
+- **A devkit's GigaDevice flash:** a 64-bit unique id, SFDP 1.0.
 
 Every board was back in its application within seconds of the read.
 
