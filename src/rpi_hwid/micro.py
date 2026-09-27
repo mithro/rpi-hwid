@@ -404,10 +404,10 @@ XTENSA_FONT = "Helvetica-BoldOblique"
 
 def _xtensa_sizes(size: float) -> tuple[float, float, float]:
     """The X's point size, the t's, and how wide the pair runs: the X
-    stands 86 % of the glyph's height and the t sits on its baseline at
+    stands 94 % of the glyph's height and the t sits on its baseline at
     60 % of its size, both shrunk together where the pair would be wider
     than the RISC-V mark's box."""
-    big = size * 0.86 / 0.72
+    big = size * 0.94 / 0.72
     small = big * 0.6
     run = (pdfmetrics.stringWidth("X", XTENSA_FONT, big) * 0.92
            + pdfmetrics.stringWidth("t", XTENSA_FONT, small))
@@ -445,7 +445,7 @@ def core_counts(text: str) -> tuple[int, int]:
     return int(head), int(tail or 0)
 
 
-CORES_MAIN = 0.64              # the application cores' figure: its cap height, of the die's
+CORES_MAIN = 0.74              # the application cores' figure: its cap height, of the die's
 CORES_PAD = 0.3 * mm           # the die's edge, and the divider, to a figure
 
 
