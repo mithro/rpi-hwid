@@ -17,7 +17,7 @@ from rpi_hwid.micro import Icon
 from rpi_hwid.model import ProbeDocument
 
 # verdict.esp32 as `rpi-hwid collect --esp32-read ... --esp32-radio ...` wrote
-# it for rpi5-433mhz on 2026-09-26 (boot output trimmed): the SX1278 node,
+# it for rpi5-433mhz on 2026-09-27 (boot output trimmed): the SX1278 node,
 # the blue CC1101 node, and the reference board with no radio fitted.
 REAL = json.loads((pathlib.Path(__file__).parent / "esp32_433_devices.json").read_text())
 
@@ -46,8 +46,8 @@ def _one(dev):
 def test_the_nodes_with_a_radio_get_a_label_and_the_empty_board_does_not():
     got = [(m.host, m.title, m.ident) for m in esp32_433_micro.micro_labels(_docs(*REAL[
         "rpi5-433mhz"]))]
-    assert got == [("rpi5-433mhz", "ESP32-C3", "44:1b:f6:2e:b3:80"),
-                   ("rpi5-433mhz", "ESP32-C3", "e8:3d:c1:8c:3e:b8")]
+    assert got == [("rpi5-433mhz", "ESP32-C3FH4", "44:1b:f6:2e:b3:80"),
+                   ("rpi5-433mhz", "ESP32-C3FH4", "e8:3d:c1:8c:3e:b8")]
 
 
 def test_the_board_is_told_by_the_pins_its_chip_answered_on():
@@ -95,11 +95,14 @@ def test_the_radio_label_is_the_plain_label_plus_the_radio():
         plain.ident, plain.ident_caption, plain.title, plain.mark, plain.subtitle,
         plain.qr_content)
     assert m.icons == (*plain.icons, Icon("antenna", "433"))
-    # the chip's own unique id stays, both halves; the derived BT MAC gives
-    # way to the radio
-    assert [r.caption for r in plain.rows] == ["BT", "chip", ""]
+    # the flash and both halves of the unique id stay; the chip row, the
+    # revision and crystal every SuperMini shares, gives way to the radio
+    assert [r.caption for r in plain.rows] == ["chip", "flash", "uid", ""]
     assert m.rows == plain.rows[1:]
     assert m.extra is not None
+    # the part number still prints whole beside wifi, bluetooth and the 433
+    assert micro.title_fits(m)
+    assert micro.title_fits(_one(SX))
 
 
 def test_the_radio_line_names_chip_and_board():

@@ -27,7 +27,42 @@
    ],
    "crystal_mhz": 40,
    "flash_jedec": "0x464016",
-   "flash_uid": "0000000000000000",
+   "flash_uid": "240c1119088539540150ffffffffffff",
+   "flash_uid_bits": 128,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "240c1119088539540150ffffffffffffffffffffffffffffffffffffffffffff",
+   "flash_rdid": "4640164640164640",
+   "flash_status": {
+    "05": "00",
+    "35": "02",
+    "15": "20"
+   },
+   "flash_sfdp": "1.6",
+   "flash_sfdp_summary": {
+    "revision": "1.6",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.6",
+      "dwords": 16,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xff46",
+      "revision": "1.0",
+      "dwords": 4,
+      "pointer": "0xd0"
+     },
+     {
+      "id": "0xff84",
+      "revision": "1.0",
+      "dwords": 2,
+      "pointer": "0xc0"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450060102ff00060110300000ff46000104d00000ff84000102c00000ffffffffffffffffffffffffffffffffffe520f9ffffffff0144eb086b083b42bbfeffffffffff00ffffff40eb0c200f5210d800ff1532a50084a313c1cca176357a757a75f7b3d55c19f64dffe910c080ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000f0ffffffffffffffffffffffffff003600239ff9776400e8ffffffffffff240c1119088539540150ffffffffffffffff01ffff503450393133078d8f69aa",
    "efuse": {
     "MAC": "e8:3d:c1:8c:5c:88 (OK)",
     "WAFER_VERSION_MINOR_LO": 4,
@@ -84,7 +119,42 @@
    ],
    "crystal_mhz": 40,
    "flash_jedec": "0x464016",
-   "flash_uid": "0000000000000000",
+   "flash_uid": "2c30041916712aca013affffffffffff",
+   "flash_uid_bits": 128,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "2c30041916712aca013affffffffffffffffffffffffffffffffffffffffffff",
+   "flash_rdid": "4640164640164640",
+   "flash_status": {
+    "05": "00",
+    "35": "02",
+    "15": "20"
+   },
+   "flash_sfdp": "1.6",
+   "flash_sfdp_summary": {
+    "revision": "1.6",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.6",
+      "dwords": 16,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xff46",
+      "revision": "1.0",
+      "dwords": 4,
+      "pointer": "0xd0"
+     },
+     {
+      "id": "0xff84",
+      "revision": "1.0",
+      "dwords": 2,
+      "pointer": "0xc0"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450060102ff00060110300000ff46000104d00000ff84000102c00000ffffffffffffffffffffffffffffffffffe520f9ffffffff0144eb086b083b42bbfeffffffffff00ffffff40eb0c200f5210d800ff1532a50084a313c1cca176357a757a75f7b3d55c19f64dffe910c080ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000f0ffffffffffffffffffffffffff003600239ff9776400e8ffffffffffff2c30041916712aca013affffffffffffffff01ffff50345039323408112e69aa",
    "efuse": {
     "MAC": "44:1b:f6:2e:b3:80 (OK)",
     "WAFER_VERSION_MINOR_LO": 4,
@@ -148,7 +218,42 @@
    ],
    "crystal_mhz": 40,
    "flash_jedec": "0x464016",
-   "flash_uid": "0000000000000000",
+   "flash_uid": "1f2b10190882f7540150ffffffffffff",
+   "flash_uid_bits": 128,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "1f2b10190882f7540150ffffffffffffffffffffffffffffffffffffffffffff",
+   "flash_rdid": "4640164640164640",
+   "flash_status": {
+    "05": "00",
+    "35": "02",
+    "15": "20"
+   },
+   "flash_sfdp": "1.6",
+   "flash_sfdp_summary": {
+    "revision": "1.6",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.6",
+      "dwords": 16,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xff46",
+      "revision": "1.0",
+      "dwords": 4,
+      "pointer": "0xd0"
+     },
+     {
+      "id": "0xff84",
+      "revision": "1.0",
+      "dwords": 2,
+      "pointer": "0xc0"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450060102ff00060110300000ff46000104d00000ff84000102c00000ffffffffffffffffffffffffffffffffffe520f9ffffffff0144eb086b083b42bbfeffffffffff00ffffff40eb0c200f5210d800ff1532a50084a313c1cca176357a757a75f7b3d55c19f64dffe910c080ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000f0ffffffffffffffffffffffffff003600239ff9776400e8ffffffffffff1f2b10190882f7540150ffffffffffffffff01ffff50345039313306ac5269aa",
    "efuse": {
     "MAC": "e8:3d:c1:8c:3e:b8 (OK)",
     "WAFER_VERSION_MINOR_LO": 4,

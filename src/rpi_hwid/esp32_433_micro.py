@@ -4,21 +4,22 @@ The nodes github.com/mithro/esp32-to-433mhz builds are an ESP32-C3
 SuperMini wired to a 433 MHz radio board: the blue Ebyte E07-M1101D or the
 green D-Sun (both a TI CC1101), or the Ai-Thinker Ra-02 breakout (a Semtech
 SX1278). Their label is the plain ESP32 label from
-``rpi_hwid.esp32_micro`` -- the Wi-Fi MAC in the QR and along the foot, the
-chip's revision, package and flash, its 128-bit unique id -- with the radio
-added:
+``rpi_hwid.esp32_micro`` -- the part number and its spec strip, the Wi-Fi
+MAC in the QR and along the foot, the flash, and a 128-bit unique id over
+two rows -- with the radio added:
 
-  * an antenna whose mast is the band, "433" set upright, beside the Wi-Fi
-    and chip glyphs;
+  * an antenna whose mast is the band, "433" set upright, after the Wi-Fi
+    and Bluetooth glyphs;
   * under the unique id, a line naming the radio: the chip maker's mark and
     the board maker's where there is one to draw, then the chip and the
     board: "[TI] CC1101 · E07-M1101D", "[Semtech] [Ai-Thinker] SX1278 · Ra-02".
 
-The room for that line is the Bluetooth MAC's row. That row is the one fact
-on the plain label that was not read from anything: it is the Wi-Fi MAC
-plus two, which anyone holding the label can still work out, whereas the
-unique id's two rows are the only copy of a serial read from the chip and
-the radio is what this label exists to add.
+The room for that line is the plain label's ``chip`` row (the silicon
+revision and the crystal), which every C3 SuperMini shares: it says nothing
+about which node this is, whereas the flash row names a part, the unique
+id's two rows are the only copy of a serial read from the node, and the
+radio is what this label exists to add. The collected document keeps the
+revision and crystal.
 
 Everything on the radio line was read from the node (``rpi_hwid.esp32_radio``):
 the chip from the firmware's answers, and the board from the pins its
@@ -179,7 +180,7 @@ def radio_label(host: str, raw: Mapping[str, Any]) -> MicroLabel | None:
             f"board. Read it again with `{read_command(host, dev)}` (this resets the node).")
     plain = esp32_micro.esp32_label(host, dev)
     board = board_for(host, dev.mac or "", radio)
-    rows = tuple(r for r in plain.rows if r.caption != "BT")
+    rows = tuple(r for r in plain.rows if r.caption != "chip")
     return dataclasses.replace(
         plain, icons=(*plain.icons, Icon("antenna", board.band)), rows=rows,
         extra=draw_radio(host, board, radio_text(board)))
