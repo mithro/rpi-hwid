@@ -145,6 +145,12 @@ sudo apt update
 sudo apt install python3-rpi-hwid      # provides the rpi-hwid command
 ```
 
+python3-rpi-hwid depends on `python3-spiflash`, the SPI flash part database the
+label generator names flash chips from. It is not in Debian, so this repository
+carries it too, copied from [spiflash's own](https://mith.ro/spiflash/) (whose
+key is `B528 6C61 A99A 9E6A 5B8A  8E5B 6B2D 7683 DE01 081D`) and checked
+against that key first: the four lines above are all it takes.
+
 The repository's signing key is
 `9C51 CAE0 CF1C 4C08 A63C  8A6A 2599 D5E0 285B 902F`
 (`gpg --show-keys /etc/apt/keyrings/rpi-hwid.gpg` shows it).

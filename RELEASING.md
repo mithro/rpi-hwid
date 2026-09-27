@@ -13,7 +13,12 @@ publishes a new package** automatically:
   `main` only, republishes the signed apt repository on GitHub Pages
   (https://mith.ro/rpi-hwid/). The .deb's version is the wheel's plus the
   suite: `X.Y.postN~deb12` (bookworm), `~deb13` (trixie), `~deb14` (forky),
-  nothing for sid; a pull request's preview build adds `~pr<P>`.
+  nothing for sid; a pull request's preview build adds `~pr<P>`. Each suite
+  also carries `python3-spiflash`, which `python3-rpi-hwid` Depends on and
+  Debian lacks: every build fetches the newest one from
+  https://mith.ro/spiflash/<suite>/ (the `[[depends]]` in
+  `.github/apt-packaging.toml`), verified against spiflash's key, whose
+  fingerprint `deb.yml` pins, and publishes it unchanged beside ours.
 - `.github/workflows/publish-pypi.yml` — builds and uploads the wheel + sdist to
   PyPI when "Debian packages" **succeeds** on `main` (`workflow_run`; a failed
   or cancelled run publishes nothing, and the checkout is pinned to the SHA it

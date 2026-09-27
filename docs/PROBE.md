@@ -187,8 +187,11 @@ With `--jtag`, openFPGALoader reads the IDCODE and Device DNA over the Arty's
 FT2232 or the host's GPIO harness (libgpiod, pins 27:22:4:17). A GPIO chain that
 answers on a host with no Arty is taken to be a NeTV2. With `--flash`, an Arty's
 SPI flash is identified by JEDEC id, which reloads the FPGA with openFPGALoader's
-bridge bitstream. The S25FL128S and S25FL127S both answer `0x012018`, so the label
-says `S25FL128S/127S`.
+bridge bitstream. The id is reported with the RDID bytes after it and the SFDP
+revision where the chip answers them, because an id is shared: the S25FL127S,
+128P, 128S and 129P all answer `0x012018`, and only those later bytes tell them
+apart. How the label names the part from them, and why an id that names no part
+stops label generation, is in [LABELS.md](LABELS.md#the-flash-part).
 
 ```
 $ rpi-hwid fpga --jtag          # a Pi 4 with an Arty A7-35T on USB
