@@ -159,6 +159,11 @@ class Summary:
     # A RISC-V board's harts (isa, mmu, uarch, machine ids) and, on a SiFive
     # board, its PCB EEPROM as decoded; None on every other board.
     riscv: dict[str, Any] | None = None
+    # A PC, which has no device tree: its firmware's DMI strings as the probe
+    # read them (with `unread` naming any it could not), and its CPU's model
+    # name. None on every device-tree board.
+    dmi: dict[str, Any] | None = None
+    cpu: str | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> Summary:
@@ -179,6 +184,7 @@ class Summary:
             rtc_battery=d.get("rtc_battery"), fan=d.get("fan"),
             max_current_ma=d.get("max_current_ma"), ext5v_v=d.get("ext5v_v"),
             riscv=d.get("riscv"),
+            dmi=d.get("dmi"), cpu=d.get("cpu"),
         )
 
     def to_dict(self) -> dict[str, Any]:

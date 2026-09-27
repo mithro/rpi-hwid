@@ -54,7 +54,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
-from rpi_hwid import boards, riscv, tt_boards
+from rpi_hwid import boards, riscv, tt_boards, x86
 from rpi_hwid import names as naming
 from rpi_hwid import tinytapeout as tt_data
 from rpi_hwid.collect import load_collected
@@ -665,6 +665,13 @@ def draw_board(lab, b):
     # left column, as rotated lines stack to the right.
     ser_qr = 6.5 * mm                  # 21 modules at 0.31 mm
     ser_size = 10
+    if not b.serial:
+        # only a PC gets here: its firmware carries no serial at all (an
+        # unread one is refused in board_record), and the MACs still
+        # identify it
+        lab.no_code(PAD, PAD, ser_qr, "none")
+        lab.rotated(PAD, LABEL_H - PAD, "no serial in firmware", SANS, CAPTION, color=GREY)
+        return draw_board_columns(lab, b, PAD + ser_qr + 1.5 * mm)
     lab.qr(PAD, PAD, ser_qr, b.serial, error="l")
     half = (len(b.serial) + 1) // 2
     col_pitch = ser_size * 0.72 + 0.7 * mm
@@ -673,8 +680,11 @@ def draw_board(lab, b):
     ser_len = max(lab.width(b.serial[:half], MONO, ser_size),
                   lab.width(b.serial[half:], MONO, ser_size))
     lab.rotated(PAD, LABEL_H - PAD - ser_len - 1 * mm, "serial", SANS, CAPTION, color=GREY)
-    x = PAD + ser_qr + 1.5 * mm
+    return draw_board_columns(lab, b, PAD + ser_qr + 1.5 * mm)
 
+
+def draw_board_columns(lab, b, x):
+    """The two columns right of a board label's spine, from `x`."""
     # --- two columns ---
     title_h = 8.2 * mm                 # title over subtitle
     hat_rows = 3.2 * mm + 3.4 * mm
@@ -689,6 +699,16 @@ def draw_board(lab, b):
     col_w = LABEL_W - PAD - tx
     mark_fitted(lab, b.mark, x, PAD, qr, logo_h)
     y = PAD + max(0, (logo_h - title_h) / 2)
+
+    # A PC's maker is a mark beside the project's (ADI Engineering's or
+    # CircuitCo's beside the MinnowBoard fish), in a box the fish's size,
+    # with no word of text; the title and subtitle move over past it.
+    head_x = tx
+    maker_path = artwork(b.maker_mark) if b.kind == "x86" and b.maker_mark else None
+    if maker_path:
+        mark_in_box(lab, maker_path, tx, PAD, qr, logo_h)
+        head_x = tx + qr + 1.5 * mm
+    head_w = LABEL_W - PAD - head_x
 
     # What the board is wearing that is not a HAT and has no MAC: a fan on
     # the header, a cell behind the RTC. Both are Pi 5 signals and both are
@@ -707,9 +727,9 @@ def draw_board(lab, b):
     # the title gives up the room the icons take, rather than running under
     # them: lab.fit shrinks and then ellipsises, so a long name degrades
     # gracefully instead of colliding.
-    title_w = col_w - (icons_w + 1.5 * mm if icons else 0)
-    lab.fit(tx, y, b.title, SANS_BOLD, 11, title_w)
-    lab.fit(tx, y + 4.6 * mm, b.subtitle, SANS, 6.5, col_w)
+    title_w = head_w - (icons_w + 1.5 * mm if icons else 0)
+    lab.fit(head_x, y, b.title, SANS_BOLD, 11, title_w)
+    lab.fit(head_x, y + 4.6 * mm, b.subtitle, SANS, 6.5, head_w)
 
     # HAT band: the HAT line, then the uuid line centred in the rest of the
     # band (regular weight: bold mono at 6 pt fills in under toner). Every
@@ -723,7 +743,14 @@ def draw_board(lab, b):
         # RISC-V mark in the left column and the ISA beside it, then the
         # harts and the board's PCB and BOM revisions.
         return draw_riscv_band(lab, b, x, tx, y, qr, col_w, hat_rows, qr_gap)
-    if b.header:
+    if b.kind == "x86":
+        # A PC has no HAT header, so the band is empty unless its maker has
+        # no mark on file, in which case the maker is named here instead.
+        if not maker_path:
+            name_y = y + (hat_rows - 0.8 * mm - 7 * 0.72) / 2
+            lab.captioned(x, tx, name_y, "maker", b.maker or "maker not named",
+                          SANS, 7, col_w)
+    elif b.header:
         lab.captioned(x, tx, y, "HAT", "; ".join(b.header), SANS, 7, col_w)
     else:
         lab.captioned(x, tx, y, "HAT", "none", SANS, 7, col_w)
@@ -1315,7 +1342,7 @@ class BoardLabel:
     """What a board label prints, from one document: the header from
     ``rpi_hwid.boards``, the identifiers from the summary."""
 
-    kind: str                        # rpi | opi | riscv
+    kind: str                        # rpi | opi | riscv | x86
     short: str                       # "Pi 5", "Orange Pi PC"
     title: str
     subtitle: str
@@ -1336,6 +1363,10 @@ class BoardLabel:
     # board's PCB and BOM revisions), drawn where a Pi's HAT rows are.
     isa: str | None = None
     riscv_line: str | None = None
+    # x86 only: the maker, drawn in the band a Pi uses for its HAT, since a
+    # PC has no HAT header to report on.
+    maker: str | None = None
+    maker_mark: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1413,6 +1444,14 @@ def board_record(doc):
     ident = boards.identify(s)
     if ident is None:                 # not a board this package labels
         return None
+    if ident.kind == "x86":
+        field = x86.unread_serial(s)
+        if field:
+            raise IdentifierNotReadError(
+                "%s: the firmware's %s is root-only and the probe could not read it, "
+                "so the label would carry no serial. Read it with `sudo cat "
+                "/sys/class/dmi/id/%s` on that host, or give the probe passwordless "
+                "sudo, and collect again." % (doc.host, field, field))
     macs = [(m.kind, m.mac) for m in s.macs if m.kind in ("eth", "wlan")]
     rv = None
     if ident.kind == "riscv":
@@ -1445,16 +1484,22 @@ def board_record(doc):
             wlan_note = "no radio"
         elif ident.kind == "rpi" and not ident.radio_derivable:
             wlan_note = "radio disabled, not readable"
+        elif ident.kind == "x86":
+            # a PC whose radio is not known: a card in its M.2 or mini-PCIe
+            # slot would have shown up, so this is what the probe saw
+            wlan_note = "none found"
     order = {"eth": 0, "wlan": 1}
     macs.sort(key=lambda m: order[m[0]])
     return BoardLabel(
         kind=ident.kind, short=ident.short, title=ident.title, subtitle=ident.subtitle,
         mark=ident.mark, serial=s.serial, memory=ident.memory, macs=tuple(macs),
         header=tuple(s.header), hat_uuid=s.hat_uuid,
-        eth_note="no wired port" if ident.wired is False else None,
+        eth_note="no wired port" if ident.wired is False
+        else "none found" if ident.kind == "x86" else None,
         wlan_note=wlan_note,
         fan=s.fan, rtc_battery=s.rtc_battery,
         isa=rv.isa if rv else None, riscv_line=rv.line if rv else None,
+        maker=ident.maker, maker_mark=ident.maker_mark,
     )
 
 
@@ -1608,7 +1653,7 @@ def usb_records(docs):
 
 # --- assembly -----------------------------------------------------------------
 
-KINDS = ("fpga", "tt", "rpi", "opi", "riscv", "usb")
+KINDS = ("fpga", "tt", "rpi", "opi", "riscv", "x86", "usb")
 # A host can carry more than one FPGA board -- rpi5-netv2 has a NeTV2 and a
 # Cynthion -- so "fpga" is not fine enough to print one sticker. Naming a kind
 # selects that board alone; "fpga" still means all of them.
@@ -1679,7 +1724,7 @@ def all_labels(docs, only, pinned_names=None, order=None):
 
     rank = {host: i for i, host in enumerate(order or ())}
     for host in sorted(sorted(docs), key=lambda h: rank.get(h, len(rank))):
-        if only & {"rpi", "opi", "riscv"}:
+        if only & {"rpi", "opi", "riscv", "x86"}:
             # A board that cannot be named is one label lost, not the sheet:
             # every board is asked for at once, so an unreadable revision
             # code used to take the whole print run with it. What is attached
@@ -1742,7 +1787,7 @@ def main(argv=None):
     from rpi_hwid import micro
     micro_kinds = list(micro.kinds())
     ap.add_argument("--only", action="append", choices=list(ONLY_CHOICES) + micro_kinds,
-                    metavar="KIND", help="rpi|opi|riscv|fpga|tt|usb, or one FPGA board kind "
+                    metavar="KIND", help="rpi|opi|riscv|x86|fpga|tt|usb, or one FPGA board kind "
                                          "(%s)" % "|".join(FPGA_KINDS))
     ap.add_argument("--start", type=int, default=0,
                     help="leave the first N positions of the first sheet blank")

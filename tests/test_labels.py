@@ -709,6 +709,7 @@ def test_all_labels_order_and_count(docs):
     # what is attached to it: FPGA, Tiny Tapeout, then the USB adapters.
     assert rows == [
         ("hifive-unmatched-1", "riscv"), ("hifive-unmatched-2", "riscv"),
+        ("minnow-turbot-1", "x86"), ("minnow-turbot-2", "x86"),
         ("pi-sw1-p10", "rpi"),
         ("pi-sw2-p22", "opi"),
         ("pi-sw2-p33", "rpi"), ("pi-sw2-p33", "tt"),
@@ -872,6 +873,8 @@ def test_render_and_decode_every_qr(data_dir, tmp_path):
         "0cd35697db04a4ab", "88:a2:9e:45:85:77", "0x0054b48664b04854",
         # the HiFive Unmatched boards: the board EEPROM's serial, and the MAC
         "SF105SZ212200391", "70:b3:d5:92:f8:de", "SF105SZ212200532", "70:b3:d5:92:f8:83",
+        # the MinnowBoards: DMI serial, which is their MAC, and the MAC
+        "001320FE4164", "00:13:20:fe:41:64", "0008A209EFED", "00:08:a2:09:ef:ed",
     }
     # b8:27:eb:5f:bb:83 is deliberately absent: it is what the Broadcom rule
     # derives from the Model B's serial, and that board has no radio to

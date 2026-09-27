@@ -29,14 +29,14 @@ than against itself.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from rpi_hwid import probe, riscv
+from rpi_hwid import probe, riscv, x86
 from rpi_hwid.revision import decode_revision
 
 # The probe is annotation-free (it has to run on a Pi's python 3.5), so its
 # classifier is bound to a typed name once here rather than called untyped.
-_probe_board_kind: Callable[[str, list[str]], str] = probe.board_kind
+_probe_board_kind: Callable[[str, list[str], dict[str, Any] | None], str] = probe.board_kind
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -85,7 +85,7 @@ PI_NO_WIRED = frozenset(("Zero", "Zero W", "Zero 2 W", "Compute Module 1"))
 class BoardIdentity:
     """What a board label's header says, and which mark goes beside it."""
 
-    kind: str                  # rpi | opi | riscv
+    kind: str                  # rpi | opi | riscv | x86
     short: str                 # "Pi 5", "Orange Pi PC": for --list
     title: str                 # "Raspberry Pi 5", "Orange Pi PC"
     subtitle: str              # the immutable facts under the title
@@ -94,14 +94,18 @@ class BoardIdentity:
     wired: bool | None         # has a soldered-down wired port; None = not known
     radio: bool | None         # has a soldered-down radio; None = not known
     radio_derivable: bool      # the radio MAC follows from the serial (Broadcom Pis)
+    # An x86 board's maker, in the band a Pi uses for its HAT: its name and
+    # the artwork file for its mark (None where there is no mark).
+    maker: str | None = None
+    maker_mark: str | None = None
 
 
 def board_kind(s: Summary) -> str:
-    """``rpi``, ``opi`` or ``other``, from the probe's own classifier, so
-    the two sides of the wire can never disagree about what a board is.
-    ``riscv`` is the probe's too: it is the harts that make a board RISC-V,
-    and the summary carries a ``riscv`` record only where it found some."""
-    kind = _probe_board_kind(s.model, s.compatible.split())
+    """``rpi``, ``opi``, ``x86`` or ``other``, from the probe's own
+    classifier, so the two sides of the wire can never disagree about what a
+    board is. ``riscv`` is the probe's too: it is the harts that make a board
+    RISC-V, and the summary carries a ``riscv`` record only where it found some."""
+    kind = _probe_board_kind(s.model, s.compatible.split(), s.dmi)
     return "riscv" if kind == "other" and s.riscv else kind
 
 
@@ -117,6 +121,13 @@ def identify(s: Summary) -> BoardIdentity | None:
             kind="riscv", short=rv.short, title=rv.title, subtitle=rv.subtitle,
             mark=rv.mark or "", memory=rv.memory, wired=rv.wired, radio=rv.radio,
             radio_derivable=False,
+        )
+    if kind == "x86":
+        pc = x86.identify(s)
+        return BoardIdentity(
+            kind="x86", short=pc.title, title=pc.title, subtitle=pc.subtitle, mark=pc.mark,
+            memory=pc.memory, wired=pc.wired, radio=pc.radio, radio_derivable=False,
+            maker=pc.maker, maker_mark=pc.maker_mark,
         )
     if kind == "rpi":
         rev = decode_revision(s.revision)

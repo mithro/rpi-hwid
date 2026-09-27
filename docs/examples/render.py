@@ -46,6 +46,8 @@ EXAMPLES = [
     ("opi", "Orange Pi PC", "orange-pi-pc"),
     ("riscv", "SF105SZ212200391", "hifive-unmatched-1"),
     ("riscv", "SF105SZ212200532", "hifive-unmatched-2"),
+    ("x86", "MinnowBoard Turbot", "minnowboard-turbot"),
+    ("x86", "MinnowBoard MAX", "minnowboard-max"),
     ("usb", "AX88179", "usb-asix"),
     ("usb", "6c:1f:f7:51:2e:a3", "usb-wifi"),
     ("usb", "USB3GIGV1", "usb-linksys"),
