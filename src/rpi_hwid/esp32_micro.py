@@ -14,11 +14,13 @@ most Tasmota plugs. Every label has the same parts in the same places:
               PSRAM, and the Tasmota mark where Tasmota ships a binary for it
   rows        what was read from this chip, always in this order:
                 chip   its revision and its crystal
-                flash  the flash's part where the JEDEC id names one, else
-                       its vendor and JEDEC id; then its size
-                uid    the flash's unique id, 64 bits on one row or 128 on
-                       two; or, where the flash gave none, "eFuse" and the
-                       chip's own 128-bit OPTIONAL_UNIQUE_ID over two
+                flash  the flash's part where the read settles it (the
+                       JEDEC id, and for a Boya the unique id's length),
+                       else its vendor and JEDEC id; then its size
+                uid    one serial beyond the MAC, the first in SERIALS that
+                       the chip has: the flash's unique id ("uid"), 64 bits
+                       on one row or 128 on two; else the chip's own 128-bit
+                       eFuse OPTIONAL_UNIQUE_ID ("eFuse") over two
   foot and QR the base MAC, burned into eFuse: the identifier
 
 A fact that does not apply leaves its place empty rather than moving
@@ -31,8 +33,10 @@ and the rows are for what was.
 One serial beyond the MAC, not two, because two 128-bit serials do not fit
 a quarter sticker. The MAC already identifies the chip's die, so the
 flash's id, the one that names a second part, comes first; the chip's
-eFuse id stands in where the flash has none to give. Both stay in the
-collected document.
+eFuse id stands in where the flash has none to give. An ESP32-C3 has both
+(its in-package XMC's 128 bits and the eFuse id), so which one prints is a
+choice, made in one place: SERIALS. Both stay in the collected document
+whichever it is.
 
 A device whose chip was never read gets no label: the error names the host,
 the MAC and the commands that read it, which reset the chip. The USB tree
@@ -72,9 +76,30 @@ MARK = "espressif.svg"
 # ESP32-C3 SuperMinis, whose eFuse FLASH_VENDOR says XMC.
 JEDEC_VENDOR = {0x68: "Boya", 0x46: "XMC"}
 # ...and parts, with the letters the id cannot settle written as x, as
-# rpi_hwid.labels.JEDEC_PART does: flashrom's GIGADEVICE_GD25Q32 0x4016,
-# "Same as GD25Q32B" -- the devkit on rpi4-esp.
-JEDEC_PART = {0xC84016: "GD25Q32x"}
+# rpi_hwid.labels.JEDEC_PART does. Each is argued, with the reads, in
+# docs/research/esp32-flash.md:
+#   0xC84016  flashrom's GIGADEVICE_GD25Q32 0x4016, "Same as GD25Q32B" -- the
+#             devkit on rpi4-esp. Its SFDP says a C or older, never an E.
+#   0x464016  the ESP32-C3 SuperMinis' in-package flash. ESP-IDF calls a 0x46
+#             part XMC's D series ("XMC-D"), and its SFDP is the XM25QH32D
+#             datasheet's table (Rev 1.2, 2024-04-08) byte for byte but for
+#             the vendor id: the D, not the XM25QH32C (0x204016) the eFuse
+#             vendor alone would suggest.
+#   0x684016  Boya's BY25Q32BS or BY25Q32ES, whose SFDP headers are the same;
+#             PART_BY_UID_BITS tells the two apart where the uid was read.
+JEDEC_PART = {0xC84016: "GD25Q32x", 0x464016: "XM25QH32D", 0x684016: "BY25Q32xS"}
+# Parts that share an id and an SFDP but not the length of their unique id,
+# which the read measures (flash_uid_bits). BYTe's BY25Q32BS datasheet (Rev.
+# 2.4, 7.3.5) gives a 64-bit id and its BY25Q32ES (Rev. 2.2, 7.3.5) a 128-bit
+# one; the ESP32-CAM on rpi4-esp gave 128 bits (2026-09-27).
+PART_BY_UID_BITS = {0x684016: {64: "BY25Q32BS", 128: "BY25Q32ES"}}
+
+# Which serial the uid rows carry, in order of preference: the first of these
+# the chip has is printed, and only that one. "flash" is the flash's own
+# unique id (captioned "uid"), "efuse" the chip's OPTIONAL_UNIQUE_ID
+# (captioned "eFuse"). An ESP32-C3 has both, so for a C3 this order is the
+# whole decision; swap the two to print the chip's own id first.
+SERIALS = ("flash", "efuse")
 
 
 class Esp32NotReadError(labels.IdentifierNotReadError):
@@ -96,6 +121,8 @@ class Esp32Device:
     crystal_mhz: int | None = None
     flash_jedec: str | None = None
     flash_uid: str | None = None
+    flash_uid_bits: int | None = None
+    flash_sfdp: str | None = None
     efuse: Mapping[str, Any] | None = None
     bridge: str | None = None
     usb_serial: str | None = None
@@ -111,6 +138,7 @@ class Esp32Device:
             revision=d.get("revision"), package=d.get("package"),
             features=tuple(d.get("features") or ()), crystal_mhz=d.get("crystal_mhz"),
             flash_jedec=d.get("flash_jedec"), flash_uid=d.get("flash_uid"),
+            flash_uid_bits=d.get("flash_uid_bits"), flash_sfdp=d.get("flash_sfdp"),
             efuse=d.get("efuse") or {}, bridge=d.get("bridge"),
             usb_serial=d.get("usb_serial"), tty_links=tuple(d.get("tty_links") or ()),
             read_error=d.get("read_error"), read_errors=d.get("read_errors") or {},
@@ -167,19 +195,20 @@ def embedded_flash(features: tuple[str, ...]) -> tuple[str, str] | None:
 
 
 def flash_line(dev: Esp32Device, part: espressif.Part | None = None) -> str | None:
-    """The flash row: the part where its JEDEC id names one -- a part number
+    """The flash row: the part where the read settles one -- a part number
     says its maker -- else the vendor and the JEDEC id; then the size.
 
     One place for the flash, the same on every label, whether it is in the
     chip's package or beside it. The vendor of an in-package flash is the
     one the chip's eFuse names (FLASH_VENDOR), which esptool reports with
     its size; the id and the density come from the flash itself."""
-    info = labels.flash_from_jedec(dev.flash_jedec)
+    info = labels.flash_from_jedec(dev.flash_jedec, sfdp=dev.flash_sfdp)
     if not info["jedec"]:
         return None
     value = int(info["jedec"], 16)
     inside = embedded_flash(dev.features)
-    named = info["part"] or JEDEC_PART.get(value)
+    named = (PART_BY_UID_BITS.get(value, {}).get(dev.flash_uid_bits or 0)
+             or info["part"] or JEDEC_PART.get(value))
     vendor = (inside[1] if inside else "") or info["vendor"] or JEDEC_VENDOR.get(value >> 16)
     what = named or " ".join(x for x in (vendor, info["jedec"]) if x)
     size = info["size"] or (inside[0] if inside else None)
@@ -200,6 +229,17 @@ def uid_rows(caption: str, uid: str) -> list[MicroRow]:
     is what a row holds whole at the smallest size."""
     halves = [uid[i:i + 16] for i in range(0, len(uid), 16)]
     return [MicroRow(caption if i == 0 else "", h, mono=True) for i, h in enumerate(halves)]
+
+
+def serial_rows(dev: Esp32Device) -> list[MicroRow]:
+    """The uid rows: the first serial in SERIALS that this chip has."""
+    have = {"flash": ("uid", dev.flash_uid if valid_flash_uid(dev.flash_uid) else None),
+            "efuse": ("eFuse", dev.chip_uid)}
+    for which in SERIALS:
+        caption, value = have[which]
+        if value:
+            return uid_rows(caption, value)
+    return []
 
 
 def radio_icons(fam: espressif.Family) -> tuple[Icon, ...]:
@@ -263,16 +303,12 @@ def esp32_label(host: str, dev: Esp32Device) -> MicroLabel:
 
 def _label(host: str, dev: Esp32Device, part: espressif.Part) -> MicroLabel:
     fam = part.family
-    chip_uid = dev.chip_uid
     rows = [MicroRow("chip", " · ".join(x for x in (
         dev.revision, f"{dev.crystal_mhz} MHz xtal" if dev.crystal_mhz else None) if x))]
     flash = flash_line(dev, part)
     if flash:
         rows.append(MicroRow("flash", flash))
-    if valid_flash_uid(dev.flash_uid):
-        rows += uid_rows("uid", dev.flash_uid or "")
-    elif chip_uid:
-        rows += uid_rows("eFuse", chip_uid)
+    rows += serial_rows(dev)
     return MicroLabel(
         host=host, title=part.part, mark=MARK, icons=radio_icons(fam),
         specs=spec_icons(part), ident_caption="Wi-Fi MAC" if fam.wifi else "MAC",

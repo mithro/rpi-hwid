@@ -385,13 +385,17 @@ the same places:
 - **Rows,** read from this chip, always in this order:
   - `chip`: the silicon revision and the crystal. An ESP8266 reports no
     revision, so its row is the crystal alone.
-  - `flash`: the flash's part where its JEDEC id names one (`GD25Q32x`), else
-    its vendor and JEDEC id (`Boya 0x684016`); then its size. In the package
-    or beside it, the flash is on this row.
+  - `flash`: the flash's part where the read settles it (`GD25Q32x`,
+    `XM25QH32D`, or `BY25Q32ES` where a Boya's 128-bit unique id tells it
+    from the 64-bit BS), else its vendor and JEDEC id (`XMC 0x464017`); then
+    its size. In the package or beside it, the flash is on this row.
+    [research/esp32-flash.md](research/esp32-flash.md) has the reads and the
+    datasheets behind each name.
   - `uid`: the flash's own unique id, 64 bits on one row or 128 over two.
     Where the flash gives none, `eFuse` and the chip's 128-bit
     `OPTIONAL_UNIQUE_ID` over two rows stand in its place. A chip with
-    neither has no uid rows.
+    neither has no uid rows. An ESP32-C3 has both; which one is printed is
+    `esp32_micro.SERIALS`, one line.
 - **Foot and QR:** the base MAC, burned into eFuse: the Wi-Fi station MAC,
   or on an H2, which has no Wi-Fi, the MAC.
 
@@ -408,8 +412,9 @@ ESP-IDF derives as base+2, is not printed.
 
 These are real reads, from `tests/esp32_devices.json`: an ESP32-CAM and a
 devkit on rpi4-esp, and two of the three C3 radio nodes on rpi5-433mhz. The
-C3s' in-package XMC flash read back its unique id as zeroes, so their uid rows
-carry the chip's eFuse id. `docs/examples/render_esp32.py` regenerates them,
+C3s' in-package XMC flash gives a 128-bit unique id, so their uid rows carry
+it; the chip's eFuse id is in the document beside it.
+`docs/examples/render_esp32.py` regenerates them,
 and a sheet of synthetic samples, one for every part in the table:
 
 <p>

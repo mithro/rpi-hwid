@@ -14,7 +14,7 @@ from rpi_hwid import esp32_micro, espressif, labels, micro
 from rpi_hwid.micro import Icon, MicroRow
 from rpi_hwid.model import ProbeDocument
 
-# verdict.esp32 as `rpi-hwid collect --esp32-read` wrote it on 2026-09-26,
+# verdict.esp32 as `rpi-hwid collect --esp32-read` wrote it on 2026-09-27,
 # with the boot output trimmed: three ESP32-C3 SuperMinis on rpi5-433mhz's
 # USB-Serial-JTAG (esptool 4.7.0), and on rpi4-esp an ESP32-CAM behind a
 # CH340 and a first-generation devkit behind a CP2102 (esptool 5.2.0).
@@ -57,8 +57,9 @@ def test_every_real_device_gets_a_label():
 
 def test_a_c3_label():
     """The part from the chip and its eFuse; the spec strip from the table;
-    the rows from the read. Its in-package flash read its unique id back as
-    zeroes, so the chip's own 128-bit eFuse id stands in its place."""
+    the rows from the read. Its in-package XMC gave a 128-bit unique id,
+    which takes the uid rows (SERIALS); the chip's eFuse id stays in the
+    document."""
     (lab,) = esp32_micro.micro_labels(_docs(C3))
     assert lab.title == "ESP32-C3FH4"
     assert lab.mark == "espressif.svg"
@@ -69,18 +70,39 @@ def test_a_c3_label():
     assert lab.ident_caption == "Wi-Fi MAC"
     assert lab.ident == "e8:3d:c1:8c:3e:b8"
     assert lab.rows == (MicroRow("chip", "v0.4 · 40 MHz xtal"),
-                        MicroRow("flash", "XMC 0x464016 · 4 MiB"),
-                        MicroRow("eFuse", "53b9b91842e41b19", mono=True),
-                        MicroRow("", "ee00321402a8b49b", mono=True))
+                        MicroRow("flash", "XM25QH32D · 4 MiB"),
+                        MicroRow("uid", "1f2b10190882f754", mono=True),
+                        MicroRow("", "0150ffffffffffff", mono=True))
 
 
-def test_a_flash_uid_takes_the_uid_rows_before_the_chip_s():
-    """One serial beyond the MAC: the flash's, where it gives one, 128 bits
-    over two rows; the chip's eFuse id stays in the document."""
-    uid = "0123456789abcdef" + "fedcba9876543210"
-    (lab,) = esp32_micro.micro_labels(_docs(dict(C3, flash_uid=uid)))
-    assert lab.rows[2:] == (MicroRow("uid", "0123456789abcdef", mono=True),
-                            MicroRow("", "fedcba9876543210", mono=True))
+def test_without_a_flash_uid_the_chip_s_efuse_id_stands_in():
+    (lab,) = esp32_micro.micro_labels(_docs(dict(C3, flash_uid=None)))
+    assert lab.rows[2:] == (MicroRow("eFuse", "53b9b91842e41b19", mono=True),
+                            MicroRow("", "ee00321402a8b49b", mono=True))
+
+
+def test_serials_decides_which_id_a_c3_prints(monkeypatch):
+    """The one switch between the two serials a C3 has."""
+    monkeypatch.setattr(esp32_micro, "SERIALS", ("efuse", "flash"))
+    (lab,) = esp32_micro.micro_labels(_docs(C3))
+    assert lab.rows[2:] == (MicroRow("eFuse", "53b9b91842e41b19", mono=True),
+                            MicroRow("", "ee00321402a8b49b", mono=True))
+    # an original ESP32 has no eFuse id, so it prints its flash's either way
+    (dev,) = esp32_micro.micro_labels(_docs(DEVKIT, host="rpi4-esp"))
+    assert dev.rows[2:] == (MicroRow("uid", "3130343531118566", mono=True),)
+
+
+@pytest.mark.parametrize(("bits", "part"), [(128, "BY25Q32ES"), (64, "BY25Q32BS"),
+                                            (None, "BY25Q32xS")])
+def test_a_boya_is_named_by_the_length_of_its_uid(bits, part):
+    (cam,) = esp32_micro.micro_labels(_docs(dict(CAM, flash_uid_bits=bits), host="rpi4-esp"))
+    assert cam.rows[1] == MicroRow("flash", f"{part} · 4 MiB")
+
+
+def test_a_flash_no_part_is_known_for_is_its_vendor_and_id():
+    (dev,) = esp32_micro.micro_labels(_docs(dict(DEVKIT, flash_jedec="0x464017"),
+                                            host="rpi4-esp"))
+    assert dev.rows[1] == MicroRow("flash", "XMC 0x464017 · 8 MiB")
 
 
 def test_an_original_esp32_label():
@@ -90,8 +112,9 @@ def test_an_original_esp32_label():
     assert cam.specs == (Icon("xtensa"), Icon("cores", "2+1"), Icon("memory", "520K"),
                          Icon("tasmota"))
     assert cam.rows == (MicroRow("chip", "v3.1 · 40 MHz xtal"),
-                        MicroRow("flash", "Boya 0x684016 · 4 MiB"),
-                        MicroRow("uid", "343738393844fa77", mono=True))
+                        MicroRow("flash", "BY25Q32ES · 4 MiB"),
+                        MicroRow("uid", "343738393844fa77", mono=True),
+                        MicroRow("", "fffcffff968f1f11", mono=True))
     (dev,) = esp32_micro.micro_labels(_docs(DEVKIT, host="rpi4-esp"))
     assert dev.rows[1:] == (MicroRow("flash", "GD25Q32x · 4 MiB"),
                             MicroRow("uid", "3130343531118566", mono=True))
