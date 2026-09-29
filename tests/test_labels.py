@@ -1240,3 +1240,35 @@ def test_a_flash_with_no_unique_id_gets_no_flash_qr(docs, tmp_path, monkeypatch)
     labels.render({"rpi5-netv2": docs["rpi5-netv2"]}, tmp_path / "netv2.pdf",
                   only={"netv2"})
     assert coded == ["0x00742c4e63b9085c"]
+
+
+@pytest.mark.parametrize("content", [
+    "02:00:00:00:00:01", "0000000067bdbf54", "00000001", "E8:3D:C1:8C:5C:88",
+    "e8:3d:c1:8c:5c:88"])
+def test_every_qr_is_a_full_qr_code_never_a_micro_qr(content, monkeypatch):
+    """segno makes a Micro QR (one finder square, which many phone scanners
+    cannot read) wherever the content fits one: a MAC or serial of digits
+    and colons alone, or an upper-case MAC. Every code on a label is a full
+    QR code, whatever it holds (Tim, 2026-09-27)."""
+    made = []
+    real = labels.segno.make
+
+    def spy(*a, **k):
+        code = real(*a, **k)
+        made.append(code)
+        return code
+    monkeypatch.setattr(labels.segno, "make", spy)
+    lab = labels.Label.__new__(labels.Label)
+    lab.c = _NullCanvas()
+    lab.pt = lambda x, y: (x, y)
+    lab.qr(0, 0, 20, content)
+    (code,) = made
+    assert not code.is_micro
+
+
+class _NullCanvas:
+    def setFillColor(self, *a):  # noqa: N802 -- reportlab's canvas API
+        pass
+
+    def rect(self, *a, **k):
+        pass
