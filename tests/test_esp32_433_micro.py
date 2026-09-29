@@ -177,8 +177,12 @@ def test_the_radio_line_fits_under_both_ids(node):
 
     micro.render_micro([dataclasses.replace(m, extra=extra)], io.BytesIO())
     ((_x, y, _w, h),) = boxes
-    last_row_bottom = (micro.band_top() + micro.SPEC_H + micro.SPEC_GAP
-                       + 3 * micro.spec_pitch() + esp32_micro.UID_PT * 0.72)
+    # flash, uid and eFuse spread with the radio line, the eFuse id's second
+    # half close under its first
+    wrap = micro.wrap_advance(esp32_micro.UID_PT)
+    pitch = micro.spec_pitch(4, wrap)
+    last_row_bottom = (micro.rows_top() + 2 * pitch + wrap
+                       + esp32_micro.UID_PT * 0.72)
     assert y > last_row_bottom
     assert y + h == pytest.approx(micro.caption_baseline())
     assert h >= micro.MIN_SIZE * 0.72
