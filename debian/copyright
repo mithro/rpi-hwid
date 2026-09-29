@@ -44,6 +44,24 @@ License: trademark
  which Digilent made, to identify it. From the Digilent GitHub organisation
  avatar; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/great-scott-gadgets.png
+Copyright: Great Scott Gadgets
+License: trademark
+ The Great Scott Gadgets gear-wrench mark, drawn only on the label of a
+ Cynthion, which Great Scott Gadgets made, to identify it. From the
+ greatscottgadgets GitHub organisation avatar, its black ground made
+ transparent and its ink deepened for print (the shapes untouched); see
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/sqrl.svg
+Copyright: Squirrels Research Labs
+License: trademark
+ The SQRL squirrel mark and wordmark, drawn only on the label of an Acorn,
+ which Squirrels Research Labs made, to identify it. squirrelsresearch.com's
+ own header logo as the Internet Archive captured it in 2019, copied byte
+ for byte apart from its one fill (white made black for white label stock);
+ see src/rpi_hwid/artwork/README.md.
+
 Files: src/rpi_hwid/artwork/tinytapeout.svg
 Copyright: Tiny Tapeout LTD
 License: trademark
