@@ -10,17 +10,14 @@ flash's unique id on one row and the chip's eFuse id on two -- with the
 radio added:
 
   * an antenna whose mast is the band, "433" set upright, after the Wi-Fi
-    and Bluetooth glyphs;
+    and USB glyphs;
   * under the ids, a line naming the radio: the chip maker's mark and
     the board maker's where there is one to draw, then the chip and the
     board: "[TI] CC1101 · E07-M1101D", "[Semtech] [Ai-Thinker] SX1278 · Ra-02".
 
-The room for that line is the plain label's ``chip`` row (the silicon
-revision), which every C3 SuperMini shares: it says nothing about which
-node this is, whereas the flash row names a part, the three rows of ids are
-the only copies of serials read from the node, and the radio is what this
-label exists to add (Tim, 2026-09-27, accepting that these labels lose the
-chip row to print both ids). The collected document keeps the revision.
+The room for that line is the fifth row's, under the flash row and the
+three rows of ids: the plain label's silicon revision is on its spec
+strip (Tim, 2026-09-29), so it keeps its place here too.
 
 Everything on the radio line was read from the node (``rpi_hwid.esp32_radio``):
 the chip from the firmware's answers, and the board from the pins its
@@ -181,9 +178,8 @@ def radio_label(host: str, raw: Mapping[str, Any]) -> MicroLabel | None:
             f"board. Read it again with `{read_command(host, dev)}` (this resets the node).")
     plain = esp32_micro.esp32_label(host, dev)
     board = board_for(host, dev.mac or "", radio)
-    rows = tuple(r for r in plain.rows if r.caption != "chip")
     return dataclasses.replace(
-        plain, icons=(*plain.icons, Icon("antenna", board.band)), rows=rows,
+        plain, icons=(*plain.icons, Icon("antenna", board.band)),
         extra=draw_radio(host, board, radio_text(board)))
 
 

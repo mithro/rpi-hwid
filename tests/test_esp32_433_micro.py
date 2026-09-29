@@ -96,12 +96,12 @@ def test_the_radio_label_is_the_plain_label_plus_the_radio():
         plain.ident, plain.ident_caption, plain.title, plain.mark, plain.subtitle,
         plain.qr_content)
     assert m.icons == (*plain.icons, Icon("antenna", "433"))
-    # the flash, its uid and both halves of the eFuse id stay; the chip row,
-    # the revision every SuperMini shares, gives way to the radio
-    assert [r.caption for r in plain.rows] == ["chip", "flash", "uid", "eFuse", ""]
-    assert m.rows == plain.rows[1:]
+    # every row stays, and the revision stays on the strip
+    assert [r.caption for r in plain.rows] == ["flash", "uid", "eFuse", ""]
+    assert m.rows == plain.rows
+    assert m.specs == plain.specs
     assert m.extra is not None
-    # the part number still prints whole beside wifi, bluetooth and the 433
+    # the part number still prints whole beside wifi, USB and the 433
     assert micro.title_fits(m)
     assert micro.title_fits(_one(SX))
 
@@ -159,8 +159,8 @@ def test_render_and_decode_the_radio_labels(tmp_path):
 
 @pytest.mark.parametrize("node", [SX, BLUE], ids=["sx1278", "cc1101-blue"])
 def test_the_radio_line_fits_under_both_ids(node):
-    """Tim, 2026-09-27: every id is printed, and the 433 labels lose their
-    chip row for it. The flash, the uid on one row and the eFuse id on two
+    """Tim, 2026-09-27: every id is printed. The flash, the uid on one row
+    and the eFuse id on two
     leave the radio line room under them down to the foot caption's line,
     its text no smaller than the labels print."""
     import io
