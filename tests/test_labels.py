@@ -1363,3 +1363,20 @@ class _NullCanvas:
 
     def rect(self, *a, **k):
         pass
+
+
+def test_every_shipped_artwork_file_has_a_debian_copyright_stanza():
+    """The package ships every file in artwork/, each a maker's mark under
+    its own terms: each needs its own Files: stanza in debian/copyright
+    (two went without one until 2026-09-29), and no stanza may outlive its
+    file."""
+    import pathlib
+    import re
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    shipped = {p.name for p in (root / "src/rpi_hwid/artwork").iterdir()
+               if p.is_file() and p.name != "README.md"}
+    stanzas = set(re.findall(r"^Files: src/rpi_hwid/artwork/(\S+)$",
+                             (root / "debian/copyright").read_text(), re.M))
+    assert sorted(shipped - stanzas) == []
+    assert sorted(stanzas - shipped) == []
