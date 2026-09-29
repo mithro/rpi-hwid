@@ -132,13 +132,16 @@ def caption_baseline() -> float:
     return foot_top() + CAPTION * 0.72
 
 
-def spec_pitch() -> float:
-    """The row pitch under a spec strip: SPEC_ROWS rows of at most
-    SPEC_ROW-point type between the strip and the caption's baseline.
-    Tighter than ROW_PITCH, which is what buys the strip its height and
-    the fifth row its place."""
+def spec_pitch(lines: int = SPEC_ROWS) -> float:
+    """The row pitch under a spec strip: `lines` rows of at most
+    SPEC_ROW-point type spread evenly from the strip down to the caption's
+    baseline, but never further apart than ROW_PITCH (Tim, 2026-09-29:
+    use the height there is). Five, the most there may be, are set
+    tighter than ROW_PITCH; four fill the same height a little looser."""
     first = band_top() + SPEC_H + SPEC_GAP
-    return (caption_baseline() - first - SPEC_ROW * 0.72) / (SPEC_ROWS - 1)
+    if lines < 2:
+        return ROW_PITCH
+    return min(ROW_PITCH, (caption_baseline() - first - SPEC_ROW * 0.72) / (lines - 1))
 
 
 def max_rows(specs: bool) -> int:
@@ -193,9 +196,9 @@ WIFI_GAP = 0.25 * mm           # arcs or band to the standards beside them
 WIFI_BT = "+bt"
 WIFI_ZB = "+zb"
 WIFI_MARKS = (WIFI_BT, WIFI_ZB)
-WIFI_RUNE_H = 0.42             # the Bluetooth rune's height, of the arcs' box
-WIFI_ZB_D = 0.36               # the Zigbee mark's diameter, of the arcs' box
-WIFI_CORNER = 0.47             # either mark's centre from the dot, of the outer arc's radius
+WIFI_RUNE_H = 0.62             # the Bluetooth rune's height, of the arcs' box
+WIFI_ZB_D = 0.42               # the Zigbee mark's diameter, of the arcs' box
+WIFI_MARK_OUT = 0.16 * mm      # how far either mark reaches past the arcs' ends
 ZIGBEE_MARK = "zigbee.svg"
 
 
@@ -271,6 +274,9 @@ def wifi_width(size: float, text: str) -> float:
         return size
     bands, first, second = wifi_lines(text)
     arcs = wifi_arcs_width(size)
+    if wifi_marks(text)[1]:
+        # the marks reach a little past the arcs' ends, clear of them
+        arcs += 2 * WIFI_MARK_OUT
     return max(arcs + (WIFI_GAP + _bold(first) if first else 0.0),
                max(_bold(bands), arcs if not first else 0.0)
                + (WIFI_GAP + _bold(second) if second else 0.0))
@@ -296,11 +302,13 @@ def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     w = wifi_width(size, text)
     box_h, lw, dot, r = _wifi_geometry(size)
     arcs_w, band_w = wifi_arcs_width(size), _bold(bands)
-    # the band is centred under the arcs; one wider than them (2.4/5) runs
-    # on to the right from under their left end
-    bx = x + (arcs_w - band_w) / 2 if band_w <= arcs_w else x
+    # the band is centred under the arcs (Tim, 2026-09-29), however wide;
+    # beside a line of standards the arcs stand at the left
+    ax = x if first else x + (w - arcs_w) / 2 if not second else x
+    bx = x + (w - band_w) / 2 if not (first or second) else ax + (arcs_w - band_w) / 2 \
+        if band_w <= arcs_w else x
     c = cell.c
-    cx, cy = cell.pt(x + arcs_w / 2, y + box_h - dot)
+    cx, cy = cell.pt(ax + arcs_w / 2, y + box_h - dot)
     c.setStrokeColor(black)
     c.setFillColor(black)
     c.circle(cx, cy, dot, stroke=0, fill=1)
@@ -311,14 +319,19 @@ def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
         c.arc(cx - rad, cy - rad, cx + rad, cy + rad, 90 - WIFI_FAN, 2 * WIFI_FAN)
     c.setLineWidth(1)
     c.setLineCap(0)
-    mid, foot, off = x + arcs_w / 2, y + box_h, r * WIFI_CORNER
+    # each mark stands on the arcs' foot, its outer side just past the
+    # arcs' end above it, clear of the arcs' round caps
+    foot, left, right = y + box_h, ax - WIFI_MARK_OUT, ax + arcs_w + WIFI_MARK_OUT
     if WIFI_BT in marks:
         rune_h = box_h * WIFI_RUNE_H
-        draw_bluetooth(cell, mid + off - rune_h * BLUETOOTH_W / 2, foot - rune_h, rune_h)
+        # drawn heavier than the full-size rune, as heavy as the arcs' line
+        # is, so that at this size it still reads as the rune
+        draw_bluetooth(cell, right - rune_h * BLUETOOTH_W, foot - rune_h, rune_h,
+                       weight=lw * 0.7 / rune_h)
     zb = labels.artwork(ZIGBEE_MARK) if WIFI_ZB in marks else None
     if zb:
         d = box_h * WIFI_ZB_D
-        cell.svg(zb, mid - off - d / 2, foot - d, d)
+        cell.svg(zb, left, foot - d, d)
     bottom = y + _wifi_baseline(size) - WIFI_TYPE * 0.72
     cell.text(bx, bottom, bands, labels.SANS_BOLD, WIFI_TYPE)
     if first:
@@ -332,10 +345,7 @@ def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
 # What a lettered USB glyph may say the port does, in the order it says it:
 # O a USB OTG controller, J a USB JTAG debug port, S a USB serial port.
 USB_LETTERS = "OJS"
-USB_LETTER_GAP = 0.08 * mm     # a side letter to the arrowhead beside it
-USB_ROW_GAP = 0.1 * mm         # between the two lines of letters
-USB_LETTER_DROP = 0.2 * mm     # a line of letters to the prong under it
-USB_HEAD = 0.4 * mm            # the arrowhead's width and height
+USB_LETTER_DROP = 0.15 * mm    # the letters' baseline to the trident's tip
 
 
 def usb_letters(text: str) -> str:
@@ -345,35 +355,30 @@ def usb_letters(text: str) -> str:
     return "".join(ch for ch in USB_LETTERS if ch in text)
 
 
-def usb_prong_pitch() -> float:
-    """How far the side prongs stand from the stem: far enough that their
-    letters, on the line under J's, clear the arrowhead between them."""
-    o, _, s = (_bold(ch) for ch in USB_LETTERS)
-    return max(o, s) / 2 + USB_LETTER_GAP + USB_HEAD / 2
-
-
 def usb_width(size: float, text: str) -> float:
     if not text:
         return 0.7 * _artwork_width("usb.svg", size)
-    o, _, s = (_bold(ch) for ch in USB_LETTERS)
-    return 2 * usb_prong_pitch() + (o + s) / 2
+    return max(_bold(USB_LETTERS), _usb_upright(size)[1])
+
+
+def _usb_upright(size: float) -> tuple[float, float]:
+    """The upright trident's height and width under a line of letters."""
+    h = size - WIFI_TYPE * 0.72 - USB_LETTER_DROP
+    path = labels.artwork("usb.svg")
+    return h, (h * labels.mark_aspect(path) if path else 0.0)
 
 
 def glyph_usb(cell: Cell, x: float, y: float, size: float, text: str) -> float:
-    """The USB trident. With text -- ``Icon("usb", "OJS")`` -- it stands
-    upright, turned 90 degrees, its prongs up, and over each prong a letter
-    for what the port does (Tim, 2026-09-29): J for JTAG over the arrow,
-    O for OTG over the round prong, S for serial over the square one; a
-    prong the port has no function for carries no letter. The letters
-    stand as the prongs do: J, over the arrow, on the top line; O and S,
-    over the shorter side prongs, on the line under it either side of the
-    arrow. Side by side on one line three 4 pt letters would make the
-    glyph wider than the Wi-Fi glyph beside it, which it may not be.
-
-    The trident is drawn here in the logo's shapes -- the base disc, the
-    stem, the arrowhead, the round and the square prong on their branches
-    -- spread wider than usb.svg, whose prongs turned upright at this
-    height would stand 0.4 mm apart."""
+    """The USB trident. With text -- ``Icon("usb", "OJS")`` -- usb.svg as
+    it is, turned 90 degrees so its prongs point up, and on one line over
+    them a letter for each prong, for what the port does (Tim,
+    2026-09-29): O for OTG over the round prong, J for JTAG over the
+    arrow, S for serial over the square one; a prong the port has no
+    function for leaves its letter's place empty. Bold at the smallest
+    size the labels print, the three set as a word, which is as wide as a
+    "2.4n" Wi-Fi glyph: at the header's height the upright logo's prongs
+    stand 0.4 mm apart, so the letters stand over them in order, wider
+    spread than the prongs are."""
     path = labels.artwork("usb.svg")
     if not path:
         return 0.0
@@ -382,52 +387,28 @@ def glyph_usb(cell: Cell, x: float, y: float, size: float, text: str) -> float:
         return float(cell.svg(path, x, y + size * 0.15, size * 0.7))
     letters = usb_letters(text)
     w = usb_width(size, text)
-    pitch = usb_prong_pitch()
-    cap = WIFI_TYPE * 0.72
-    cx = x + _bold("O") / 2 + pitch
-    lx, rx = cx - pitch, cx + pitch
-    top_line = y + cap                                   # J's baseline
-    side_line = top_line + USB_ROW_GAP + cap             # O's and S's
-    at_x = {"O": lx, "J": cx, "S": rx}
-    for ch in letters:
-        base = top_line if ch == "J" else side_line
-        cell.text(at_x[ch], base - cap, ch, labels.SANS_BOLD, WIFI_TYPE, align="centre")
+    lx = x + (w - _bold(USB_LETTERS)) / 2
+    for ch in USB_LETTERS:
+        if ch in letters:
+            cell.text(lx, y, ch, labels.SANS_BOLD, WIFI_TYPE)
+        lx += _bold(ch)
+    h, tw = _usb_upright(size)
+    from reportlab.graphics import renderPDF
+    from svglib.svglib import svg2rlg
+
+    d = svg2rlg(path)
+    if d is None:
+        return w
+    k = h / d.width                         # the logo's length runs up the glyph
     c = cell.c
-    foot = y + size
-    tip, side_top = top_line + USB_LETTER_DROP, side_line + USB_LETTER_DROP
-    h = foot - tip
-    lw = h * 0.075
-
-    def pt(px: float, py: float) -> tuple[float, float]:
-        return cell.pt(px, py)
-
-    c.setStrokeColor(black)
-    c.setFillColor(black)
-    c.setLineWidth(lw)
-    c.setLineJoin(1)
-    disc = h * 0.11
-    c.line(*pt(cx, tip + USB_HEAD * 0.9), *pt(cx, foot - disc))
-    c.circle(*pt(cx, foot - disc), disc, stroke=0, fill=1)
-    arrow = c.beginPath()
-    arrow.moveTo(*pt(cx, tip))
-    arrow.lineTo(*pt(cx - USB_HEAD / 2, tip + USB_HEAD))
-    arrow.lineTo(*pt(cx + USB_HEAD / 2, tip + USB_HEAD))
-    arrow.close()
-    c.drawPath(arrow, stroke=0, fill=1)
-    # the branches: up and out from the stem, then straight up to their ends
-    ball, sq = h * 0.085, h * 0.15
-    run = foot - disc * 2 - side_top
-    for px, end, join in ((lx, side_top + ball * 2, 0.62), (rx, side_top + sq, 0.5)):
-        branch = c.beginPath()
-        branch.moveTo(*pt(cx, side_top + run * (join + 0.25)))
-        branch.lineTo(*pt(px, side_top + run * join))
-        branch.lineTo(*pt(px, end))
-        c.drawPath(branch, stroke=1, fill=0)
-    c.circle(*pt(lx, side_top + ball), ball, stroke=0, fill=1)
-    sx, sy = pt(rx - sq / 2, side_top + sq)
-    c.rect(sx, sy, sq, sq, stroke=0, fill=1)
-    c.setLineWidth(1)
-    c.setLineJoin(0)
+    c.saveState()
+    # the logo's left end (its base) at the glyph's foot, its tip at the top
+    fx, fy = cell.pt(x + (w - tw) / 2, y + size)
+    c.translate(fx + tw, fy)
+    c.rotate(90)
+    c.scale(k, k)
+    renderPDF.draw(d, c, 0, 0)
+    c.restoreState()
     return w
 
 
@@ -728,8 +709,10 @@ def glyph_bluetooth(cell: Cell, x: float, y: float, size: float, text: str) -> f
     return draw_bluetooth(cell, x, y, size)
 
 
-def draw_bluetooth(cell: Cell, x: float, y: float, size: float) -> float:
-    """The rune `size` high with its top-left at (x, y); returns its width."""
+def draw_bluetooth(cell: Cell, x: float, y: float, size: float,
+                   weight: float = 0.09) -> float:
+    """The rune `size` high with its top-left at (x, y), its line `weight`
+    of its height; returns its width."""
     c = cell.c
     w = size * BLUETOOTH_W
 
@@ -737,7 +720,7 @@ def draw_bluetooth(cell: Cell, x: float, y: float, size: float) -> float:
         return cell.pt(x + w * u, y + size * v)
 
     c.setStrokeColor(black)
-    c.setLineWidth(size * 0.09)
+    c.setLineWidth(size * weight)
     c.setLineCap(1)
     c.setLineJoin(1)
     path = c.beginPath()
@@ -953,7 +936,9 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
         for icon in m.specs:
             ICONS[icon.name](cell, sx, top, SPEC_H, icon.text)
             sx += _icon_width(cell, icon, SPEC_H) + SPEC_ICON_GAP
-        pitch, y = spec_pitch(), top + SPEC_H + SPEC_GAP
+        # an extra section under the rows takes a row's place
+        lines = len(m.rows) + (1 if m.subtitle else 0) + (1 if m.extra else 0)
+        pitch, y = spec_pitch(lines), top + SPEC_H + SPEC_GAP
     if m.subtitle:
         cell.fit(rx, y, m.subtitle, labels.SANS, SUBTITLE, rw, min_size=MIN_SIZE)
     if m.subtitle or not m.specs:

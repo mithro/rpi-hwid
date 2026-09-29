@@ -607,6 +607,36 @@ def test_under_a_strip_a_label_holds_one_row_more_set_tighter():
     assert micro.SPEC_ROW < micro.ROW
 
 
+def test_fewer_rows_under_a_strip_spread_over_its_height():
+    """Tim, 2026-09-29: use the height there is. Four rows end where five
+    do, on the caption's line; two or three stop at ROW_PITCH apart."""
+    five, four = micro.spec_pitch(5), micro.spec_pitch(4)
+    assert four > five
+    assert four * 3 == pytest.approx(five * 4)
+    assert four <= micro.ROW_PITCH
+    assert micro.spec_pitch(2) == micro.spec_pitch(3) == micro.ROW_PITCH
+
+
+def test_the_wifi_band_is_centred_under_the_arcs(monkeypatch):
+    """Tim, 2026-09-29: "Center the frequency text under the wifi logo",
+    however wide the band text is."""
+    from reportlab.pdfgen import canvas
+
+    labels.register_fonts()
+    for text in ("2.4 n +bt", "2.4/5 ax +bt +zb", "2.4 ax"):
+        cell = micro.Cell(canvas.Canvas(_null_pdf()), 0, 0)
+        drawn, arcs = [], []
+        monkeypatch.setattr(micro.Cell, "text", lambda self, x, y, s, font, size, **k:
+                            drawn.append((x, s, font, size)))
+        real_arc = cell.c.arc
+        cell.c.arc = lambda x1, y1, x2, y2, *a: (arcs.append((x1 + x2) / 2),
+                                                 real_arc(x1, y1, x2, y2, *a))
+        micro.glyph_wifi(cell, 0, 0, micro.HEAD_H, text)
+        (x, band, font, size), = drawn
+        centre = x + labels.Label.width(cell, band, font, size) / 2
+        assert all(a == pytest.approx(centre) for a in arcs), text
+
+
 def test_an_unsized_row_under_a_strip_is_set_at_most_spec_row(monkeypatch):
     seen = _row_sizes(monkeypatch, _label(specs=_strip(), rows=(MicroRow("chip", "v0.4"),)))
     assert seen["v0.4"][0] == micro.SPEC_ROW
