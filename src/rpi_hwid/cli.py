@@ -6,6 +6,7 @@
                                                           on a Pi: which FPGA board?
     rpi-hwid tinytapeout [--json] [--no-repl] [--no-stop-service]
                                                           on a Pi: which Tiny Tapeout board?
+    rpi-hwid esp32 [--json] [--read PORT…]               on a Pi: which ESP32s are on USB?
     rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--no-stop-service] HOST…
                                                           over ssh: one JSON per host
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
@@ -103,14 +104,32 @@ def cmd_tinytapeout(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_collect(args: argparse.Namespace) -> int:
-    from rpi_hwid.collect import collect
+def cmd_esp32(args: argparse.Namespace) -> int:
+    from rpi_hwid import esp32
 
+    e = esp32.collect_esp32(args.read or ())
+    if args.json:
+        print(json.dumps(e, indent=1))
+    else:
+        esp32.describe(e)
+    return 0
+
+
+def cmd_collect(args: argparse.Namespace) -> int:
+    from rpi_hwid.collect import collect, esp32_reads
+
+    try:
+        # checked before anything is probed, so a mistyped host costs nothing
+        esp32_reads(args.hosts, args.esp32_read or ())
+    except ValueError as exc:
+        print(f"rpi-hwid collect: {exc}", file=sys.stderr)
+        return 2
     results = collect(
         args.hosts, args.out, users=tuple(args.users.split(",")), jump=args.jump,
         fpga=args.fpga, jtag_hosts=tuple(args.jtag or ()), flash_hosts=tuple(args.flash or ()),
         workers=args.workers, tinytapeout=args.tinytapeout,
         take_port=not args.no_stop_service,
+        esp32=args.esp32, esp32_read=tuple(args.esp32_read or ()),
     )
     failed = 0
     for r in results:
@@ -118,9 +137,12 @@ def cmd_collect(args: argparse.Namespace) -> int:
             s = r.doc.summary
             boards = ", ".join(b.identity or b.kind for b in s.fpga)
             tts = ", ".join(b.shuttle or b.chip or "?" for b in s.tinytapeout)
+            esps = ", ".join(d.get("mac") or "?" for d in
+                             r.doc.evidence.get("verdict", {}).get("esp32") or ())
             print(f"  {r.host}: {s.model}; header {list(s.header) or 'bare'}; "
                   f"power {s.power_class}" + (f"; fpga {boards}" if boards else "")
-                  + (f"; tinytapeout {tts}" if tts else ""))
+                  + (f"; tinytapeout {tts}" if tts else "")
+                  + (f"; esp32 {esps}" if esps else ""))
         else:
             failed += 1
             print(f"  {r.host}: FAILED ({r.error})")
@@ -206,8 +228,20 @@ def main(argv: list[str] | None = None) -> int:
                    help="append the Tiny Tapeout module on every host")
     p.add_argument("--no-stop-service", action="store_true",
                    help=NO_STOP_SERVICE_HELP)
+    p.add_argument("--esp32", action="store_true",
+                   help="append the ESP32 module on every host (the USB tree only)")
+    p.add_argument("--esp32-read", action="append", metavar="HOST=PORT",
+                   help="reset the ESP32 on PORT of HOST into its bootloader and read "
+                        "its chip, flash and eFuse (disruptive; implies --esp32 there)")
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_collect)
+
+    p = sub.add_parser("esp32", help="which ESP32s are on USB (run on the Pi)")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--read", action="append", metavar="PORT",
+                   help="reset the ESP32 on PORT into its bootloader and read its chip, "
+                        "flash and eFuse with the host's esptool (disruptive)")
+    p.set_defaults(func=cmd_esp32)
 
     sub.add_parser("labels", help="print-ready labels from collected data (rpi-hwid labels -h)",
                    add_help=False)

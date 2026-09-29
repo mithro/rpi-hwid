@@ -24,7 +24,13 @@ The layout is device-neutral. What a caller fills in is a ``MicroLabel``:
                            and a caller may add its own
     ident_caption, ident   the primary identifier: the foot and the QR
     qr                     what the QR encodes, if not the identifier
-    rows                   up to MAX_ROWS captioned facts beside the QR
+    specs                  a strip of glyphs heading the band beside the QR,
+                           for what the device *is* (``Icon("riscv")``,
+                           ``Icon("cores", "2+1")``, ``Icon("memory",
+                           "400K")``), in place of a line of text
+    rows                   up to MAX_ROWS captioned facts beside the QR, or
+                           SPEC_ROWS under a spec strip; the last may run
+                           down beside the foot's caption
     extra                  a callable drawing a section of the caller's own
                            in the room left under the rows
 
@@ -80,7 +86,18 @@ BAND_GAP = 0.6 * mm            # header to the QR band
 FOOT_GAP = 0.5 * mm            # QR band to the foot
 CAP_GAP = 0.35 * mm            # foot caption to the identifier
 ROW_PITCH = 2.1 * mm
-MAX_ROWS = 3                   # beside the subtitle's line, which is always kept
+MAX_ROWS = 4                   # beside the subtitle's line, which is always kept
+SPEC_H = 2.4 * mm              # the spec strip's glyphs, in the subtitle's place
+SPEC_GAP = 0.3 * mm            # the strip to the first line under it
+# Under a spec strip the rows are one step tighter than ROW and ROW_PITCH:
+# five of them, none larger than SPEC_ROW, at spec_pitch -- room for a
+# flash row and four rows of serials under it: a 128-bit flash uid and a
+# chip's eFuse id, two rows each (Tim, 2026-09-27: every id is printed).
+SPEC_ROWS = 5
+SPEC_ROW = 4.4
+EXTRA_GAP = 0.6 * mm           # the last row to an extra section under it
+SPEC_EXTRA_GAP = 0.3 * mm      # ...closed up with the rows under a spec strip
+SPEC_ICON_GAP = 0.3 * mm       # between the strip's glyphs
 
 GUIDE = HexColor("#999999")    # the cut guides, lighter than any caption
 
@@ -97,6 +114,39 @@ def band_top() -> float:
 def qr_size() -> float:
     """The QR fills the band between the header and the foot."""
     return foot_top() - FOOT_GAP - band_top()
+
+
+def rows_x() -> float:
+    """Where the subtitle, the rows and the spec strip start: right of the QR."""
+    return MICRO_PAD + qr_size() + 1.2 * mm
+
+
+def rows_w() -> float:
+    return MICRO_W - MICRO_PAD - rows_x()
+
+
+def caption_baseline() -> float:
+    """The foot caption's baseline. Right of the QR nothing else is on the
+    caption's line, so the rows may run down to it: the last row's letters
+    stand on the same line as the caption's."""
+    return foot_top() + CAPTION * 0.72
+
+
+def spec_pitch(lines: int = SPEC_ROWS) -> float:
+    """The row pitch under a spec strip: `lines` rows of at most
+    SPEC_ROW-point type spread evenly from the strip down to the caption's
+    baseline, but never further apart than ROW_PITCH (Tim, 2026-09-29:
+    use the height there is). Five, the most there may be, are set
+    tighter than ROW_PITCH; four fill the same height a little looser."""
+    first = band_top() + SPEC_H + SPEC_GAP
+    if lines < 2:
+        return ROW_PITCH
+    return min(ROW_PITCH, (caption_baseline() - first - SPEC_ROW * 0.72) / (lines - 1))
+
+
+def max_rows(specs: bool) -> int:
+    """How many rows a label holds: more under a spec strip, set tighter."""
+    return SPEC_ROWS if specs else MAX_ROWS
 
 
 # --- the drawing context ------------------------------------------------------
@@ -131,16 +181,235 @@ class Cell(labels.Label):
 IconFn = Callable[[Cell, float, float, float, str], float]
 
 
+# The 802.11 amendments the Wi-Fi glyph letters: the classic single letters
+# on the line beside the arcs, the later two-letter ones on the line under it.
+WIFI_STANDARDS = ("a", "b", "g", "n", "ac", "ax", "be")
+WIFI_TYPE = MIN_SIZE           # the glyph's lettering: the smallest the labels print
+WIFI_FAN = 40.0                # degrees either side of upright the arcs sweep
+WIFI_GAP = 0.25 * mm           # arcs or band to the standards beside them
+
+
+# The glyph text's last words: the other radios that ride on the Wi-Fi
+# glyph, each small in a corner the arcs leave empty beside their dot
+# (Tim, 2026-09-29) -- Bluetooth's rune on the right, the Zigbee mark on
+# the left.
+WIFI_BT = "+bt"
+WIFI_ZB = "+zb"
+WIFI_MARKS = (WIFI_BT, WIFI_ZB)
+WIFI_RUNE_H = 0.62             # the Bluetooth rune's height, of the arcs' box
+WIFI_ZB_D = 0.42               # the Zigbee mark's diameter, of the arcs' box
+WIFI_MARK_OUT = 0.16 * mm      # how far either mark reaches past the arcs' ends
+ZIGBEE_MARK = "zigbee.svg"
+
+
+def wifi_marks(text: str) -> tuple[str, frozenset[str]]:
+    """'2.4 n +bt +zb' -> ('2.4 n', {'+bt', '+zb'}): the radios riding on
+    the Wi-Fi glyph, set aside from its bands and standards."""
+    words = text.split(" ")
+    marks = set()
+    while len(words) > 1 and words[-1] in WIFI_MARKS and words[-1] not in marks:
+        marks.add(words.pop())
+    return " ".join(words), frozenset(marks)
+
+
+def wifi_bluetooth(text: str) -> tuple[str, bool]:
+    """'2.4 n +bt' -> ('2.4 n', True): whether Bluetooth rides on it."""
+    rest, marks = wifi_marks(text)
+    return rest, WIFI_BT in marks
+
+
+def wifi_lines(text: str) -> tuple[str, str, str]:
+    """'2.4/5 a/b/g/n/ac/ax' -> ('2.4/5', 'a/b/g/n', 'ac/ax'): the bands in
+    GHz, then the standards, which split into the classic single-letter
+    amendments and the later two-letter ones. Refused unless it is that.
+    A trailing '+bt' or '+zb' (wifi_marks) is set aside first."""
+    text, marks = wifi_marks(text)
+    bands, _, standards = text.partition(" ")
+    got = standards.split("/")
+    if (not all(b.replace(".", "", 1).isdigit() for b in bands.split("/"))
+            or not standards or any(g not in WIFI_STANDARDS for g in got)):
+        raise ValueError(
+            "a Wi-Fi glyph's text is its bands and its 802.11 standards, "
+            f"'2.4/5 a/b/g/n/ac/ax', not {text!r}")
+    if marks and len(got) != 1:
+        # the marks stand where the lines of standards would
+        raise ValueError(f"a Wi-Fi glyph carries Bluetooth or Zigbee only beside one "
+                         f"standard, '2.4 n +bt', not {text!r} with {sorted(marks)}")
+    if len(got) == 1:
+        # one standard alone (the newest, as the ESP32 labels print it) is
+        # joined to the band under the arcs: "2.4n", "2.4/5ax" (Tim,
+        # 2026-09-27)
+        return bands + got[0], "", ""
+    return (bands, "/".join(g for g in got if len(g) == 1),
+            "/".join(g for g in got if len(g) > 1))
+
+
+def _wifi_baseline(size: float) -> float:
+    """The bottom line's baseline, below the glyph's top: its descenders
+    (the g of b/g/n) just reach the glyph's foot."""
+    return size - WIFI_TYPE * 0.21
+
+
+def _wifi_geometry(size: float) -> tuple[float, float, float, float]:
+    """The lettered glyph's arcs: their box's height, the line width, the
+    dot's radius and the outer arc's, at a glyph `size` high. The bottom
+    line of lettering stands on the glyph's foot; the arcs fill the rest."""
+    box_h = _wifi_baseline(size) - WIFI_TYPE * 0.72 - 0.25 * mm
+    lw, dot = box_h * 0.11, box_h * 0.08
+    return box_h, lw, dot, box_h - dot - lw / 2
+
+
+def wifi_arcs_width(size: float) -> float:
+    """How wide the lettered glyph's arcs are, round caps and all."""
+    _, lw, _, r = _wifi_geometry(size)
+    return 2 * (r * math.sin(math.radians(WIFI_FAN)) + lw / 2)
+
+
+def _bold(s: str) -> float:
+    return pdfmetrics.stringWidth(s, labels.SANS_BOLD, WIFI_TYPE) if s else 0.0
+
+
+def wifi_width(size: float, text: str) -> float:
+    if not text:
+        return size
+    bands, first, second = wifi_lines(text)
+    arcs = wifi_arcs_width(size)
+    if wifi_marks(text)[1]:
+        # the marks reach a little past the arcs' ends, clear of them
+        arcs += 2 * WIFI_MARK_OUT
+    return max(arcs + (WIFI_GAP + _bold(first) if first else 0.0),
+               max(_bold(bands), arcs if not first else 0.0)
+               + (WIFI_GAP + _bold(second) if second else 0.0))
+
+
 def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
-    return float(labels.mark_wifi(cell, x, y, size))
+    """The Wi-Fi arcs. With text -- ``Icon("wifi", "2.4/5 a/b/g/n/ac/ax")``
+    -- the bands and the 802.11 standards the radio has (Tim, 2026-09-27):
+    the band in GHz under the arcs, as the source they spread from; the
+    classic single-letter standards beside the arcs, and the two-letter
+    ones (ac, ax), where there are any, beside the band. The standards are
+    set flush right, so each line takes only the room it needs; all of it
+    bold, at the smallest size the labels print.
+
+    The other radios ride on it, small, in the two corners the arcs leave
+    empty either side of their dot (Tim, 2026-09-29), so they cost no
+    width: with '+bt' (``Icon("wifi", "2.4 n +bt +zb")``) the Bluetooth
+    rune on the right, with '+zb' the Zigbee mark on the left."""
+    if not text:
+        return float(labels.mark_wifi(cell, x, y, size))
+    marks = wifi_marks(text)[1]
+    bands, first, second = wifi_lines(text)
+    w = wifi_width(size, text)
+    box_h, lw, dot, r = _wifi_geometry(size)
+    arcs_w, band_w = wifi_arcs_width(size), _bold(bands)
+    # the band is centred under the arcs (Tim, 2026-09-29), however wide;
+    # beside a line of standards the arcs stand at the left
+    ax = x if first else x + (w - arcs_w) / 2 if not second else x
+    bx = x + (w - band_w) / 2 if not (first or second) else ax + (arcs_w - band_w) / 2 \
+        if band_w <= arcs_w else x
+    c = cell.c
+    cx, cy = cell.pt(ax + arcs_w / 2, y + box_h - dot)
+    c.setStrokeColor(black)
+    c.setFillColor(black)
+    c.circle(cx, cy, dot, stroke=0, fill=1)
+    c.setLineWidth(lw)
+    c.setLineCap(1)
+    for k in (0.36, 0.68, 1.0):
+        rad = r * k
+        c.arc(cx - rad, cy - rad, cx + rad, cy + rad, 90 - WIFI_FAN, 2 * WIFI_FAN)
+    c.setLineWidth(1)
+    c.setLineCap(0)
+    # each mark stands on the arcs' foot, its outer side just past the
+    # arcs' end above it, clear of the arcs' round caps
+    foot, left, right = y + box_h, ax - WIFI_MARK_OUT, ax + arcs_w + WIFI_MARK_OUT
+    if WIFI_BT in marks:
+        rune_h = box_h * WIFI_RUNE_H
+        # drawn heavier than the full-size rune, as heavy as the arcs' line
+        # is, so that at this size it still reads as the rune
+        draw_bluetooth(cell, right - rune_h * BLUETOOTH_W, foot - rune_h, rune_h,
+                       weight=lw * 0.7 / rune_h)
+    zb = labels.artwork(ZIGBEE_MARK) if WIFI_ZB in marks else None
+    if zb:
+        d = box_h * WIFI_ZB_D
+        cell.svg(zb, left, foot - d, d)
+    bottom = y + _wifi_baseline(size) - WIFI_TYPE * 0.72
+    cell.text(bx, bottom, bands, labels.SANS_BOLD, WIFI_TYPE)
+    if first:
+        cell.text(x + w, bottom - WIFI_TYPE * 1.12, first, labels.SANS_BOLD, WIFI_TYPE,
+                  align="right")
+    if second:
+        cell.text(x + w, bottom, second, labels.SANS_BOLD, WIFI_TYPE, align="right")
+    return w
+
+
+# What a lettered USB glyph may say the port does, in the order it says it:
+# O a USB OTG controller, J a USB JTAG debug port, S a USB serial port.
+USB_LETTERS = "OJS"
+USB_LETTER_DROP = 0.15 * mm    # the letters' baseline to the trident's tip
+
+
+def usb_letters(text: str) -> str:
+    if not text or any(ch not in USB_LETTERS for ch in text) or len(set(text)) != len(text):
+        raise ValueError(f"a USB glyph's text is some of {USB_LETTERS!r} (OTG, JTAG, "
+                         f"serial) once each, not {text!r}")
+    return "".join(ch for ch in USB_LETTERS if ch in text)
+
+
+def usb_width(size: float, text: str) -> float:
+    if not text:
+        return 0.7 * _artwork_width("usb.svg", size)
+    return max(_bold(USB_LETTERS), _usb_upright(size)[1])
+
+
+def _usb_upright(size: float) -> tuple[float, float]:
+    """The upright trident's height and width under a line of letters."""
+    h = size - WIFI_TYPE * 0.72 - USB_LETTER_DROP
+    path = labels.artwork("usb.svg")
+    return h, (h * labels.mark_aspect(path) if path else 0.0)
 
 
 def glyph_usb(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """The USB trident. With text -- ``Icon("usb", "OJS")`` -- usb.svg as
+    it is, turned 90 degrees so its prongs point up, and on one line over
+    them a letter for each prong, for what the port does (Tim,
+    2026-09-29): O for OTG over the round prong, J for JTAG over the
+    arrow, S for serial over the square one; a prong the port has no
+    function for leaves its letter's place empty. Bold at the smallest
+    size the labels print, the three set as a word, which is as wide as a
+    "2.4n" Wi-Fi glyph: at the header's height the upright logo's prongs
+    stand 0.4 mm apart, so the letters stand over them in order, wider
+    spread than the prongs are."""
     path = labels.artwork("usb.svg")
     if not path:
         return 0.0
-    # the trident is wide and flat: give it the height's middle 70 %
-    return float(cell.svg(path, x, y + size * 0.15, size * 0.7))
+    if not text:
+        # the trident is wide and flat: give it the height's middle 70 %
+        return float(cell.svg(path, x, y + size * 0.15, size * 0.7))
+    letters = usb_letters(text)
+    w = usb_width(size, text)
+    lx = x + (w - _bold(USB_LETTERS)) / 2
+    for ch in USB_LETTERS:
+        if ch in letters:
+            cell.text(lx, y, ch, labels.SANS_BOLD, WIFI_TYPE)
+        lx += _bold(ch)
+    h, tw = _usb_upright(size)
+    from reportlab.graphics import renderPDF
+    from svglib.svglib import svg2rlg
+
+    d = svg2rlg(path)
+    if d is None:
+        return w
+    k = h / d.width                         # the logo's length runs up the glyph
+    c = cell.c
+    c.saveState()
+    # the logo's left end (its base) at the glyph's foot, its tip at the top
+    fx, fy = cell.pt(x + (w - tw) / 2, y + size)
+    c.translate(fx + tw, fy)
+    c.rotate(90)
+    c.scale(k, k)
+    renderPDF.draw(d, c, 0, 0)
+    c.restoreState()
+    return w
 
 
 def glyph_ethernet(cell: Cell, x: float, y: float, size: float, text: str) -> float:
@@ -248,12 +517,261 @@ def _lettered_antenna(cell: Cell, x: float, y: float, size: float, text: str) ->
     return size
 
 
+def glyph_tasmota(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """Tasmota's own mark, the house with the power symbol in it."""
+    path = labels.artwork("tasmota.svg")
+    if not path:
+        return 0.0
+    return float(cell.svg(path, x, y, size))
+
+
+RISCV_MARK = "risc-v-simple.svg"
+
+
+def isa_width(size: float) -> float:
+    """The box both ISA marks take: the RISC-V mark's, at `size` high."""
+    return _artwork_width(RISCV_MARK, size) or size
+
+
+def glyph_riscv(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """The RISC-V mark: RISC-V International's "RV" without the "RISC-V"
+    wordmark under it, cut from their own file (artwork/README.md). The
+    processor implements the RISC-V ISA."""
+    path = labels.artwork(RISCV_MARK)
+    if not path:
+        return 0.0
+    return float(cell.svg(path, x, y, size))
+
+
+XTENSA_FONT = "Helvetica-BoldOblique"
+
+
+def _xtensa_sizes(size: float) -> tuple[float, float, float]:
+    """The X's point size, the t's, and how wide the pair runs: the X
+    stands 94 % of the glyph's height and the t sits on its baseline at
+    60 % of its size, both shrunk together where the pair would be wider
+    than the RISC-V mark's box."""
+    big = size * 0.94 / 0.72
+    small = big * 0.6
+    run = (pdfmetrics.stringWidth("X", XTENSA_FONT, big) * 0.92
+           + pdfmetrics.stringWidth("t", XTENSA_FONT, small))
+    k = min(1.0, isa_width(size) / run)
+    return big * k, small * k, run * k
+
+
+def xtensa_width(size: float) -> float:
+    return isa_width(size)
+
+
+def glyph_xtensa(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """The processor is a Cadence Xtensa. Cadence registers "Xtensa" as a
+    word mark and publishes no logo for the architecture that could be
+    fetched (docs/ESPRESSIF.md), so the glyph is set from the name: its
+    "Xt", a tall bold oblique X with a small t on its baseline, in the box
+    the RISC-V mark takes on other labels (Tim, 2026-09-27)."""
+    big, small, run = _xtensa_sizes(size)
+    left = x + (isa_width(size) - run) / 2
+    top = y + (size - big * 0.72) / 2
+    cell.text(left, top, "X", XTENSA_FONT, big)
+    xw = pdfmetrics.stringWidth("X", XTENSA_FONT, big) * 0.92
+    cell.text(left + xw, top + (big - small) * 0.72, "t", XTENSA_FONT, small)
+    return xtensa_width(size)
+
+
+def core_counts(text: str) -> tuple[int, int]:
+    """'2+1' -> (2, 1): the application cores, then the low-power ones; a
+    bare '2' has none of the second. One digit each, and at least one
+    application core."""
+    head, plus, tail = text.partition("+")
+    if (len(head) != 1 or not head.isdigit() or head == "0"
+            or (plus and (len(tail) != 1 or not tail.isdigit()))):
+        raise ValueError(f"a core count is 'N' or 'N+M', one digit each, not {text!r}")
+    return int(head), int(tail or 0)
+
+
+CORES_MAIN = 0.74              # the application cores' figure: its cap height, of the die's
+CORES_PAD = 0.3 * mm           # the die's edge, and the divider, to a figure
+
+
+def _cores_sizes(size: float) -> tuple[float, float, float]:
+    """The die's height, and the two figures' point sizes."""
+    body = size * 0.8
+    return body, body * CORES_MAIN / 0.72, MIN_SIZE
+
+
+def cores_width(size: float, text: str) -> float:
+    hp, lp = core_counts(text)
+    body, big, small = _cores_sizes(size)
+    return (pdfmetrics.stringWidth(str(hp), labels.SANS_BOLD, big)
+            + pdfmetrics.stringWidth(str(lp), labels.SANS_BOLD, small)
+            + 4 * CORES_PAD + (size - body))
+
+
+def glyph_cores(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """A package with two numbers on its die (Tim, 2026-09-27):
+    ``Icon("cores", "2+1")`` is the application cores, large and black,
+    and past a divider the low-power cores, small and grey. A part
+    without a low-power core says 0."""
+    hp, lp = core_counts(text)
+    body, big, small = _cores_sizes(size)
+    w = cores_width(size, text)
+    inset = (size - body) / 2
+    bw = w - 2 * inset
+    c = cell.c
+    px, py = cell.pt(x + inset, y + inset + body)
+    lw = size * 0.06
+    c.setStrokeColor(black)
+    c.setFillColor(black)
+    c.setLineWidth(lw)
+    c.rect(px, py, bw, body, stroke=1, fill=0)
+    pin_w, pin_l = size * 0.07, inset * 0.9
+    for n, run, along in ((4, bw, True), (3, body, False)):
+        step = run / (n + 1)
+        for i in range(1, n + 1):
+            o = i * step - pin_w / 2
+            if along:
+                c.rect(px + o, py + body, pin_w, pin_l, stroke=0, fill=1)       # top
+                c.rect(px + o, py - pin_l, pin_w, pin_l, stroke=0, fill=1)      # bottom
+            else:
+                c.rect(px - pin_l, py + o, pin_l, pin_w, stroke=0, fill=1)      # left
+                c.rect(px + bw, py + o, pin_l, pin_w, stroke=0, fill=1)         # right
+    divider = x + inset + 2 * CORES_PAD + cell.width(str(hp), labels.SANS_BOLD, big)
+    dx, _ = cell.pt(divider, 0)
+    c.setLineWidth(lw * 0.6)
+    c.setStrokeColor(labels.GREY)
+    c.line(dx, py + body * 0.2, dx, py + body * 0.8)
+    c.setStrokeColor(black)
+    c.setLineWidth(1)
+    # both figures stand on one baseline, the large one centred in the die
+    base = y + inset + (body + big * 0.72) / 2
+    cell.text(x + inset + CORES_PAD, base - big * 0.72, str(hp), labels.SANS_BOLD, big)
+    cell.text(divider + CORES_PAD, base - small * 0.72, str(lp), labels.SANS_BOLD, small,
+              color=labels.GREY)
+    return w
+
+
+def memory_type(size: float) -> float:
+    """The point size of a memory glyph's lettering: the smallest the
+    labels print, at most 60 % of the module's board (78 % of the glyph)
+    in cap height. At the spec strip's height that is MIN_SIZE: set any
+    larger, "512K+16M" leaves the chip's revision no room on the strip."""
+    return min(MIN_SIZE, size * 0.78 * 0.6 / 0.72)
+
+
+MEMORY_PAD = 0.2       # of the height: the board's ends beyond its lettering
+
+
+def memory_width(size: float, text: str) -> float:
+    return (pdfmetrics.stringWidth(text, labels.SANS_BOLD, memory_type(size))
+            + size * MEMORY_PAD)
+
+
+def glyph_memory(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """A memory module -- a board with its contacts along the bottom edge,
+    the way a DIMM is drawn -- with its size lettered on it:
+    ``Icon("memory", "400K")``, or ``"512K+8M"`` for on-chip SRAM and the
+    PSRAM in the package with it."""
+    c = cell.c
+    s = memory_type(size)
+    w = memory_width(size, text)
+    lw = size * 0.06
+    board_h = size * 0.78
+    top = y + size * 0.02
+    px, py = cell.pt(x + lw / 2, top + board_h)
+    c.setStrokeColor(black)
+    c.setFillColor(black)
+    c.setLineWidth(lw)
+    c.rect(px, py, w - lw, board_h - lw / 2, stroke=1, fill=0)
+    # the contacts under the board, with the key notch a third of the way along
+    teeth_h, pitch = size * 0.16, size * 0.17
+    tw = pitch * 0.55
+    notch = x + w * 0.35
+    tx = x + pitch * 0.5
+    while tx + tw <= x + w - pitch * 0.4:
+        if not notch - pitch < tx < notch + pitch * 0.2:
+            bx, by = cell.pt(tx, top + board_h + teeth_h)
+            c.rect(bx, by, tw, teeth_h, stroke=0, fill=1)
+        tx += pitch
+    cell.text(x + w / 2, top + (board_h - s * 0.72) / 2, text, labels.SANS_BOLD, s,
+              align="centre")
+    c.setLineWidth(1)
+    return w
+
+
+BLUETOOTH_W = 0.55     # of the height
+
+
+def glyph_bluetooth(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """The Bluetooth rune, drawn: a stem with the two arrowheads crossing
+    it, as the chip's features say Bluetooth. A radio with Wi-Fi too
+    carries it small, on the Wi-Fi glyph (glyph_wifi); this one stands
+    alone, for a part with Bluetooth and no Wi-Fi."""
+    return draw_bluetooth(cell, x, y, size)
+
+
+def draw_bluetooth(cell: Cell, x: float, y: float, size: float,
+                   weight: float = 0.09) -> float:
+    """The rune `size` high with its top-left at (x, y), its line `weight`
+    of its height; returns its width."""
+    c = cell.c
+    w = size * BLUETOOTH_W
+
+    def p(u: float, v: float) -> tuple[float, float]:
+        return cell.pt(x + w * u, y + size * v)
+
+    c.setStrokeColor(black)
+    c.setLineWidth(size * weight)
+    c.setLineCap(1)
+    c.setLineJoin(1)
+    path = c.beginPath()
+    path.moveTo(*p(0.12, 0.29))
+    for u, v in ((0.88, 0.71), (0.5, 0.93), (0.5, 0.07), (0.88, 0.29), (0.12, 0.71)):
+        path.lineTo(*p(u, v))
+    c.drawPath(path, stroke=1, fill=0)
+    c.setLineCap(0)
+    c.setLineJoin(0)
+    c.setLineWidth(1)
+    return w
+
+
+REVISION = MIN_SIZE            # a revision's type: the smallest the labels print
+
+
+def revision_width(size: float, text: str) -> float:
+    return pdfmetrics.stringWidth(text, labels.SANS, REVISION)
+
+
+def glyph_revision(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """A chip's revision, ``Icon("revision", "v0.4")``: its text alone, set
+    like a row's value and centred on the strip, closing the spec strip
+    (Tim, 2026-09-29: "part of the icon line and without the chip:")."""
+    cell.text(x, y + (size - REVISION * 0.72) / 2, text, labels.SANS, REVISION)
+    return revision_width(size, text)
+
+
+def glyph_zigbee(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """The Zigbee mark (artwork/zigbee.svg), for a part whose 802.15.4
+    radio runs Zigbee and that has no Wi-Fi glyph to carry it (the H2)."""
+    path = labels.artwork(ZIGBEE_MARK)
+    if not path:
+        return 0.0
+    return float(cell.svg(path, x, y, size))
+
+
 ICONS: dict[str, IconFn] = {
     "wifi": glyph_wifi,
     "usb": glyph_usb,
     "ethernet": glyph_ethernet,
     "chip": glyph_chip,
     "antenna": glyph_antenna,
+    "tasmota": glyph_tasmota,
+    "riscv": glyph_riscv,
+    "xtensa": glyph_xtensa,
+    "cores": glyph_cores,
+    "memory": glyph_memory,
+    "bluetooth": glyph_bluetooth,
+    "zigbee": glyph_zigbee,
+    "revision": glyph_revision,
 }
 
 
@@ -281,11 +799,33 @@ class IdentifierMissingError(ValueError):
 class MicroRow:
     """One captioned fact beside the QR. A ``mono`` value is an identifier
     someone may type, so it is set in the monospace face and never elided:
-    if it cannot fit at the smallest size the label is refused."""
+    if it cannot fit at the smallest size the label is refused.
+
+    A row shrinks to fit its value unless it has a ``size``: then it is set
+    at exactly that size, so a kind of row a caller prints on every label
+    reads the same on all of them, and a value that does not fit whole at
+    it is refused rather than shrunk. ``BLANK_ROW`` keeps a place empty.
+
+    The values start in one column, right of the widest caption. A ``wide``
+    row's value starts sooner, right of the widest caption among the wide
+    rows: the room for a value longer than the column holds (an ESP32-C3's
+    twenty-digit flash uid beside its "eFuse" rows). Its caption stays flush
+    against it, as every caption is."""
 
     caption: str
     value: str
     mono: bool = False
+    size: float | None = None
+    wide: bool = False
+
+    @property
+    def blank(self) -> bool:
+        return not self.caption and not self.value
+
+
+# A place left empty: the fact it holds on other labels does not apply here,
+# and the rows under it stay where they are on every other label.
+BLANK_ROW = MicroRow("", "")
 
 
 ExtraFn = Callable[[Cell, tuple[float, float, float, float]], None]
@@ -302,6 +842,7 @@ class MicroLabel:
     icons: tuple[Icon, ...] = ()
     rows: tuple[MicroRow, ...] = ()
     qr: str | None = None
+    specs: tuple[Icon, ...] = ()
     extra: ExtraFn | None = field(default=None, compare=False)
     # the command that reads the identifier, for the error when it is missing
     read_with: str = ""
@@ -313,25 +854,38 @@ class MicroLabel:
             raise IdentifierMissingError(
                 f"{self.host}: the {self.title} label has no {self.ident_caption}, so it "
                 f"would carry nothing that identifies the device.{how}")
-        if len(self.rows) > MAX_ROWS:
+        if len(self.rows) > max_rows(bool(self.specs)):
             raise ValueError(
                 f"{self.host}: the {self.title} label has {len(self.rows)} rows and a micro "
-                f"label holds {MAX_ROWS}; put the rest in an extra section or leave them "
-                "in the document")
+                f"label holds {max_rows(bool(self.specs))}; put the rest in an extra "
+                "section or leave them in the document")
         for r in self.rows:
-            if not (r.value or "").strip():
+            if not r.blank and not (r.value or "").strip():
                 raise ValueError(
                     f"{self.host}: the {r.caption} row of the {self.title} label has no "
                     "value; leave the row out rather than print it blank")
-        for i in self.icons:
+        for i in (*self.icons, *self.specs):
             if i.name not in ICONS:
                 raise ValueError(f"{self.host}: no glyph called {i.name!r} "
                                  f"(have {', '.join(sorted(ICONS))})")
-            if i.name == "antenna" and i.text:
-                try:
+            try:
+                if i.name == "antenna" and i.text:
                     mast_size(i.text, HEAD_H)
-                except ValueError as exc:
-                    raise ValueError(f"{self.host}: {exc}") from None
+                if i.name == "cores":
+                    core_counts(i.text)
+                if i.name == "wifi" and i.text:
+                    wifi_lines(i.text)
+                if i.name == "usb" and i.text:
+                    usb_letters(i.text)
+            except ValueError as exc:
+                raise ValueError(f"{self.host}: {exc}") from None
+        if self.specs:
+            need = strip_width(self.specs)
+            if need > rows_w() + 0.01:
+                raise ValueError(
+                    f"{self.host}: the {self.title} label's spec strip "
+                    f"({', '.join(i.name for i in self.specs)}) is {need / mm:.1f} mm "
+                    f"wide and the band beside the QR {rows_w() / mm:.1f} mm; drop a glyph")
 
     @property
     def qr_content(self) -> str:
@@ -365,7 +919,7 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
         ix -= _icon_width(cell, icon)
         ICONS[icon.name](cell, ix, MICRO_PAD, HEAD_H, icon.text)
         ix -= ICON_GAP
-    title_w = ix - x - (0.5 * mm if m.icons else 0)
+    title_w = title_room(m)
     size = cell.fitted_size(m.title, labels.SANS_BOLD, TITLE, title_w, min_size=MIN_SIZE)
     cell.fit(x, MICRO_PAD + (HEAD_H - size * 0.72) / 2, m.title, labels.SANS_BOLD, size,
              title_w, min_size=MIN_SIZE)
@@ -373,17 +927,50 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
     # --- the QR and the rows beside it ---
     top, q = band_top(), qr_size()
     cell.qr(MICRO_PAD, top, q, m.qr_content)
-    rx = MICRO_PAD + q + 1.2 * mm
+    rx = rows_x()
     rw = right - rx
+    pitch, y = ROW_PITCH, top
+    if m.specs:
+        # the strip heads the band, and the lines under it close up a little
+        sx = rx
+        for icon in m.specs:
+            ICONS[icon.name](cell, sx, top, SPEC_H, icon.text)
+            sx += _icon_width(cell, icon, SPEC_H) + SPEC_ICON_GAP
+        # an extra section under the rows takes a row's place
+        lines = len(m.rows) + (1 if m.subtitle else 0) + (1 if m.extra else 0)
+        pitch, y = spec_pitch(lines), top + SPEC_H + SPEC_GAP
     if m.subtitle:
-        cell.fit(rx, top, m.subtitle, labels.SANS, SUBTITLE, rw, min_size=MIN_SIZE)
-    y = top + ROW_PITCH
-    cap_w = max([cell.width(r.caption, labels.SANS, CAPTION) for r in m.rows] or [0])
-    vx = rx + cap_w + (labels.Label.CAPTION_GAP * 0.6 if cap_w else 0)
+        cell.fit(rx, y, m.subtitle, labels.SANS, SUBTITLE, rw, min_size=MIN_SIZE)
+    if m.subtitle or not m.specs:
+        y += pitch
+    # rows below the QR's foot run beside the foot's caption: it must end
+    # short of them
+    if m.rows and y + (len(m.rows) - 1) * pitch + ROW * 0.72 > top + q:
+        room = rx - MICRO_PAD - 0.8 * mm
+        if cell.width(m.ident_caption, labels.SANS, CAPTION) > room:
+            raise ValueError(
+                f"{m.host}: the {m.title} label's foot caption {m.ident_caption!r} runs "
+                "under the rows beside it; shorten the caption or drop a row")
+    def column(rows: list[MicroRow]) -> float:
+        cap_w = max([cell.width(r.caption, labels.SANS, CAPTION) for r in rows] or [0])
+        return rx + cap_w + (labels.Label.CAPTION_GAP * 0.6 if cap_w else 0)
+
+    columns = {False: column([r for r in m.rows if not r.wide]),
+               True: column([r for r in m.rows if r.wide])}
+    largest = SPEC_ROW if m.specs else ROW
+    last_h = ROW * 0.72
     for r in m.rows:
+        if r.blank:
+            y += pitch
+            continue
         font = labels.MONO_REGULAR if r.mono else labels.SANS
+        vx = columns[r.wide]
         vw = right - vx
-        size = cell.fitted_size(r.value, font, ROW, vw, min_size=MIN_SIZE)
+        if r.size is not None and cell.width(r.value, font, r.size) > vw + 0.01:
+            raise ValueError(
+                f"{m.host}: the {r.caption} row of the {m.title} label ({r.value!r}) does "
+                f"not fit whole at its {r.size:g} pt")
+        size = r.size or cell.fitted_size(r.value, font, largest, vw, min_size=MIN_SIZE)
         if r.mono and cell.width(r.value, font, size) > vw + 0.01:
             raise ValueError(
                 f"{m.host}: the {r.caption} row of the {m.title} label ({r.value!r}) does "
@@ -393,11 +980,24 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
             cell.text(vx - (labels.Label.CAPTION_GAP * 0.6), baseline - CAPTION * 0.72,
                       r.caption, labels.SANS, CAPTION, align="right", color=labels.GREY)
         cell.fit(vx, y, r.value, font, size, vw, min_size=MIN_SIZE)
-        y += ROW_PITCH
+        # under a spec strip, what an extra section clears is the last row as
+        # it is set; elsewhere, a row at ROW
+        last_h = size * 0.72 if m.specs else ROW * 0.72
+        y += pitch
 
     if m.extra is not None:
-        ey = y - ROW_PITCH + ROW * 0.72 + 0.6 * mm if m.rows or m.subtitle else top
-        m.extra(cell, (rx, ey, rw, top + q - ey))
+        gap = SPEC_EXTRA_GAP if m.specs else EXTRA_GAP
+        ey = (y - pitch + last_h + gap if m.rows or m.subtitle
+              else y if m.specs else top)
+        # under a spec strip the rows run down beside the foot's caption, and
+        # so does the room left under them
+        bottom = caption_baseline() if m.specs else top + q
+        if m.specs and bottom > top + q and cell.width(
+                m.ident_caption, labels.SANS, CAPTION) > rx - MICRO_PAD - 0.8 * mm:
+            raise ValueError(
+                f"{m.host}: the {m.title} label's foot caption {m.ident_caption!r} runs "
+                "under the extra section beside it; shorten the caption")
+        m.extra(cell, (rx, ey, rw, bottom - ey))
 
     # --- the foot: caption over the identifier, the whole width ---
     fy = foot_top()
@@ -412,19 +1012,58 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
     cell.text(MICRO_PAD, vy, m.ident, labels.MONO, size)
 
 
-def _icon_width(cell: Cell, icon: Icon) -> float:
-    """The width a glyph will take at the header's height, without drawing
-    it: each is a function of the height and its text."""
-    h = HEAD_H
-    if icon.name == "usb":
-        path = labels.artwork("usb.svg")
-        return 0.7 * h / labels.mark_aspect(path) if path else 0.0
-    if icon.name == "ethernet":
-        return h * 0.95
-    if icon.name == "antenna":
-        # the lettered mast stands in a square; the plain one is narrower
-        return h if icon.text else h * 0.75
-    return h          # wifi, chip, and any registered glyph: a square
+def title_room(m: MicroLabel) -> float:
+    """The width the header leaves the title: the cell less the mark and
+    the icons. A caller whose title must never be elided (a part number)
+    checks it fits here at MIN_SIZE."""
+    x = MICRO_PAD
+    path = labels.artwork(m.mark) if m.mark else None
+    if path:
+        x += min(MARK_W, HEAD_H / labels.mark_aspect(path)) + 1.0 * mm
+    icons = sum(_icon_width(None, i) + ICON_GAP for i in m.icons)
+    return MICRO_W - MICRO_PAD - icons - x - (0.5 * mm if m.icons else 0)
+
+
+def title_fits(m: MicroLabel) -> bool:
+    """Whether the title prints whole, at MIN_SIZE or larger."""
+    return pdfmetrics.stringWidth(m.title, labels.SANS_BOLD, MIN_SIZE) <= title_room(m)
+
+
+def _artwork_width(name: str, h: float) -> float:
+    path = labels.artwork(name)
+    return h / labels.mark_aspect(path) if path else 0.0
+
+
+# The glyphs that are not square: their width at a height, with their text.
+# A glyph a caller registers is square unless it adds itself here too.
+WIDTHS: dict[str, Callable[[float, str], float]] = {
+    "usb": usb_width,
+    "revision": revision_width,
+    "ethernet": lambda h, t: h * 0.95,
+    # the lettered mast stands in a square; the plain one is narrower
+    "antenna": lambda h, t: h if t else h * 0.75,
+    "riscv": lambda h, t: isa_width(h),
+    "cores": cores_width,
+    "wifi": wifi_width,
+    "tasmota": lambda h, t: _artwork_width("tasmota.svg", h),
+    "memory": lambda h, t: memory_width(h, t),
+    "bluetooth": lambda h, t: h * BLUETOOTH_W,
+    "xtensa": lambda h, t: xtensa_width(h),
+}
+
+
+def _icon_width(cell: Cell | None, icon: Icon, h: float = HEAD_H) -> float:
+    """The width a glyph will take at height `h` (the header's, unless
+    said), without drawing it: each is a function of the height and its
+    text."""
+    fn = WIDTHS.get(icon.name)
+    return fn(h, icon.text) if fn else h
+
+
+def strip_width(specs: Sequence[Icon]) -> float:
+    """How wide a spec strip is, gaps and all."""
+    return (sum(_icon_width(None, i, SPEC_H) for i in specs)
+            + SPEC_ICON_GAP * max(len(specs) - 1, 0))
 
 
 # --- four to a sticker --------------------------------------------------------

@@ -153,6 +153,47 @@ License: trademark
  it. From circuitco.com's own logo as the Internet Archive captured it,
  cropped to those two letters; see src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/espressif.svg
+Copyright: Espressif Systems (Shanghai) Co., Ltd.
+License: trademark
+ The Espressif symbol, drawn only on the label of hardware built on an
+ Espressif chip (an ESP32), to identify it. From espressif.com's own header
+ logo SVG with the wordmark paths removed and the viewBox trimmed to the
+ symbol, whose paths are untouched; see src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/risc-v-simple.svg
+Copyright: RISC-V International
+License: trademark
+ The RISC-V mark (the "RV" without the wordmark), a registered trademark
+ of RISC-V International, drawn only on the label of a part whose
+ processor implements the RISC-V ISA, to say so. Cut from risc-v.svg,
+ RISC-V International's own stacked logo file: the wordmark's shapes
+ deleted and the viewBox trimmed to the mark, whose paths and colours are
+ untouched. On the same terms as risc-v.svg; see
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/tasmota.svg
+Copyright: Theo Arends and the Tasmota contributors (the logo designed by tmo)
+License: GPL-3.0-only
+ The Tasmota symbol (the house with the power symbol), drawn only on the
+ label of a device running Tasmota, to identify its firmware. Copied byte
+ for byte from tools/logo/TASMOTA_Symbol_Vector.svg in
+ https://github.com/arendst/Tasmota, whose licence is GPL-3.0-only; see
+ src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/zigbee.svg
+Copyright: Pictogrammers (Material Design Icons contributors)
+License: Apache-2.0
+ The Zigbee mark from the Material Design Icons package @mdi/svg 7.4.47
+ (svg/zigbee.svg), copied byte for byte. Zigbee is a trademark of the
+ Connectivity Standards Alliance; the mark is drawn only on the label of a
+ part with a Zigbee-capable 802.15.4 radio. See
+ src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.
+
+License: GPL-3.0-only
+ On Debian systems, the complete text of the GNU General Public License
+ version 3 can be found in '/usr/share/common-licenses/GPL-3'.

@@ -1,0 +1,409 @@
+{
+ "rpi4-esp": [
+  {
+   "transport": "bridge",
+   "usb_path": "1-1.2.3",
+   "vidpid": "1a86:7523",
+   "tty": "/dev/ttyUSB0",
+   "tty_links": [
+    "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0",
+    "/dev/ttyESP32CAM"
+   ],
+   "usb_manufacturer": null,
+   "usb_product": "USB Serial",
+   "usb_serial": null,
+   "bcd_device": "0264",
+   "bridge": "CH340",
+   "mac": "a4:f0:0f:76:46:64",
+   "mac_source": "efuse",
+   "chip": "ESP32-D0WD-V3",
+   "chip_description": "ESP32-D0WD-V3 (revision v3.1)",
+   "revision": "v3.1",
+   "package": null,
+   "features": [
+    "Wi-Fi",
+    "BT",
+    "Dual Core + LP Core",
+    "240MHz",
+    "Vref calibration in eFuse",
+    "Coding Scheme None"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0x684016",
+   "flash_uid": "343738393844fa77fffcffff968f1f11",
+   "flash_uid_bits": 128,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "343738393844fa77fffcffff968f1f11343738393844fa77fffcffff968f1f11",
+   "flash_rdid": "6840166840166840",
+   "flash_status": {
+    "05": "00",
+    "35": "00",
+    "15": "40"
+   },
+   "flash_sfdp": "1.0",
+   "flash_sfdp_summary": {
+    "revision": "1.0",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.0",
+      "dwords": 9,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xff68",
+      "revision": "1.0",
+      "dwords": 3,
+      "pointer": "0x60"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450000101ff00000109300000ff68000103600000ffffffffffffffffffffffffffffffffffffffffffffffffffe520f1ffffffff0144eb086b083b42bbeeffffffffff00ffffff00ff0c200f5210d800ffffffffffffffffffffffffff003600279fe97764fcebffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+   "efuse": {
+    "MAC": "a4:f0:0f:76:46:64 (CRC 0xb7 OK)",
+    "CHIP_PACKAGE_4BIT": false,
+    "CHIP_PACKAGE": 1,
+    "CHIP_CPU_FREQ_LOW": false,
+    "CHIP_CPU_FREQ_RATED": true,
+    "CHIP_VER_REV1": true,
+    "CHIP_VER_REV2": true,
+    "WAFER_VERSION_MINOR": 1,
+    "WAFER_VERSION_MAJOR": 3,
+    "PKG_VERSION": 1
+   },
+   "read": "esptool 5.2.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "ets Jul 29 2019 12:21:46\r\n\r\nrst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)\r\nconfigsip: 0, SPIWP:0xee\r\nclk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00\r\nmode:DIO, clock div:2\r\nload:0x3fff0030,len:4\r\nload:0x3fff0034,len:6968\r\nload:0x40078000,len:13072\r\nho 0 tail 12 room 4\r\nload:0x40080400,len:3896\r\nentry 0x40080688\r\n\u001b[0;32mI (31) boot: ESP-IDF v4.1-dirty 2nd stage bootloader\u001b[0m\r\n\u001b[0;32mI (31) boot: compile time 16:15:01\u001b[0m\r\n\u001b[0;32mI (31) boot: chip revision: 3\u001b[0m\r\n\u001b[0;32mI (34) boot_comm: chip revision: 3, min. bootloader chip revision: 0\u001b[0m\r\n\u001b[0;32mI (41) boot.esp32: SPI Speed      : 40MHz\u001b[0m\r\n\u001b[0;32mI (46) boot.esp32: SPI Mode       : DIO\u001b[0m\r\n\u001b[0;32mI (51) boot.esp32: SPI Flash Size : 4MB\u001b[0m\r\n\u001b[0;32mI (55) boot: Enabling RNG early entropy source...\u001b[0m\r\n\u001b[0;32mI (60) boot: Partition Table:\u001b[0m\r\n\u001b[0;32mI (64) boot: ## Label            Usage          Type ST Offset   Length\u001b[0m\r\n\u001b[0;32mI (71) boot:  0 nvs              WiFi data        01 02 00009000 00005000\u001b[0m\r\n\u001b[0;32mI (79) boot:  1 otadata          OTA data         01 00 0000e000 00002000\u001b[0m\r\n\u001b[0;32mI (86) boot:  2 app0             OTA app          00 10 00010000 00300000\u001b[0m\r\n\u001b[0;32mI (94) boot:  3 spiffs           Unknown data     01 82 00310000 000f0000\u001b[0m\r\n\u001b[0;32mI (101) boot: End of partition table\u001b[0m\r\n\u001b[0;32mI (106) boot_comm: chip revision: 3, min. application chip revision: 0\u001b[0m\r\n\u001b[0;32mI (113) esp_image: segment 0: paddr=0x00010020 vaddr=0x3f400020 size=0x1d2048 (1908808) map\u001b[0m\r\n\u001b[0;32mI (849) esp_image: segment 1: paddr=0x001e2070 vaddr=0x3ffbdb60 size=0x04d3c ( 19772) load\u001b[0m\r\n\u001b[0;32mI (857) esp_image: segment 2: paddr=0x001e6db4 vaddr=0x40080000 size=0x00400 (  1024) load\u001b[0m\r\n\u001b[0;32mI (858) esp_image: segment 3: paddr=0x001e71bc vaddr=0x40080400 size=0x08e54 ( 36436) load\u001b[0m\r\n\u001b[0;32mI (880) esp_image: segment 4: paddr=0x001f0018 vaddr=0x400d0018 size=0x9df74 (647028) map\u001b[0m\r\n\u001b[0;32mI (1127) esp_image: segment 5: paddr=0x0028df94 vaddr=0x40089254 size=0x0b6a0 ( 46752) load\u001b[0m\r\n\u001b[0;32mI (1159) boot: Loaded app from partition at offset 0x10000\u001b[0m\r\n\u001b[0;32mI (1159) boot: Disabling RNG early entropy source...\u001b[0m\r\n\r\nSD Size: 7580MB  OK\r\nPSRAM OK \r\nESP32-CAM-MB\r\n"
+  },
+  {
+   "transport": "bridge",
+   "usb_path": "1-1.4",
+   "vidpid": "10c4:ea60",
+   "tty": "/dev/ttyUSB1",
+   "tty_links": [
+    "/dev/serial/by-id/usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0",
+    "/dev/ttyESP32DEV"
+   ],
+   "usb_manufacturer": "Silicon Labs",
+   "usb_product": "CP2102 USB to UART Bridge Controller",
+   "usb_serial": "0001",
+   "bcd_device": "0100",
+   "bridge": "CP210x",
+   "mac": "24:0a:c4:11:44:e8",
+   "mac_source": "efuse",
+   "chip": "ESP32-D0WDQ6",
+   "chip_description": "ESP32-D0WDQ6 (revision v1.0)",
+   "revision": "v1.0",
+   "package": null,
+   "features": [
+    "Wi-Fi",
+    "BT",
+    "Dual Core + LP Core",
+    "Coding Scheme None"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0xc84016",
+   "flash_uid": "3130343531118566",
+   "flash_uid_bits": 64,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "3130343531118566ffffffffffffffffc801ffffffffffffffffffffffffffff",
+   "flash_rdid": "c84016c84016c840",
+   "flash_status": {
+    "05": "00",
+    "35": "00",
+    "15": "20"
+   },
+   "flash_sfdp": "1.0",
+   "flash_sfdp_summary": {
+    "revision": "1.0",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.0",
+      "dwords": 9,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xffc8",
+      "revision": "1.0",
+      "dwords": 3,
+      "pointer": "0x60"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450000101ff00000109300000ffc8000103600000ffffffffffffffffffffffffffffffffffffffffffffffffffe520f1ffffffff0144eb086b083b42bbeeffffffffff00ffffff00ff0c200f5210d800ffffffffffffffffffffffffff003600279ef97764fcebffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+   "efuse": {
+    "MAC": "24:0a:c4:11:44:e8 (CRC 0x8a OK)",
+    "CHIP_PACKAGE_4BIT": false,
+    "CHIP_PACKAGE": 0,
+    "CHIP_CPU_FREQ_LOW": false,
+    "CHIP_CPU_FREQ_RATED": false,
+    "CHIP_VER_REV1": true,
+    "CHIP_VER_REV2": false,
+    "WAFER_VERSION_MINOR": 0,
+    "WAFER_VERSION_MAJOR": 1,
+    "PKG_VERSION": 0
+   },
+   "read": "esptool 5.2.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "ets Jun  8 2016 00:22:57\r\n\r\nrst:0x1 (POWERON_RESET),boot:0x13 (SPI_FAST_FLASH_BOOT)\r\nconfigsip: 0, SPIWP:0x00\r\nclk_drv:0x00,q_drv:0x00,d_drv:0x00,cs0_drv:0x00,hd_drv:0x00,wp_drv:0x00\r\nmode:DIO, clock div:2\r\nload:0x3ffc0000,len:0\r\nload:0x3ffc0000,len:2304\r\nload:0x40078000,len:3788\r\nho 0 tail 12 room 4\r\nload:0x40098000,len:532\r\nentry 0x4009813c\r\n\u001b[1;36m\r\n\r\n\u001b[0m\u001b[1;36m**************************************\r\n\u001b[0m\u001b[1;36m*       hello espressif ESP32!       *\r\n\u001b[0m\u001b[1;36m*        2nd boot is running!        *\r\n\u001b[0m\u001b[1;36m*            version (V0.1)          *\r\n\u001b[0m\u001b[1;36m**************************************\r\n\u001b[0m\u001b[0;36mcompile time 18:16:58\r\n\r\n\u001b[0m\u001b[0;36m  SPI Speed      : 40MHz\r\n\u001b[0m\u001b[0;36m  SPI Mode       : DIO\r\n\u001b[0m\u001b[0;36m  SPI Flash Size : 4MB\r\n\u001b[0m\u001b[1;36mPartition Table:\r\n\u001b[0m\u001b[1;36m## Label            Usage          Type ST Offset   Length\r\n\u001b[0m\u001b[1;36m 0 factory          factory app      00 00 00010000 00100000\r\n\u001b[0m\u001b[1;36m 1 rfdata           RF data          01 01 00110000 00040000\r\n\u001b[0m\u001b[1;36m 2 wifidata         WiFi data        01 02 00150000 00040000\r\n\u001b[0m\u001b[1;36mEnd of partition table\r\n\u001b[0m\u001b[1;36mLoading app partition at offset 00010000\r\n\u001b[0m\u001b[0;36msection 0: paddr=0x00000020 vaddr=0x00000000 size=0x0ffe8 ( 65512) \r\n\u001b[0m\u001b[0;36msection 1: paddr=0x00010010 vaddr=0x3f400010 size=0x05b64 ( 23396) map\r\n\u001b[0m\u001b[0;36msection 2: paddr=0x00015b7c vaddr=0x3ffba720 size=0x01378 (  4984) load\r\n\u001b[0m\u001b[0;36msection 3: paddr=0x00016efc vaddr=0x40080000 size=0x00400 (  1024) load\r\n\u001b[0m\u001b[0;36msection 4: paddr=0x00017304 vaddr=0x40080400 size=0x126ac ( 75436) load\r\n\u001b[0m\u001b[0;36msection 5: paddr=0x000299b8 vaddr=0x00000000 size=0x06658 ( 26200) \r\n\u001b[0m\u001b[0;36msection 6: paddr=0x00030018 vaddr=0x400d0018 size=0x325b4 (206260) map\r\n\u001b[0m\u001b[0;36mstart: 0x400807ac\r\n\r\n\u001b[0mInitializing heap allocator:\r\nRegion 19: 3FFBBA98 len 00024568 tag 0\r\nRegion 25: 3FFE8000 len 00018000 tag 1\r\nPro cpu up.\r\nPro cpu start user code\r\nnvs_flash_init\r\nfrc2_timer_task_hdl:3ffbc564, prio:22, stack:2048\r\ntcpip_task_hdlxxx : 3ffbeca8, prio:20,stack:2048\r\nphy_version: 80, Aug 26 2016, 13:04:06, 0\r\npp_task_hdl : 3ffc34f0, prio:23, stack:8192\r\n\r\n:>enter uart init\r\nuart init wait fifo succeed\r\nexit uart init\r\n\r\nIDF version : master(db93bceb)\r\n\r\nWIFI LIB version : master(934d079b)\r\n\r\nssc version : master(r283 4d376412)\r\n\r\n!!!ready!!!\r\nmode : softAP(26:0a:c4:11:44:e8)\r\ndhcp server start:(ip: 192.168.4.1, mask: 255.255.255.0, gw: 192.168.4.1)\r\n\r\n+WIFI:AP_START\r\n"
+  }
+ ],
+ "rpi5-433mhz": [
+  {
+   "transport": "usb-serial-jtag",
+   "usb_path": "3-1.2",
+   "vidpid": "303a:1001",
+   "tty": "/dev/ttyACM0",
+   "tty_links": [
+    "/dev/radio-esp32-E8:3D:C1:8C:5C:88",
+    "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_E8:3D:C1:8C:5C:88-if00"
+   ],
+   "usb_manufacturer": "Espressif",
+   "usb_product": "USB JTAG/serial debug unit",
+   "usb_serial": "E8:3D:C1:8C:5C:88",
+   "bcd_device": "0101",
+   "bridge": null,
+   "mac": "e8:3d:c1:8c:5c:88",
+   "mac_source": "usb-serial-jtag serial; efuse",
+   "chip": "ESP32-C3",
+   "chip_description": "ESP32-C3 (QFN32) (revision v0.4)",
+   "revision": "v0.4",
+   "package": "QFN32",
+   "features": [
+    "WiFi",
+    "BLE",
+    "Embedded Flash 4MB (XMC)"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0x464016",
+   "flash_uid": "240c1119088539540150ffffffffffff",
+   "flash_uid_bits": 128,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "240c1119088539540150ffffffffffffffffffffffffffffffffffffffffffff",
+   "flash_rdid": "4640164640164640",
+   "flash_status": {
+    "05": "00",
+    "35": "02",
+    "15": "20"
+   },
+   "flash_sfdp": "1.6",
+   "flash_sfdp_summary": {
+    "revision": "1.6",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.6",
+      "dwords": 16,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xff46",
+      "revision": "1.0",
+      "dwords": 4,
+      "pointer": "0xd0"
+     },
+     {
+      "id": "0xff84",
+      "revision": "1.0",
+      "dwords": 2,
+      "pointer": "0xc0"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450060102ff00060110300000ff46000104d00000ff84000102c00000ffffffffffffffffffffffffffffffffffe520f9ffffffff0144eb086b083b42bbfeffffffffff00ffffff40eb0c200f5210d800ff1532a50084a313c1cca176357a757a75f7b3d55c19f64dffe910c080ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000f0ffffffffffffffffffffffffff003600239ff9776400e8ffffffffffff240c1119088539540150ffffffffffffffff01ffff503450393133078d8f69aa",
+   "efuse": {
+    "MAC": "e8:3d:c1:8c:5c:88 (OK)",
+    "WAFER_VERSION_MINOR_LO": 4,
+    "PKG_VERSION": 0,
+    "BLK_VERSION_MINOR": 3,
+    "FLASH_CAP": 1,
+    "FLASH_TEMP": 1,
+    "FLASH_VENDOR": 1,
+    "WAFER_VERSION_MINOR_HI": false,
+    "WAFER_VERSION_MAJOR": 0,
+    "OPTIONAL_UNIQUE_ID": "89 e4 be c5 5c 62 67 1e ca 93 59 3f 98 6f a7 c9",
+    "BLK_VERSION_MAJOR": 1,
+    "CUSTOM_MAC": "00:00:00:00:00:00 (OK)",
+    "WAFER_VERSION_MINOR": 4
+   },
+   "read": "esptool 4.7.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "ESP-ROM:esp32c3-api1-20210207\r\nBuild:Feb  7 2021\r\nrst:0x15 (USB_UART_CHIP_RESET),boot:0xd (SPI_FAST_FLASH_BOOT)\r\nSaved PC:0x4004c97e\r\nSPIWP:0xee\r\nmode:DIO, clock div:1\r\nload:0x3fcd5820,len:0x9c\r\nload:0x403cbf10,len:0x8dc\r\nload:0x403ce710,len:0x22ac\r\nentry 0x403cbf10\r\n\r\n00:00:00.000 CMD: Using USB CDC\r\n00:00:00.001 HDW: ESP32-C3 v0.4 \r\n00:00:00.005 CFG: Loaded from NVS, Count 14\r\n00:00:00.005 SER: Set to 8N1 115200 bit/s\r\n00:00:00.005 SER: HWCDC supports 115200 bit/s only\r\n00:00:00.008 Project cc1101-node - CC1101 node Version 15.5.0(safeboot)-3.3.8(2026-09-06T09:38:26)\r\n00:00:00.008 WARNING This version does not support persistent settings\r\n00:00:00.108 CC1: no CC1101 on any board map (last PARTNUM 0x00 VERSION 0x00) - check wiring\r\n00:00:00.359 WIF: WifiManager active for 3 minutes\r\n"
+  },
+  {
+   "transport": "usb-serial-jtag",
+   "usb_path": "3-1.3",
+   "vidpid": "303a:1001",
+   "tty": "/dev/ttyACM2",
+   "tty_links": [
+    "/dev/radio-esp32-44:1B:F6:2E:B3:80",
+    "/dev/radio-sx1278-ra02",
+    "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_44:1B:F6:2E:B3:80-if00"
+   ],
+   "usb_manufacturer": "Espressif",
+   "usb_product": "USB JTAG/serial debug unit",
+   "usb_serial": "44:1B:F6:2E:B3:80",
+   "bcd_device": "0101",
+   "bridge": null,
+   "mac": "44:1b:f6:2e:b3:80",
+   "mac_source": "usb-serial-jtag serial; efuse",
+   "chip": "ESP32-C3",
+   "chip_description": "ESP32-C3 (QFN32) (revision v0.4)",
+   "revision": "v0.4",
+   "package": "QFN32",
+   "features": [
+    "WiFi",
+    "BLE",
+    "Embedded Flash 4MB (XMC)"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0x464016",
+   "flash_uid": "2c30041916712aca013affffffffffff",
+   "flash_uid_bits": 128,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "2c30041916712aca013affffffffffffffffffffffffffffffffffffffffffff",
+   "flash_rdid": "4640164640164640",
+   "flash_status": {
+    "05": "00",
+    "35": "02",
+    "15": "20"
+   },
+   "flash_sfdp": "1.6",
+   "flash_sfdp_summary": {
+    "revision": "1.6",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.6",
+      "dwords": 16,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xff46",
+      "revision": "1.0",
+      "dwords": 4,
+      "pointer": "0xd0"
+     },
+     {
+      "id": "0xff84",
+      "revision": "1.0",
+      "dwords": 2,
+      "pointer": "0xc0"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450060102ff00060110300000ff46000104d00000ff84000102c00000ffffffffffffffffffffffffffffffffffe520f9ffffffff0144eb086b083b42bbfeffffffffff00ffffff40eb0c200f5210d800ff1532a50084a313c1cca176357a757a75f7b3d55c19f64dffe910c080ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000f0ffffffffffffffffffffffffff003600239ff9776400e8ffffffffffff2c30041916712aca013affffffffffffffff01ffff50345039323408112e69aa",
+   "efuse": {
+    "MAC": "44:1b:f6:2e:b3:80 (OK)",
+    "WAFER_VERSION_MINOR_LO": 4,
+    "PKG_VERSION": 0,
+    "BLK_VERSION_MINOR": 3,
+    "FLASH_CAP": 1,
+    "FLASH_TEMP": 1,
+    "FLASH_VENDOR": 1,
+    "WAFER_VERSION_MINOR_HI": false,
+    "WAFER_VERSION_MAJOR": 0,
+    "OPTIONAL_UNIQUE_ID": "4c d0 73 86 be f1 34 a5 3c d0 e8 7a 86 d3 66 03",
+    "BLK_VERSION_MAJOR": 1,
+    "CUSTOM_MAC": "00:00:00:00:00:00 (OK)",
+    "WAFER_VERSION_MINOR": 4
+   },
+   "read": "esptool 4.7.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "nected\r\n04:58:54.937 MQT: tele/esp32-433mhz-sx1278/LWT = Online (retained)\r\n04:58:54.939 MQT: cmnd/esp32-433mhz-sx1278/POWER = \r\n04:58:54.942 MQT: Subscribe to cmnd/esp32-433mhz-sx1278/#\r\n04:58:54.944 MQT: Subscribe to cmnd/tasmotas/#\r\n04:58:54.945 MQT: Subscribe to cmnd/DVES_2EB380_fb/#\r\n04:58:54.955 MQT: tele/esp32-433mhz-sx1278/INFO1 = {\"Info1\":{\"Module\":\"ESP32C3\",\"Version\":\"15.5.0(cc1101-node)\",\"FallbackTopic\":\"cmnd/DVES_2EB380_fb/\",\"GroupTopic\":\"cmnd/tasmotas/\"}}\r\n04:58:54.959 MQT: tele/esp32-433mhz-sx1278/INFO2 = {\"Info2\":{\"WebServerMode\":\"Admin\",\"Hostname\":\"esp32-433mhz-sx1278\",\"IPAddress\":\"10.1.90.71\",\"IP6Global\":\"\",\"IP6Local\":\"fe80::461b:f6ff:fe2e:b380%st2\"}}\r\n04:58:54.963 MQT: tele/esp32-433mhz-sx1278/INFO3 = {\"Info3\":{\"RestartReason\":\"Usb uart reset digital core\",\"BootCount\":48}}\r\n04:58:54.966 TFS: File 'autoexec.bat' not found\r\n04:58:55.015 QPC: Reset\r\n04:58:56.202 SRC: MQTT\r\n04:58:56.203 CMD: Grp 0, Cmd 'STATUS', Idx 1, Len 2, Pld 11, Data '11'\r\n04:58:56.204 BRY: GC from 6356 to 4728 bytes, objects freed 24/51 (in 1 ms) - slots from 91/106 to 56/91\r\n04:58:56.209 MQT: stat/esp32-433mhz-sx1278/STATUS11 = {\"StatusSTS\":{\"Time\":\"2026-09-27T04:58:56\",\"Uptime\":\"0T00:00:08\",\"UptimeSec\":8,\"Heap\":161,\"SleepMode\":\"Dynamic\",\"Sleep\":50,\"LoadAvg\":57,\"MqttCount\":1,\"Berry\":{\"HeapUsed\":4,\"Objects\":51},\"Wifi\":{\"AP\":1,\"SSId\":\"ansells-iot\",\"BSSId\":\"42:07:0B:01:A2:28\",\"Channel\":6,\"Mode\":\"HT20\",\"RSSI\":100,\"Signal\":-33,\"LinkCount\":1,\"Downtime\":\"0T00:00:05\"},\"Hostname\":\"esp32-433mhz-sx1278\",\"IPAddress\":\"10.1.90.71\"}}\r\n04:58:56.252 SRC: MQTT\r\n04:58:56.252 CMD: Grp 0, Cmd 'STATUS', Idx 1, Len 1, Pld 1, Data '1'\r\n04:58:56.255 MQT: stat/esp32-433mhz-sx1278/STATUS1 = {\"StatusPRM\":{\"Baudrate\":115200,\"SerialConfig\":\"8N1\",\"GroupTopic\":\"tasmotas\",\"OtaUrl\":\"\",\"RestartReason\":\"Usb uart reset digital core\",\"Uptime\":\"0T00:00:08\",\"StartupUTC\":\"2026-09-27T02:58:48\",\"Sleep\":50,\"CfgHolder\":4617,\"BootCount\":47,\"BCResetTime\":\"2026-09-08T15:48:51\",\"SaveCount\":61}}\r\n04:58:56.301 SRC: MQTT\r\n04:58:56.302 CMD: Grp 0, Cmd 'STATUS', Idx 1, Len 2, Pld 10, Data '10'\r\n04:58:56.309 MQT: stat/esp32-433mhz-sx1278/STATUS10 = {\"StatusSNS\":{\"Time\":\"2026-09-27T04:58:56\",\"SX1278\":{\"Mode\":\"weather\",\"RSSI\":-86,\"Rx\":4,\"Decoded\":4,\"Tx\":0}}}\r\n04:58:57.011 APP: Boot Count 48\r\n04:58:57.371 CFG: Saved, Count 62, Bytes 4096\r\n04:58:57.979 BRY: GC from 5904 to 4728 bytes, objects freed 7/51 (in 1 ms) - slots from 60/91 to 56/91\r\n04:58:57.984 MQT: tele/esp32-433mhz-sx1278/STATE = {\"Time\":\"2026-09-27T04:58:57\",\"Uptime\":\"0T00:00:09\",\"UptimeSec\":9,\"Heap\":161,\"SleepMode\":\"Dynamic\",\"Sleep\":50,\"LoadAvg\":24,\"MqttCount\":1,\"Berry\":{\"HeapUsed\":4,\"Objects\":51},\"Wifi\":{\"AP\":1,\"SSId\":\"ansells-iot\",\"BSSId\":\"42:07:0B:01:A2:28\",\"Channel\":6,\"Mode\":\"HT20\",\"RSSI\":100,\"Signal\":-33,\"LinkCount\":1,\"Downtime\":\"0T00:00:05\"},\"Hostname\":\"esp32-433mhz-sx1278\",\"IPAddress\":\"10.1.90.71\"}\r\n04:58:57.997 MQT: tele/esp32-433mhz-sx1278/SENSOR = {\"Time\":\"2026-09-27T04:58:57\",\"SX1278\":{\"Mode\":\"weather\",\"RSSI\":-86,\"Rx\":4,\"Decoded\":4,\"Tx\":0}}\r\n"
+  },
+  {
+   "transport": "usb-serial-jtag",
+   "usb_path": "3-1.4",
+   "vidpid": "303a:1001",
+   "tty": "/dev/ttyACM3",
+   "tty_links": [
+    "/dev/radio-cc1101-blue",
+    "/dev/radio-esp32-E8:3D:C1:8C:3E:B8",
+    "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_E8:3D:C1:8C:3E:B8-if00"
+   ],
+   "usb_manufacturer": "Espressif",
+   "usb_product": "USB JTAG/serial debug unit",
+   "usb_serial": "E8:3D:C1:8C:3E:B8",
+   "bcd_device": "0101",
+   "bridge": null,
+   "mac": "e8:3d:c1:8c:3e:b8",
+   "mac_source": "usb-serial-jtag serial; efuse",
+   "chip": "ESP32-C3",
+   "chip_description": "ESP32-C3 (QFN32) (revision v0.4)",
+   "revision": "v0.4",
+   "package": "QFN32",
+   "features": [
+    "WiFi",
+    "BLE",
+    "Embedded Flash 4MB (XMC)"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0x464016",
+   "flash_uid": "1f2b10190882f7540150ffffffffffff",
+   "flash_uid_bits": 128,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "1f2b10190882f7540150ffffffffffffffffffffffffffffffffffffffffffff",
+   "flash_rdid": "4640164640164640",
+   "flash_status": {
+    "05": "00",
+    "35": "02",
+    "15": "20"
+   },
+   "flash_sfdp": "1.6",
+   "flash_sfdp_summary": {
+    "revision": "1.6",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.6",
+      "dwords": 16,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xff46",
+      "revision": "1.0",
+      "dwords": 4,
+      "pointer": "0xd0"
+     },
+     {
+      "id": "0xff84",
+      "revision": "1.0",
+      "dwords": 2,
+      "pointer": "0xc0"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450060102ff00060110300000ff46000104d00000ff84000102c00000ffffffffffffffffffffffffffffffffffe520f9ffffffff0144eb086b083b42bbfeffffffffff00ffffff40eb0c200f5210d800ff1532a50084a313c1cca176357a757a75f7b3d55c19f64dffe910c080ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000f0ffffffffffffffffffffffffff003600239ff9776400e8ffffffffffff1f2b10190882f7540150ffffffffffffffff01ffff50345039313306ac5269aa",
+   "efuse": {
+    "MAC": "e8:3d:c1:8c:3e:b8 (OK)",
+    "WAFER_VERSION_MINOR_LO": 4,
+    "PKG_VERSION": 0,
+    "BLK_VERSION_MINOR": 3,
+    "FLASH_CAP": 1,
+    "FLASH_TEMP": 1,
+    "FLASH_VENDOR": 1,
+    "WAFER_VERSION_MINOR_HI": false,
+    "WAFER_VERSION_MAJOR": 0,
+    "OPTIONAL_UNIQUE_ID": "53 b9 b9 18 42 e4 1b 19 ee 00 32 14 02 a8 b4 9b",
+    "BLK_VERSION_MAJOR": 1,
+    "CUSTOM_MAC": "00:00:00:00:00:00 (OK)",
+    "WAFER_VERSION_MINOR": 4
+   },
+   "read": "esptool 4.7.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "#\r\n04:59:14.742 MQT: Subscribe to cmnd/tasmotas/#\r\n04:59:14.746 MQT: Subscribe to cmnd/DVES_8C3EB8_fb/#\r\n04:59:14.750 MQT: tele/esp32-433mhz-cc1101-blue/INFO1 = {\"Info1\":{\"Module\":\"ESP32C3\",\"Version\":\"15.5.0(cc1101-node)\",\"FallbackTopic\":\"cmnd/DVES_8C3EB8_fb/\",\"GroupTopic\":\"cmnd/tasmotas/\"}}\r\n04:59:14.756 MQT: tele/esp32-433mhz-cc1101-blue/INFO2 = {\"Info2\":{\"WebServerMode\":\"Admin\",\"Hostname\":\"esp32-433mhz-cc1101-blue\",\"IPAddress\":\"10.1.90.183\",\"IP6Global\":\"\",\"IP6Local\":\"fe80::ea3d:c1ff:fe8c:3eb8%st2\"}}\r\n04:59:14.763 MQT: tele/esp32-433mhz-cc1101-blue/INFO3 = {\"Info3\":{\"RestartReason\":\"Usb uart reset digital core\",\"BootCount\":49}}\r\n04:59:14.769 TFS: File 'autoexec.bat' not found\r\n04:59:15.007 QPC: Reset\r\n04:59:15.959 SRC: MQTT\r\n04:59:15.960 CMD: Grp 0, Cmd 'STATUS', Idx 1, Len 1, Pld 1, Data '1'\r\n04:59:15.964 MQT: stat/esp32-433mhz-cc1101-blue/STATUS1 = {\"StatusPRM\":{\"Baudrate\":115200,\"SerialConfig\":\"8N1\",\"GroupTopic\":\"tasmotas\",\"OtaUrl\":\"\",\"RestartReason\":\"Usb uart reset digital core\",\"Uptime\":\"0T00:00:08\",\"StartupUTC\":\"2026-09-27T02:59:07\",\"Sleep\":50,\"CfgHolder\":4617,\"BootCount\":48,\"BCResetTime\":\"2026-09-08T03:42:18\",\"SaveCount\":73}}\r\n04:59:16.055 SRC: MQTT\r\n04:59:16.056 CMD: Grp 0, Cmd 'STATUS', Idx 1, Len 2, Pld 10, Data '10'\r\n04:59:16.062 MQT: stat/esp32-433mhz-cc1101-blue/STATUS10 = {\"StatusSNS\":{\"Time\":\"2026-09-27T04:59:16\",\"CC1101\":{\"Mode\":\"weather\",\"Preset\":\"fineoffset-fsk\",\"RSSI\":-81,\"Rx\":0,\"Decoded\":0,\"Tx\":0,\"Reinit\":0,\"SecplusId\":0,\"Rolling\":0}}}\r\n04:59:16.104 SRC: MQTT\r\n04:59:16.105 CMD: Grp 0, Cmd 'STATUS', Idx 1, Len 2, Pld 11, Data '11'\r\n04:59:16.107 BRY: GC from 7230 to 4728 bytes, objects freed 28/51 (in 1 ms) - slots from 94/137 to 56/91\r\n04:59:16.112 MQT: stat/esp32-433mhz-cc1101-blue/STATUS11 = {\"StatusSTS\":{\"Time\":\"2026-09-27T04:59:16\",\"Uptime\":\"0T00:00:09\",\"UptimeSec\":9,\"Heap\":159,\"SleepMode\":\"Dynamic\",\"Sleep\":50,\"LoadAvg\":55,\"MqttCount\":1,\"Berry\":{\"HeapUsed\":4,\"Objects\":51},\"Wifi\":{\"AP\":1,\"SSId\":\"ansells-iot\",\"BSSId\":\"42:07:0B:01:A2:28\",\"Channel\":6,\"Mode\":\"HT20\",\"RSSI\":100,\"Signal\":-39,\"LinkCount\":1,\"Downtime\":\"0T00:00:05\"},\"Hostname\":\"esp32-433mhz-cc1101-blue\",\"IPAddress\":\"10.1.90.183\"}}\r\n04:59:17.011 APP: Boot Count 49\r\n04:59:17.128 CFG: Saved, Count 74, Bytes 4096\r\n04:59:17.987 BRY: GC from 5448 to 4728 bytes, objects freed 3/51 (in 1 ms) - slots from 57/91 to 56/91\r\n04:59:17.994 MQT: tele/esp32-433mhz-cc1101-blue/STATE = {\"Time\":\"2026-09-27T04:59:17\",\"Uptime\":\"0T00:00:10\",\"UptimeSec\":10,\"Heap\":161,\"SleepMode\":\"Dynamic\",\"Sleep\":50,\"LoadAvg\":19,\"MqttCount\":1,\"Berry\":{\"HeapUsed\":4,\"Objects\":51},\"Wifi\":{\"AP\":1,\"SSId\":\"ansells-iot\",\"BSSId\":\"42:07:0B:01:A2:28\",\"Channel\":6,\"Mode\":\"HT20\",\"RSSI\":100,\"Signal\":-39,\"LinkCount\":1,\"Downtime\":\"0T00:00:05\"},\"Hostname\":\"esp32-433mhz-cc1101-blue\",\"IPAddress\":\"10.1.90.183\"}\r\n04:59:18.008 MQT: tele/esp32-433mhz-cc1101-blue/SENSOR = {\"Time\":\"2026-09-27T04:59:17\",\"CC1101\":{\"Mode\":\"weather\",\"Preset\":\"fineoffset-fsk\",\"RSSI\":-83,\"Rx\":0,\"Decoded\":0,\"Tx\":0,\"Reinit\":0,\"SecplusId\":0,\"Rolling\":0}}\r\n"
+  }
+ ]
+}

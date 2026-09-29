@@ -316,13 +316,36 @@ there at 4 pt or more is refused when the label is made, rather than
 shrunk. The
 primary identifier is a QR on the left and, again, the largest thing on the
 label, in monospace along the whole foot. Beside the QR are a subtitle and up
-to three captioned rows, and under the rows is room for a section the caller
-draws itself.
+to four captioned rows (the last runs down beside the foot's caption, whose
+line is otherwise empty there), and under the rows is room for a section the
+caller draws itself.
+
+In place of the subtitle a label may carry a **spec strip**: a row of glyphs
+heading the band beside the QR, for what the device *is* rather than which
+one it is. The strip's glyphs are registered like the header's:
+
+| glyph | draws |
+|---|---|
+| `Icon("riscv")` | the RISC-V mark, the "RV" of RISC-V International's own file without its wordmark |
+| `Icon("xtensa")` | "Xt", set from the name in the RISC-V mark's box (Cadence publishes no logo for it) |
+| `Icon("cores", "2+1")` | a package with two numbers on its die: the application cores large and black, then past a divider the low-power cores small and grey |
+| `Icon("memory", "512K+8M")` | a memory module with its size lettered on it |
+| `Icon("tasmota")` | the Tasmota symbol, from the Tasmota repository |
+| `Icon("bluetooth")` | the Bluetooth rune |
+| `Icon("zigbee")` | the Zigbee mark, for an IEEE 802.15.4 radio |
+| `Icon("revision", "v0.4")` | a chip's revision, its text alone at 4 pt |
+| `Icon("wifi", "2.4/5 a/b/g/n/ac/ax")` | the Wi-Fi arcs with the band under them, the single-letter 802.11 standards beside them and the two-letter ones (ac, ax) beside the band, bold at 4 pt (a header glyph). With one standard (`"2.4 n"`) it is joined to the band, `2.4n`, and a trailing `+bt` or `+zb` draws the Bluetooth rune or the Zigbee mark in the empty corner right or left of the arcs' dot. The band is always centred under the arcs |
+| `Icon("usb", "OJS")` | the USB logo (`usb.svg`, unchanged) turned upright, and on one line over it a letter for each prong, for what the port does: O (OTG) over the round prong, J (JTAG) over the arrow, S (serial) over the square one; a prong with no function leaves its letter's place empty (a header glyph) |
+
+A strip too wide for the band is refused when the label is made.
 
 The same rules apply as on every other label. A micro label with no
 identifier raises when it is constructed, naming the host (and the command
 that reads it, when the caller says). A row with no value is refused rather
-than printed blank. A monospace row is taken to be an identifier someone
+than printed blank; `BLANK_ROW` keeps a row's place empty on purpose, so
+the rows under it stay where they are on other labels. A row with a `size`
+is set at that size on every label rather than shrunk to its value's
+length, and one whose value does not fit whole at it is refused. A monospace row is taken to be an identifier someone
 might type, so it is never elided: a value that will not fit whole at 4 pt
 is an error, not an ellipsis. Too many rows is an error too, not a silent
 drop.
@@ -346,11 +369,120 @@ render_micro([MicroLabel(
 )], "micro.pdf", outline=True)
 ```
 
+## ESP32s
+
+Each ESP32 that `rpi-hwid esp32 --read` has read gets a micro label (`--only
+esp32`), and so does an ESP8266EX or ESP8285, the chip in most Tasmota
+plugs, which esptool reads the same way. Every label has the same parts in
+the same places:
+
+- **Header:** the Espressif mark, then the part number, which is always
+  printed whole: `ESP32-D0WD-V3`, or `ESP32-C3FH4`, where esptool names the
+  die and the chip's eFuse the flash in its package (see
+  [ESPRESSIF.md](ESPRESSIF.md#which-part-a-read-names)). Then the part's
+  radios and USB: Wi-Fi with its bands and newest 802.11 standard (`2.4n`;
+  `2.4ax` on a C6; `2.4/5ax` on a C5), with the Bluetooth rune and, on a C5
+  or C6, the Zigbee mark (its 802.15.4 radio) small in the corners beside
+  the arcs' dot; an H2, with no Wi-Fi, has both full size. Then the USB
+  logo, upright, lettered over its prongs with what the chip's own USB does: `JS` on a
+  C3, C5, C6 or H2 (its USB Serial/JTAG controller), `O` on an S2, `OJS` on
+  an S3 or P4, none on an ESP8266, ESP32 or C2, whose port is a USB-UART
+  bridge's. It is never wider than the Wi-Fi glyph.
+- **Spec strip:** what every chip of that part is, from the table in
+  `rpi_hwid.espressif` ([ESPRESSIF.md](ESPRESSIF.md), every value cited): the
+  ISA (the RISC-V mark, or the Xtensa "Xt" in the same box), the cores as
+  two numbers (the application cores, then the ULP or LP cores, small and
+  grey: `2|1` on an ESP32, `1|0` on a C3, which has none), the on-chip SRAM with any PSRAM in the package (`512K+8M`),
+  the Tasmota symbol where Tasmota ships a binary for the part, and last
+  the chip's revision as read, bare (`v0.4`); an ESP8266 reports none.
+- **Rows,** read from this chip, always in this order:
+  - `flash`: the flash's part where the read settles it (`GD25Q32x`,
+    `XM25QH32D`, or `BY25Q32ES` where a Boya's 128-bit unique id tells it
+    from the 64-bit BS); then its size. A flash whose JEDEC id names no
+    part stops label generation: the error names the host, the ESP32 and
+    the id, and says to add the part to `JEDEC_PART` in
+    `src/rpi_hwid/esp32_micro.py` with its source. A bare id is never
+    printed. The row prints at one size, 4.4 pt, on
+    every label, whatever the length of the part's name. In the package or beside it, the flash is on this row.
+    [research/esp32-flash.md](research/esp32-flash.md) has the reads and the
+    datasheets behind each name.
+  - `uid`: the flash's own unique id, with its trailing `ff` padding
+    trimmed: on one row where that leaves 20 hex digits or fewer, else over
+    two equal halves.
+  - `eFuse`: the chip's own 128-bit `OPTIONAL_UNIQUE_ID`, over two rows.
+
+  Every id the chip and its flash have is printed, the flash's first. An
+  ESP32-C3 has both; an original ESP32 has no eFuse id, and a chip whose
+  flash gives none prints its eFuse id alone. The uid and eFuse rows print
+  at one size, 4 pt, on every label. A uid row's digits start right of its
+  own short caption rather than in the column beside `eFuse`: 20 digits do
+  not fit that column at the 4 pt the labels go down to. Under the spec
+  strip there is room for five rows (a 128-bit flash uid and an eFuse id,
+  two rows each, under the flash row), and however many a label has are
+  spread down to the foot caption's line, no further apart than rows
+  beside a subtitle: a C3's four fill the same height as five.
+  The crystal is read and kept in the document, but not printed.
+
+  **Trimming.** A flash reads out a fixed 128 bits whatever its maker
+  programmed, and an unprogrammed byte reads `ff`. The C3s' XM25QH32D gives
+  80 programmed bits then six `ff` bytes: `240c1119088539540150ffffffffffff`
+  prints as `240c1119088539540150`. Only whole `ff` bytes at the end go, and
+  never below 64 bits, the shortest id these parts have. A 64-bit id
+  (GigaDevice) is printed as read, and a Boya's 128 bits
+  (`343738393844fa77fffcffff968f1f11`, whose `ff`s are inside it) go over
+  two rows untouched. An all-`ff` or all-zero id is no id and is not
+  printed. The collected document keeps every id whole, as read
+  (`flash_uid`, `flash_uid_raw`, `efuse.OPTIONAL_UNIQUE_ID`).
+
+  A flash uid that needs two rows beside an eFuse id would make six rows, one
+  more than the label holds. No board in the fleet has one (a Boya beside an
+  ESP32-S3 would); there the `chip` row gives way, as on the 433 MHz node
+  labels.
+- **Foot and QR:** the base MAC, burned into eFuse: the Wi-Fi station MAC,
+  or on an H2, which has no Wi-Fi, the MAC.
+
+A fact that does not apply leaves its place empty rather than moving another
+into it. Nothing on the label is derived; the Bluetooth MAC, which ESP-IDF
+derives as base+2, is not printed.
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-sticker-1.png" alt="Four ESP32 micro labels from real reads: an ESP32-CAM (ESP32-D0WD-V3) and a devkit (ESP32-D0WDQ6), Xtensa, over two ESP32-C3FH4 SuperMinis, RISC-V" width="98%">
+</p>
+
+These are real reads, from `tests/esp32_devices.json`: an ESP32-CAM and a
+devkit on rpi4-esp, and two of the three C3 radio nodes on rpi5-433mhz. The
+C3s print both their ids: the in-package XMC's, trimmed to its 80 programmed
+bits on one row, and the chip's eFuse id on the two under it.
+`docs/examples/render_esp32.py` regenerates them,
+and a sheet of synthetic samples, one for every part in the table:
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-parts.png" alt="Sample ESP32 micro labels with synthetic data, one for every part in rpi_hwid.espressif" width="98%">
+</p>
+
+What is *not* read is refused, as on every other label:
+
+- An ESP32 known only from the USB tree (a MAC and nothing else) is an error.
+- So is a chip whose eFuse holds a unique id that was not read.
+
+Either error names the host, the MAC and both ways to read it: `rpi-hwid esp32
+--read PORT` on the host, or `rpi-hwid collect --esp32-read HOST=PORT`. Both
+reset the chip. A chip the table has no row for is an error too
+(`espressif.UnknownPartError`, naming the host, the MAC and the chip). The
+chip model is not an identifier, but a label without its spec strip would
+break the layout every other ESP32 label keeps, and the fix is one row in the
+table with its source.
+
+For a label that builds on this one (an ESP32 with a 433 MHz radio, say),
+`esp32_micro.esp32_label(host, device)` returns the plain `MicroLabel` for
+`dataclasses.replace` to add to.
+
 ## Artwork
 
 The package ships the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax,
-Digilent, SQRL, Great Scott Gadgets, SiFive and Tiny Tapeout marks and the RISC-V logo (each its owner's trademark, drawn only on that
-maker's own hardware to identify it) and the public-domain USB trident; see
+Digilent, SQRL, Great Scott Gadgets, SiFive, Tiny Tapeout and Espressif marks, the RISC-V logo and
+its "RV" mark alone, and the Tasmota symbol (each its owner's mark, drawn only where it applies: on its
+maker's own hardware, on a RISC-V part, on a device Tasmota runs on) and the public-domain USB trident; see
 [`src/rpi_hwid/artwork/README.md`](../src/rpi_hwid/artwork/README.md) for the
 sources. A `--artwork DIR` overrides any of them and may add a `netv2.svg`. A
 board whose maker has no mark gets the name in type.

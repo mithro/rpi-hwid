@@ -272,3 +272,93 @@ The module also carries a table of what the board cannot say: the soldermask and
 silkscreen colours of both the chip carrier and the demo board for each shuttle,
 the demo board revision that shipped with each kit, and the chip's page on
 tinytapeout.com, for the label.
+
+## ESP32s
+
+`rpi_hwid.esp32` is a stand-alone module of the same kind, for ESP32s on the host's
+USB. `rpi-hwid esp32` runs it alone, and `rpi-hwid collect --esp32` appends it.
+It has two depths, because they cost very differently.
+
+**The USB tree** is read from sysfs, and no serial port is opened. Opening one
+asserts DTR and RTS, and that alone resets an ESP32 on most boards and on the
+chip's own USB-Serial-JTAG. The tree gives two things:
+
+- An ESP32 on its own USB-Serial-JTAG (`303a:1001`: the C3, C6, S3, H2 and later)
+  carries its base MAC, the Wi-Fi station MAC burned into eFuse, as the USB serial
+  number. That is an identifier read from the chip, with nothing sent to it.
+- Behind a USB-UART bridge (CP210x, CH340, CH343/CH9102, FTDI) the chip is
+  invisible. The bridge could as well be carrying a radio module or a GPS, so it is
+  listed as a candidate and never as an ESP32, with the bridge's own serial where
+  it has one.
+
+**`--read PORT`** is the disruptive depth. It runs an esptool that is already on
+the host, as a library in a child `python3`, so the module itself stays
+stdlib-only. It uses the first interpreter that can import esptool: the host's
+own, or else a virtualenv under `~/.venvs` (rpi4-esp keeps esptool 5.2 there, and
+rpi5-433mhz has Debian's 4.7). Nothing is installed. esptool resets the chip into
+its ROM bootloader through the port's DTR/RTS lines and asks for:
+
+- the chip description, features and crystal;
+- the base MAC;
+- the SPI flash's JEDEC id and the first eight bytes of its RDID (`0x9F`), its
+  status registers (`0x05`, `0x35`, `0x15`), its Read Unique ID (`0x4B`), and
+  its SFDP (`0x5A`), whole;
+- the eFuse fields that are not secret: MAC, custom MAC, `OPTIONAL_UNIQUE_ID`,
+  the wafer, block and package versions, and the flash and PSRAM capacity and
+  vendor.
+
+The flash is asked through the SPI controller's registers, which the ROM loader
+reads and writes for anyone: the same "user command" esptool's
+`run_spiflash_command` sets up, but with the controller's whole 64-byte buffer
+read back, where esptool returns only its first word and refuses to ask for more
+than 32 bits (4.7 and 5.2 alike). No flasher stub and no program in RAM is
+needed. Only read opcodes are sent. A command's dummy bytes are clocked as an
+address phase and dummy cycles, never as data: on an ESP32-C3 a command with a
+data-out phase reads back nothing but zeroes, which is why the first version of
+this read, which did that, found no unique id on any C3.
+
+The unique id is read as 32 bytes, twice, and the two must agree. How long it is
+is the part's to say: 64 or 128 bits, followed by `0xFF` or by the id again, and
+`flash_uid_bits` records which. SFDP is read whole -- the 256-byte header region
+and any parameter table beyond it -- and kept as hex beside a summary of its
+revision, tables and density. docs/research/esp32-flash.md has the reads.
+
+Each step records its own error and the rest carry on, so a flash that will not
+answer does not cost the chip, MAC and eFuse already read. Whatever happens, a
+`finally` resets the chip back into its application. The first version had no
+such guard, and it once left three nodes sitting in the ROM.
+
+The same port stays open while the application boots, so its first lines are
+kept as evidence that it came back. HUPCL is cleared first, so closing the port
+does not reset the chip again, and the port is given a read timeout, so a quiet
+application cannot hold the read open. Nothing is written, to flash or to eFuse,
+and no key block is printed.
+
+Only the ports named are touched: a port on the host may belong to something
+else that a reset would interrupt. On `collect` the ports are named per host, as
+`--esp32-read HOST=PORT`, where HOST may be written with or without its user. A
+HOST that is not being collected is an error, reported before anything is
+probed.
+
+What the reads of 2026-09-26 and 27 found:
+
+- **ESP32-C3 SuperMinis:** their in-package flash is an XMC (JEDEC `0x464016`,
+  which ESP-IDF files as XMC's D series) with SFDP 1.6 and a 128-bit unique id
+  whose last six bytes are `0xFF`. The first read, which sent the dummy bytes as
+  data, got zeroes; the chip's own `OPTIONAL_UNIQUE_ID` is there as well.
+- **An ESP32-CAM's Boya flash:** a 128-bit unique id, SFDP 1.0.
+- **A devkit's GigaDevice flash:** a 64-bit unique id, SFDP 1.0.
+
+Every board was back in its application within seconds of the read.
+
+The devices land in the document's `verdict.esp32`, beside the summary rather than
+in it; the USB tree and each read's output are kept as evidence under `esp32`.
+
+```
+$ rpi-hwid esp32                 # rpi5-433mhz: three C3 SuperMinis, a LilyGO, an E22
+  esp32  : e8:3d:c1:8c:5c:88  ESP32 (chip not read)  /dev/ttyACM0 (usb-serial-jtag)
+  esp32  : 44:1b:f6:2e:b3:80  ESP32 (chip not read)  /dev/ttyACM2 (usb-serial-jtag)
+  esp32  : e8:3d:c1:8c:3e:b8  ESP32 (chip not read)  /dev/ttyACM3 (usb-serial-jtag)
+  esp32? : CH9102 bridge 1a86:55d4 serial 591B031339 on /dev/ttyACM1; --read /dev/ttyACM1 would reset it to ask
+  esp32? : CH340 bridge 1a86:7523 serial (none) on /dev/ttyUSB0; --read /dev/ttyUSB0 would reset it to ask
+```

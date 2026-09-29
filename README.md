@@ -196,6 +196,7 @@ rpi-hwid probe [--json] [--fpga] [--jtag] [--flash] [--tinytapeout]
                                                       on a Pi: what is this?
 rpi-hwid fpga [--json] [--jtag] [--flash]             on a Pi: which FPGA board?
 rpi-hwid tinytapeout [--json] [--no-repl]             on a Pi: which Tiny Tapeout board?
+rpi-hwid esp32 [--json] [--read PORT…]               on a Pi: which ESP32s are on its USB?
 rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] HOST…
                                                       over ssh: one JSON per host
 rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
@@ -211,6 +212,8 @@ rpi-hwid revision CODE…                               decode Pi revision codes
   document the rest of the package consumes, and reading it from Python.
 - [docs/LABELS.md](docs/LABELS.md) — the derived names, the five label layouts,
   the label options and the artwork.
+- [docs/ESPRESSIF.md](docs/ESPRESSIF.md) — the Espressif parts the ESP32 labels
+  know (ISA, cores, SRAM, radios, Tasmota support), every value cited.
 - [docs/DEVELOPING.md](docs/DEVELOPING.md) — contributor notes.
 - [RELEASING.md](RELEASING.md) — how a version reaches PyPI and apt.
 
