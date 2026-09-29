@@ -430,10 +430,19 @@ def test_the_usb_glyph_letters_what_the_chip_s_own_usb_does(family, letters):
 
 @pytest.mark.parametrize("part", espressif.PARTS, ids=lambda p: p.part)
 def test_the_usb_glyph_is_no_larger_than_the_wifi_glyph(part):
-    """Tim, 2026-09-29: "no bigger than the wifi icon"."""
-    icons = {i.name: micro._icon_width(None, i) for i in esp32_micro.radio_icons(part.family)}
-    if "usb" in icons and "wifi" in icons:
-        assert icons["usb"] <= icons["wifi"] + 0.01
+    """Tim, 2026-09-29: "no bigger than the wifi icon". The upright
+    trident is as high as the Wi-Fi glyph and no wider than one carrying
+    Bluetooth. The one exception is the S2's: it has no Bluetooth, and its
+    Wi-Fi glyph (2.8 mm) is narrower than three letters side by side at
+    4 pt (3.2 mm)."""
+    icons = {i.name: i for i in esp32_micro.radio_icons(part.family)}
+    if "usb" not in icons or "wifi" not in icons:
+        return
+    usb = micro._icon_width(None, icons["usb"])
+    widest = micro.wifi_width(micro.HEAD_H, "2.4 n +bt")
+    assert usb <= widest + 0.01
+    if micro.wifi_bluetooth(icons["wifi"].text)[1]:
+        assert usb <= micro._icon_width(None, icons["wifi"]) + 0.01
 
 
 @pytest.mark.parametrize("part", espressif.PARTS, ids=lambda p: p.part)

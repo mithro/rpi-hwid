@@ -313,7 +313,8 @@ def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
 # What a lettered USB glyph may say the port does, in the order it says it:
 # O a USB OTG controller, J a USB JTAG debug port, S a USB serial port.
 USB_LETTERS = "OJS"
-USB_LETTER_GAP = 0.2 * mm
+USB_LETTER_GAP = 0.15 * mm     # the least room between two prongs' letters
+USB_LETTER_DROP = 0.25 * mm    # the letters' baseline to the arrow's tip
 
 
 def usb_letters(text: str) -> str:
@@ -323,22 +324,33 @@ def usb_letters(text: str) -> str:
     return "".join(ch for ch in USB_LETTERS if ch in text)
 
 
-def _usb_letters_width(text: str) -> float:
-    return (sum(_bold(ch) for ch in text) + USB_LETTER_GAP * (len(text) - 1))
+def usb_prong_pitch() -> float:
+    """How far apart the upright trident's prongs stand: far enough that
+    the letters over any two neighbours clear each other."""
+    o, j, s = (_bold(ch) for ch in USB_LETTERS)
+    return max(o + j, j + s) / 2 + USB_LETTER_GAP
 
 
 def usb_width(size: float, text: str) -> float:
     if not text:
         return 0.7 * _artwork_width("usb.svg", size)
-    return max(wifi_arcs_width(size), _usb_letters_width(usb_letters(text)))
+    o, _, s = (_bold(ch) for ch in USB_LETTERS)
+    return 2 * usb_prong_pitch() + (o + s) / 2
 
 
 def glyph_usb(cell: Cell, x: float, y: float, size: float, text: str) -> float:
-    """The USB trident. With text -- ``Icon("usb", "OJS")`` -- what the
-    port does, lettered under it as the Wi-Fi glyph letters its band (Tim,
-    2026-09-29): O for OTG, J for JTAG, S for serial, bold at the smallest
-    size, spaced apart. The trident is then only as wide as the Wi-Fi
-    glyph's arcs, so the glyph is no larger than a Wi-Fi glyph."""
+    """The USB trident. With text -- ``Icon("usb", "OJS")`` -- it stands
+    upright, turned 90 degrees, its prongs up, and over each prong a letter
+    for what the port does (Tim, 2026-09-29): O for OTG over the round
+    prong, J for JTAG over the arrow, S for serial over the square one; a
+    prong the port has no function for carries no letter. Bold at the
+    smallest size, all on one line above the arrow's tip.
+
+    The upright trident is drawn here in the logo's shapes -- the base
+    disc, the stem, the arrowhead, the round and the square prong on their
+    branches -- but spread wider than usb.svg is, so the three letters fit
+    side by side over its prongs: usb.svg turned upright at this height is
+    1.1 mm wide, and its prongs 0.4 mm apart."""
     path = labels.artwork("usb.svg")
     if not path:
         return 0.0
@@ -347,14 +359,58 @@ def glyph_usb(cell: Cell, x: float, y: float, size: float, text: str) -> float:
         return float(cell.svg(path, x, y + size * 0.15, size * 0.7))
     letters = usb_letters(text)
     w = usb_width(size, text)
-    arcs_w, box_h = wifi_arcs_width(size), _wifi_geometry(size)[0]
-    th = arcs_w * labels.mark_aspect(path)
-    cell.svg(path, x + (w - arcs_w) / 2, y + (box_h - th) / 2, th)
-    lx = x + (w - _usb_letters_width(letters)) / 2
-    bottom = y + _wifi_baseline(size) - WIFI_TYPE * 0.72
+    pitch = usb_prong_pitch()
+    cx = x + _bold("O") / 2 + pitch
+    prong_x = dict(zip(USB_LETTERS, (cx - pitch, cx, cx + pitch), strict=True))
+    base = y + WIFI_TYPE * 0.72
     for ch in letters:
-        cell.text(lx, bottom, ch, labels.SANS_BOLD, WIFI_TYPE)
-        lx += _bold(ch) + USB_LETTER_GAP
+        cell.text(prong_x[ch], base - WIFI_TYPE * 0.72, ch, labels.SANS_BOLD, WIFI_TYPE,
+                  align="centre")
+    top, bottom = base + USB_LETTER_DROP, y + size
+    h = bottom - top
+
+    def at(px: float, frac: float) -> tuple[float, float]:
+        """A point `frac` of the trident's height up from its foot."""
+        return cell.pt(px, bottom - h * frac)
+
+    c = cell.c
+    lw = h * 0.08
+    c.setStrokeColor(black)
+    c.setFillColor(black)
+    c.setLineWidth(lw)
+    c.setLineJoin(1)
+    disc = h * 0.13
+    # the stem, from the base disc to the arrowhead
+    c.line(*at(cx, 0.1), *at(cx, 0.8))
+    bx, by = at(cx, disc / h)
+    c.circle(bx, by, disc, stroke=0, fill=1)
+    tip, head_w, head_h = at(cx, 1.0), h * 0.24, h * 0.22
+    arrow = c.beginPath()
+    arrow.moveTo(*tip)
+    arrow.lineTo(tip[0] - head_w / 2, tip[1] - head_h)
+    arrow.lineTo(tip[0] + head_w / 2, tip[1] - head_h)
+    arrow.close()
+    c.drawPath(arrow, stroke=0, fill=1)
+    # the branches: out and up from the stem, then straight up to their ends
+    lx, rx = prong_x["O"], prong_x["S"]
+    left = c.beginPath()
+    left.moveTo(*at(cx, 0.28))
+    left.lineTo(*at(lx, 0.5))
+    left.lineTo(*at(lx, 0.72))
+    c.drawPath(left, stroke=1, fill=0)
+    right = c.beginPath()
+    right.moveTo(*at(cx, 0.38))
+    right.lineTo(*at(rx, 0.6))
+    right.lineTo(*at(rx, 0.76))
+    c.drawPath(right, stroke=1, fill=0)
+    ball = h * 0.09
+    ox, oy = at(lx, 0.72)
+    c.circle(ox, oy + ball * 0.6, ball, stroke=0, fill=1)
+    sq = h * 0.17
+    sx, sy = at(rx, 0.76)
+    c.rect(sx - sq / 2, sy, sq, sq, stroke=0, fill=1)
+    c.setLineWidth(1)
+    c.setLineJoin(0)
     return w
 
 
