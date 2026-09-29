@@ -207,6 +207,66 @@ with a blank on it still gets printed, peeled and stuck to a board. A fact
 that is not an identifier and was not read — an Arty's flash part, say — is
 simply left off rather than announced.
 
+### The flash part
+
+The flash row names the configuration flash's part from the JEDEC id it
+answered, with the vendor and the density. The part comes from, in order:
+
+1. the tables in `rpi_hwid.labels` — `JEDEC_PART`, and the extended-id and
+   SFDP rules beside it — each entry argued from a datasheet or a real read.
+   They win wherever they have one: the Arty's `0x20ba18` is an N25Q128 or an
+   MT25QL128 by its extended id, and pi9's `0x012018` an S25FL127S by its SFDP,
+   which no merged table can say;
+2. the [spiflash](https://github.com/mithro/spiflash) package, which merges
+   the SPI flash tables of Linux, U-Boot, flashrom, flashprog, OpenOCD and
+   openFPGALoader, for the hundreds of ids nobody here has written up. Only its
+   SPI NOR entries count: a SPI NAND id is two bytes, and the NeTV2's
+   `0xc22017` starts with the MX35LF2G14AC's `c220`.
+
+A JEDEC id is answered by a family, not a part, so what prints is every part
+at that id with the letters it cannot settle written as x: `W25Q32xx` for
+Winbond's W25Q32BV to JV, `GD25Q32x` for GD25Q32 and GD25Q32C. Two families at
+one id are both named (`N25Q128/MT25QL128`). Before spiflash's names are merged
+they are cut back to the part numbers they stand for
+(`rpi_hwid.spi_flash_parts.normalise`):
+
+| upstream name | becomes | why |
+|---|---|---|
+| `S25FL128S......0` | `S25FL128S` | flashrom's run of `.` is the order code's package, grade and model letters |
+| `S25FL128S_UL`, `N25Q128_3V`, `W25Q256JV_Q` | `S25FL128S`, `N25Q128`, `W25Q256JV` | after `_`: a sector layout, supply or interface mode of one part |
+| `S25FL127S-256KB`, `W25Q64JV-.Q` | `S25FL127S`, `W25Q64JV` | a `-` after the part's closing letter does the same (after a digit it is the part's own: ST's `M25P05-A`) |
+| `S25FL128S0`, `S25FL128S1` | `S25FL128S` | Linux's model digit, where the rest is itself a name at the id |
+| `MACRONIX-C22019` | — | the id's own hex, which is the bare id and not a part |
+| `W25Q128.V`, `B.25Q32BS` | kept | a `.` inside a name is a letter flashrom leaves open: it prints as x, and matches any letter when grouping families, so Boya's `B.25Q32BS`, `BY25Q32CS` and `BY25Q32ES` are `Bx25Q32xS` |
+
+A part spiflash names comes with spiflash's maker, since a manufacturer byte is
+unique only within a JEP106 bank: `0x204016` is XMC's XM25QH32, although `0x20`
+is Micron's.
+
+**A flash whose id names no part stops label generation.** It would otherwise
+print its own hex — a "bare JEDEC id", which is a placeholder and not a part.
+The error names the host, the board, what the chip answered and how to add it:
+
+```
+pi3: the arty board's configuration flash answered JEDEC id 0x464016 (4 MiB),
+and no table names that part -- not JEDEC_PART in src/rpi_hwid/labels.py, nor
+the spiflash package's SPI NOR tables (spiflash 0.0.post11, merged from Linux,
+U-Boot, flashrom, flashprog, OpenOCD and openFPGALoader) -- so its label would
+print the bare id. Identify the chip from its package marking or the board's
+bill of materials, then either add it to JEDEC_PART in src/rpi_hwid/labels.py,
+one line per id: `0x464016: "<part>",  # <vendor> <datasheet title and
+revision>, <the table giving this id>`, naming every part the datasheet gives
+this id and writing the letters it cannot settle as x (W25Q32xx), and its maker
+to JEDEC_VENDOR beside it as `0x46: "<vendor>"`; or report it to spiflash at
+https://github.com/mithro/spiflash/issues with the id and that datasheet, and
+upgrade spiflash (`uv lock --upgrade-package spiflash`, or `apt upgrade
+python3-spiflash`) once a release names it.
+```
+
+Where the manufacturer byte is one spiflash's other parts give a maker, the
+error says whose it probably is (`manufacturer 0x68, which spiflash's other
+parts give to Boya`). The id itself stays in the probe document either way.
+
 Nothing a reflash could change appears on any of them. Which gateware a
 Cynthion is running settles whether its USB serial may be trusted as the flash
 uid, and then stays in the probe document where it belongs.

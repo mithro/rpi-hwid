@@ -249,7 +249,23 @@ def test_the_smaller_acorn_is_the_cle_101(docs):
     # pi-sw2-p48's Acorn, RDID 01 02 19 read by the Acorn deployment
     ("0x010219", "Spansion", "S25Fx256S", "32 MiB"),
     ("0xef4018", "Winbond", "W25Q128xx", "16 MiB"),
-    ("0xc22019", "Macronix", None, "32 MiB"),     # vendor and density, no part
+    # No hand-written entry, so the spiflash package names the part
+    # (rpi_hwid.spi_flash_parts): MX25L25635E/F and MX25L25645/G share this
+    # id, and the letters they differ in are written as x.
+    ("0xc22019", "Macronix", "MX25L256x5x", "32 MiB"),
+    # GD25Q32 and GD25Q32C, and a vendor the hand-written table never had
+    ("0xc84016", "GigaDevice", "GD25Q32x", "4 MiB"),
+    # an Atmel capacity byte is not log2 of the size, so spiflash gives it;
+    # the AT25DF321A and AT25DF321B share the id
+    ("0x1f4701", "Atmel", "AT25DF321x", "4 MiB"),
+    # XMC's: 0x20 is Micron's byte in JEDEC_VENDOR too, but a part spiflash
+    # names comes with spiflash's maker
+    ("0x204016", "XMC", "XM25QH32x", "4 MiB"),
+    # Boya's (and BoHong's): flashrom's B.25Q32BS with BY25Q32CS and ES
+    ("0x684016", "Boya", "Bx25Q32xS", "4 MiB"),
+    # an id no table lists: its own bytes still give the density, and the
+    # label generator refuses it (test_a_bare_jedec_id_stops_label_generation)
+    ("0x5a1018", None, None, "16 MiB"),
     ("0x000000", None, None, None),
     (None, None, None, None), ("junk", None, None, None),
 ])
@@ -1053,9 +1069,6 @@ def test_no_shuttle_mark_is_a_wordmark():
     ("0xef4017", "Winbond W25Q64xx  ·  8 MiB"),      # BV CV FV: pi-sw1-p38's
     ("0xef4018", "Winbond W25Q128xx  ·  16 MiB"),
     ("0xef4019", "Winbond W25Q256xx  ·  32 MiB"),
-    # a manufacturer byte nobody here has met: there is no family to name,
-    # and the id is still the one fact in hand
-    ("0x5a1018", "0x5a1018  ·  16 MiB"),
 ])
 def test_the_flash_line_never_asserts_a_part_number_nobody_read(jedec, line):
     """Vendor and density come out of the id's own bytes -- the JEP106
@@ -1108,6 +1121,83 @@ def test_sfdp_tells_an_s25fl127s_from_an_s25fl128s(sfdp, line):
     assert labels.flash_text(labels.flash_from_jedec("0x012018", "0x4d0180", sfdp)) == line
     # ...and changes nothing where the family byte already said it all
     assert labels.flash_from_jedec("0x010219", "0x4d0180", sfdp)["part"] == "S25FL256S"
+
+
+@pytest.mark.parametrize(("jedec", "extended", "sfdp", "hand", "spiflash_name"), [
+    # Every id the hand-written tables name is also in spiflash, under a name
+    # worked out from its entries alone. The hand-written one is argued from
+    # datasheets and real reads, so it wins: the NeTV2's Macronix has the same
+    # parts either way but spiflash adds a letter for the D in MX25L6405D; the
+    # Arty's Micron is settled by its extended id, which spiflash's Micron
+    # entries do not key on; the FL-S at 0x012018 by its SFDP; and the
+    # PCILeech card's Winbond is not Spansion's rebadge of it.
+    ("0xc22017", None, None, "MX25L64xx", "MX25L64xxx"),
+    ("0x20ba18", "0x100000", None, "N25Q128", "MT25QL128/N25Q128xxx"),
+    ("0x012018", "0x4d0180", "1.6", "S25FL127S", "S25xx12xxx"),
+    ("0xef4017", None, None, "W25Q64xx", "S25FL064K/W25Q64xx"),
+])
+def test_the_hand_written_names_win_over_spiflashs(jedec, extended, sfdp, hand,
+                                                    spiflash_name):
+    from rpi_hwid import spi_flash_parts
+
+    assert labels.flash_from_jedec(jedec, extended, sfdp)["part"] == hand
+    assert spi_flash_parts.name(int(jedec, 16)) == spiflash_name
+
+
+def test_a_bare_jedec_id_stops_label_generation():
+    """A flash whose id names no part -- in the hand-written table or in
+    the spiflash package's -- would print as its hex: a "bare JEDEC id",
+    which is a placeholder, not a part. So generation stops, naming the host,
+    the board, what the chip answered and exactly where to add it."""
+    import spiflash
+
+    docs = _arty(flash_jedec="0x5a1018", flash_extended_id="0x001122",
+                 flash_sfdp="1.6", flash_uid_state="read",
+                 flash_uid="0123456789abcdef")
+    # the record keeps the id: it is only the label that is refused
+    (rec,) = labels.fpga_records(docs)
+    assert rec.flash_jedec == "0x5a1018"
+    with pytest.raises(labels.UnknownFlashPartError) as caught:
+        list(labels.all_labels(docs, {"fpga"}))
+    message = str(caught.value)
+    for fact in ("pi3", "arty", "0x5a1018", "0x001122", "SFDP 1.6", "16 MiB",
+                 # where it goes, in what form, and on whose word
+                 "JEDEC_PART", "src/rpi_hwid/labels.py", '0x5A1018: "', "datasheet",
+                 # ...that spiflash, at this version, lacks it too
+                 f"spiflash {spiflash.__version__}",
+                 # ...and the other way in: report it, then upgrade
+                 "https://github.com/mithro/spiflash/issues",
+                 "uv lock --upgrade-package spiflash", "apt upgrade python3-spiflash"):
+        assert fact in message, fact
+    # nor is it a flash that was not read, which has its own error
+    assert not isinstance(caught.value, labels.FlashNotReadError)
+
+
+def test_the_esp32_modules_flash_is_a_bare_id_until_someone_names_it():
+    """0x464016 is in no table (mithro/spiflash#1): the stop rule names its
+    probable maker only where spiflash's other parts give that byte one."""
+    docs = _arty(flash_jedec="0x464016", flash_uid_state="read",
+                 flash_uid="0123456789abcdef")
+    with pytest.raises(labels.UnknownFlashPartError) as caught:
+        list(labels.all_labels(docs, {"fpga"}))
+    assert "JEDEC id 0x464016 (4 MiB)" in str(caught.value)
+    assert '`0x46: "<vendor>"`' in str(caught.value)
+    # a byte spiflash does know says whose it probably is
+    docs = _arty(flash_jedec="0x68ff16", flash_uid_state="read",
+                 flash_uid="0123456789abcdef")
+    with pytest.raises(labels.UnknownFlashPartError) as caught:
+        list(labels.all_labels(docs, {"fpga"}))
+    assert "manufacturer 0x68, which spiflash's other parts give to Boya" in str(caught.value)
+
+
+def test_a_bare_jedec_id_on_a_reworked_cynthion_stops_it_too():
+    """The Cynthion's BOM names its flash only while the chip agrees with it;
+    a chip that answers something no table knows is a bare id like any
+    other."""
+    with pytest.raises(labels.UnknownFlashPartError) as caught:
+        list(labels.all_labels(_cynthion(flash_jedec="0x5a1018"), {"cynthion"}))
+    assert "rpi5-netv2" in str(caught.value)
+    assert "cynthion" in str(caught.value)
 
 
 def _arty(**flash):
@@ -1212,8 +1302,9 @@ def _cynthion(**flash):
     # it, so the board does not change its label by being read.
     ("0xef4016", "Winbond W25Q32JV  ·  4 MiB"),
     # asked, and it answered something else -- a reworked board. The chip is
-    # the better witness to its own identity than a document about the design.
-    ("0xc84016", "GigaDevice 0xc84016  ·  4 MiB"),
+    # the better witness to its own identity than a document about the design,
+    # and spiflash lists GD25Q32 and GD25Q32C at its id.
+    ("0xc84016", "GigaDevice GD25Q32x  ·  4 MiB"),
 ])
 def test_the_cynthions_flash_reads_the_same_whichever_way_it_is_learned(jedec, line):
     """Its type comes from the revision's bill of materials, and from the chip
