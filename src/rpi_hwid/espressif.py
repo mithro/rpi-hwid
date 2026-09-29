@@ -150,6 +150,19 @@ class Family:
         return tuple(re.findall(r"\d+(?:\.\d+)?", self.wifi_bands or ""))
 
     @property
+    def usb_functions(self) -> tuple[str, ...]:
+        """What the chip's own USB does: ('otg',) for an S2, ('jtag',
+        'serial') for the USB Serial/JTAG controller of a C3, C5, C6 or H2,
+        all three for an S3 or P4; () for a part with no USB, whose port on
+        a board is a USB-UART bridge's."""
+        out: tuple[str, ...] = ()
+        if "OTG" in self.usb:
+            out += ("otg",)
+        if "Serial/JTAG" in self.usb:
+            out += ("jtag", "serial")
+        return out
+
+    @property
     def lp_cores(self) -> int:
         """How many low-power cores run beside the application cores: one
         wherever there is an LP or ULP coprocessor. The S2's and S3's two

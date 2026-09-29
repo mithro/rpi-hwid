@@ -6,17 +6,19 @@ most Tasmota plugs. Every label has the same parts in the same places:
 
   header      the Espressif mark; the part number, as the read names it
               (``rpi_hwid.espressif.part_for``: ESP32-C3FH4, ESP32-D0WD-V3,
-              ESP8285N08), always whole; then the chip's radios as glyphs --
-              Wi-Fi with its bands and 802.11 standards, Bluetooth, an
-              802.15.4 mesh
+              ESP8285N08), always whole; then glyphs for the chip's radios
+              and USB -- Wi-Fi with its bands and newest 802.11 standard
+              and, small on it, Bluetooth; the USB trident lettered O
+              (OTG), J (JTAG), S (serial) for what the chip's own USB does;
+              an 802.15.4 mesh
   spec strip  what every chip of that part is, from the table: the ISA
               (the RISC-V mark, or the Xtensa "Xt" in the same box), the
               cores (two numbers: the application cores, then the
               low-power ones, small and grey), the on-chip SRAM with any
               in-package PSRAM, and the Tasmota mark where Tasmota ships a
-              binary for it
+              binary for it; last the chip's revision as read, bare
+              ("v0.4": Tim, 2026-09-29)
   rows        what was read from this chip, always in this order:
-                chip   its revision
                 flash  the flash's part where the read settles it (the
                        JEDEC id, and for a Boya the unique id's length),
                        else its JEDEC id (with its vendor where that fits);
@@ -28,12 +30,12 @@ most Tasmota plugs. Every label has the same parts in the same places:
                        rows
               every id the chip and its flash have is printed (Tim,
               2026-09-27), and each kind of row prints at one size on every
-              label (CHIP_PT, FLASH_PT, UID_PT), whatever the value's length
+              label (FLASH_PT, UID_PT), whatever the value's length
   foot and QR the base MAC, burned into eFuse: the identifier
 
 A fact that does not apply leaves its place empty rather than moving
-another into it: an ESP8266 reports no revision, so its chip row's place is
-blank (BLANK_ROW); a chip with neither serial has no uid or eFuse rows. The crystal
+another into it: a chip with neither serial has no uid or eFuse rows, and
+an ESP8266, which reports no revision, has none on its strip. The crystal
 is read and kept in the document but not printed (Tim, 2026-09-27). Every
 value is either read or looked up; nothing is derived. The Bluetooth MAC, which
 ESP-IDF derives as base+2, is not printed: it is not read from anything,
@@ -45,10 +47,8 @@ in-package XMC reads out 128 bits of which its maker programmed the first
 takes one row and the chip's eFuse id the two under it; the rows under the
 spec strip are set one step tighter to hold them (``micro.SPEC_ROWS``). The
 collected document keeps both ids whole, as read. A flash uid that needs two
-rows beside an eFuse id -- a Boya's 128 bits beside an ESP32-S3, say, which
-no board in the fleet is -- would make six rows, one more than the label
-holds: there the chip row gives way, as it does on the 433 MHz node labels,
-its revision being the one fact every chip of a batch shares.
+rows beside an eFuse id -- a Boya's 128 bits beside an ESP32-S3, say --
+fills all five.
 
 A device whose chip was never read gets no label: the error names the host,
 the MAC and the commands that read it, which reset the chip. The USB tree
@@ -75,7 +75,7 @@ from typing import TYPE_CHECKING, Any
 from reportlab.pdfbase import pdfmetrics
 
 from rpi_hwid import espressif, labels, micro
-from rpi_hwid.micro import BLANK_ROW, Icon, MicroLabel, MicroRow
+from rpi_hwid.micro import Icon, MicroLabel, MicroRow
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping
@@ -126,11 +126,8 @@ PART_BY_UID_BITS = {0x684016: {64: "BY25Q32BS", 128: "BY25Q32ES"}}
 # rows alike -- are set at the size a C3's trimmed flash uid, twenty hex
 # digits, fits at on one row. That row is wide (micro.MicroRow.wide), its
 # digits starting right of its own short caption: at the smallest size the
-# labels print, twenty digits are wider than the column beside "eFuse". The
-# chip row matches the serials: at the rows' tighter pitch a larger one's
-# caption would bring the descender of "chip" onto the "h" of "flash".
-CAPTIONS = ("chip", "flash", "uid", "eFuse")
-CHIP_PT = 4.0
+# labels print, twenty digits are wider than the column beside "eFuse".
+CAPTIONS = ("flash", "uid", "eFuse")
 FLASH_PT = 4.4
 UID_PT = 4.0
 # The hex digits one uid row holds whole at UID_PT beside its caption.
@@ -325,24 +322,35 @@ def serial_rows(dev: Esp32Device) -> list[MicroRow]:
     return rows
 
 
+USB_LETTER = {"otg": "O", "jtag": "J", "serial": "S"}
+
+
 def radio_icons(fam: espressif.Family) -> tuple[Icon, ...]:
-    """The header's glyphs: the radios the part has. Not its USB: the
-    trident is the widest glyph there is, and beside three radios it would
-    leave a C5's or C6's part number no room to print whole; the table
-    keeps it."""
+    """The header's glyphs: the radios the part has and its own USB.
+
+    Wi-Fi with its bands and newest standard ("2.4 n", "2.4/5 ax"), and
+    Bluetooth small on it where the part has both; Bluetooth alone where
+    it has no Wi-Fi. Then the USB trident, lettered with what the chip's
+    own USB does (O OTG, J JTAG, S serial), and no wider than the Wi-Fi
+    glyph (Tim, 2026-09-29); none where the chip has no USB. Last the
+    802.15.4 mesh."""
     icons = []
     if fam.wifi:
-        # the bands and the newest 802.11 standard: "2.4 n", "2.4/5 ax"
-        icons.append(Icon("wifi", "/".join(fam.wifi_band_ghz) + " " + str(fam.wifi_newest)))
-    if fam.bluetooth:
+        text = "/".join(fam.wifi_band_ghz) + " " + str(fam.wifi_newest)
+        icons.append(Icon("wifi", text + (" " + micro.WIFI_BT if fam.bluetooth else "")))
+    elif fam.bluetooth:
         icons.append(Icon("bluetooth"))
+    if fam.usb_functions:
+        icons.append(Icon("usb", "".join(USB_LETTER[f] for f in fam.usb_functions)))
     if fam.ieee802154:
         icons.append(Icon("mesh"))
     return tuple(icons)
 
 
-def spec_icons(part: espressif.Part) -> tuple[Icon, ...]:
-    """The spec strip: ISA, cores, memory, and Tasmota where it builds."""
+def spec_icons(part: espressif.Part, revision: str | None = None) -> tuple[Icon, ...]:
+    """The spec strip: ISA, cores, memory, Tasmota where it builds, and
+    last the chip's revision as read, bare (Tim, 2026-09-29); an ESP8266
+    reports none."""
     fam = part.family
     cores = "{}+{}".format(*part.core_pair)
     memory = f"{fam.sram_kb}K" + (f"+{part.psram_mb:g}M" if part.psram_mb else "")
@@ -350,6 +358,8 @@ def spec_icons(part: espressif.Part) -> tuple[Icon, ...]:
              Icon("cores", cores), Icon("memory", memory)]
     if fam.tasmota in espressif.TASMOTA_BINARY:
         specs.append(Icon("tasmota"))
+    if revision:
+        specs.append(Icon("revision", revision))
     return tuple(specs)
 
 
@@ -387,20 +397,15 @@ def esp32_label(host: str, dev: Esp32Device) -> MicroLabel:
 
 def _label(host: str, dev: Esp32Device, part: espressif.Part) -> MicroLabel:
     fam = part.family
-    # the chip row is the revision; an ESP8266 reports none, and leaves the
-    # row's place empty so the flash row stays where it is on every label
-    rows = [MicroRow("chip", dev.revision, size=CHIP_PT) if dev.revision else BLANK_ROW]
+    rows = []
     flash = flash_line(host, dev, part)
     if flash:
         rows.append(MicroRow("flash", flash, size=FLASH_PT))
     rows += serial_rows(dev)
-    if len(rows) > micro.SPEC_ROWS:
-        # a two-row flash uid beside an eFuse id: the chip row gives way (see
-        # the module docstring)
-        rows = rows[1:]
     return MicroLabel(
         host=host, title=part.part, mark=MARK, icons=radio_icons(fam),
-        specs=spec_icons(part), ident_caption="Wi-Fi MAC" if fam.wifi else "MAC",
+        specs=spec_icons(part, dev.revision),
+        ident_caption="Wi-Fi MAC" if fam.wifi else "MAC",
         ident=dev.mac or "", rows=tuple(rows),
         read_with=read_command(host, dev))
 
