@@ -8,9 +8,10 @@ most Tasmota plugs. Every label has the same parts in the same places:
               (``rpi_hwid.espressif.part_for``: ESP32-C3FH4, ESP32-D0WD-V3,
               ESP8285N08), always whole; then glyphs for the chip's radios
               and USB -- Wi-Fi with its bands and newest 802.11 standard
-              and, small on it, Bluetooth; the USB trident lettered O
-              (OTG), J (JTAG), S (serial) for what the chip's own USB does;
-              an 802.15.4 mesh
+              and, small in the corners beside its dot, the Bluetooth rune
+              and the Zigbee mark (an 802.15.4 radio); the USB trident,
+              upright, a letter over each prong for what the chip's own
+              USB does: O (OTG), J (JTAG), S (serial)
   spec strip  what every chip of that part is, from the table: the ISA
               (the RISC-V mark, or the Xtensa "Xt" in the same box), the
               cores (two numbers: the application cores, then the
@@ -329,21 +330,22 @@ def radio_icons(fam: espressif.Family) -> tuple[Icon, ...]:
     """The header's glyphs: the radios the part has and its own USB.
 
     Wi-Fi with its bands and newest standard ("2.4 n", "2.4/5 ax"), and
-    Bluetooth small on it where the part has both; Bluetooth alone where
-    it has no Wi-Fi. Then the USB trident, lettered with what the chip's
-    own USB does (O OTG, J JTAG, S serial), and no wider than the Wi-Fi
-    glyph (Tim, 2026-09-29); none where the chip has no USB. Last the
-    802.15.4 mesh."""
+    riding on it, small in the corners beside its dot, the Bluetooth rune
+    and the Zigbee mark for an 802.15.4 radio (Tim, 2026-09-29). A part
+    without Wi-Fi (the H2) has them full size instead. Then the USB
+    trident, upright, a letter over each prong for what the chip's own
+    USB does (O OTG, J JTAG, S serial); none where the chip has no USB."""
     icons = []
     if fam.wifi:
         text = "/".join(fam.wifi_band_ghz) + " " + str(fam.wifi_newest)
-        icons.append(Icon("wifi", text + (" " + micro.WIFI_BT if fam.bluetooth else "")))
-    elif fam.bluetooth:
-        icons.append(Icon("bluetooth"))
+        text += " " + micro.WIFI_BT if fam.bluetooth else ""
+        text += " " + micro.WIFI_ZB if fam.ieee802154 else ""
+        icons.append(Icon("wifi", text))
+    else:
+        icons += [Icon("bluetooth")] if fam.bluetooth else []
+        icons += [Icon("zigbee")] if fam.ieee802154 else []
     if fam.usb_functions:
         icons.append(Icon("usb", "".join(USB_LETTER[f] for f in fam.usb_functions)))
-    if fam.ieee802154:
-        icons.append(Icon("mesh"))
     return tuple(icons)
 
 

@@ -332,8 +332,10 @@ one it is. The strip's glyphs are registered like the header's:
 | `Icon("memory", "512K+8M")` | a memory module with its size lettered on it |
 | `Icon("tasmota")` | the Tasmota symbol, from the Tasmota repository |
 | `Icon("bluetooth")` | the Bluetooth rune |
-| `Icon("mesh")` | four linked nodes: an IEEE 802.15.4 (Thread, Zigbee) radio |
-| `Icon("wifi", "2.4/5 a/b/g/n/ac/ax")` | the Wi-Fi arcs with the band under them, the single-letter 802.11 standards beside them and the two-letter ones (ac, ax) beside the band, bold at 4 pt (a header glyph) |
+| `Icon("zigbee")` | the Zigbee mark, for an IEEE 802.15.4 radio |
+| `Icon("revision", "v0.4")` | a chip's revision, its text alone at 4 pt |
+| `Icon("wifi", "2.4/5 a/b/g/n/ac/ax")` | the Wi-Fi arcs with the band under them, the single-letter 802.11 standards beside them and the two-letter ones (ac, ax) beside the band, bold at 4 pt (a header glyph). With one standard (`"2.4 n"`) it is joined to the band, `2.4n`, and a trailing `+bt` or `+zb` draws the Bluetooth rune or the Zigbee mark small in the empty corner right or left of the arcs' dot, at no extra width |
+| `Icon("usb", "OJS")` | the USB trident upright with a letter over each prong for what the port does: J (JTAG) over the arrow on the top line, O (OTG) and S (serial) over the round and square prongs on the line under it; a prong with no function has no letter (a header glyph) |
 
 A strip too wide for the band is refused when the label is made.
 
@@ -378,19 +380,22 @@ the same places:
   printed whole: `ESP32-D0WD-V3`, or `ESP32-C3FH4`, where esptool names the
   die and the chip's eFuse the flash in its package (see
   [ESPRESSIF.md](ESPRESSIF.md#which-part-a-read-names)). Then the part's
-  radios: Wi-Fi with its bands and 802.11 standards (`2.4` and `b/g/n`;
-  `b/g/n` and `ax` on a C6; `2.4/5`, `a/b/g/n` and `ac/ax` on a C5),
-  Bluetooth, and the 802.15.4 mesh on a C5, C6 or H2.
+  radios and USB: Wi-Fi with its bands and newest 802.11 standard (`2.4n`;
+  `2.4ax` on a C6; `2.4/5ax` on a C5), with the Bluetooth rune and, on a C5
+  or C6, the Zigbee mark (its 802.15.4 radio) small in the corners beside
+  the arcs' dot; an H2, with no Wi-Fi, has both full size. Then the USB
+  trident, upright, lettered with what the chip's own USB does: `JS` on a
+  C3, C5, C6 or H2 (its USB Serial/JTAG controller), `O` on an S2, `OJS` on
+  an S3 or P4, none on an ESP8266, ESP32 or C2, whose port is a USB-UART
+  bridge's. It is never wider than the Wi-Fi glyph.
 - **Spec strip:** what every chip of that part is, from the table in
   `rpi_hwid.espressif` ([ESPRESSIF.md](ESPRESSIF.md), every value cited): the
   ISA (the RISC-V mark, or the Xtensa "Xt" in the same box), the cores as
   two numbers (the application cores, then the ULP or LP cores, small and
   grey: `2|1` on an ESP32, `1|0` on a C3, which has none), the on-chip SRAM with any PSRAM in the package (`512K+8M`),
-  and the Tasmota symbol where Tasmota ships a binary for the part.
+  the Tasmota symbol where Tasmota ships a binary for the part, and last
+  the chip's revision as read, bare (`v0.4`); an ESP8266 reports none.
 - **Rows,** read from this chip, always in this order:
-  - `chip`: the silicon revision, at 4 pt. An ESP8266 reports none, so its
-    row's place is left blank. The crystal is read and kept in the document,
-    but not printed.
   - `flash`: the flash's part where the read settles it (`GD25Q32x`,
     `XM25QH32D`, or `BY25Q32ES` where a Boya's 128-bit unique id tells it
     from the 64-bit BS); then its size. A flash whose JEDEC id names no
@@ -411,9 +416,10 @@ the same places:
   flash gives none prints its eFuse id alone. The uid and eFuse rows print
   at one size, 4 pt, on every label. A uid row's digits start right of its
   own short caption rather than in the column beside `eFuse`: 20 digits do
-  not fit that column at the 4 pt the labels go down to. To hold a C3's
-  three rows of serials, the rows under the spec strip are five, one step
-  tighter than the four they were.
+  not fit that column at the 4 pt the labels go down to. The rows under
+  the spec strip are five, one step tighter than the four beside a
+  subtitle: room for a 128-bit flash uid and an eFuse id, two rows each.
+  The crystal is read and kept in the document, but not printed.
 
   **Trimming.** A flash reads out a fixed 128 bits whatever its maker
   programmed, and an unprogrammed byte reads `ff`. The C3s' XM25QH32D gives
