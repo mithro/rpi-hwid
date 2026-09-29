@@ -328,7 +328,8 @@ def test_the_spec_glyphs_are_registered():
     ("memory", "400K"), ("memory", "512K+8M"), ("tasmota", ""), ("bluetooth", ""),
     ("mesh", ""), ("wifi", "2.4 b/g/n"), ("wifi", "2.4 b/g/n/ax"),
     ("wifi", "2.4/5 a/b/g/n/ac/ax"), ("wifi", ""), ("chip", "C3"), ("antenna", "433"),
-    ("usb", ""),
+    ("usb", ""), ("wifi", "2.4 n +bt"), ("wifi", "2.4/5 ax +bt"), ("usb", "OJS"),
+    ("usb", "JS"), ("usb", "O"), ("revision", "v0.4"),
 ])
 def test_a_glyph_takes_the_width_the_layout_reserves_for_it(name, text):
     """The header and the strip are laid out from ``_icon_width`` before
@@ -338,7 +339,7 @@ def test_a_glyph_takes_the_width_the_layout_reserves_for_it(name, text):
     labels.register_fonts()
     # the lettered antenna and the lettered Wi-Fi arcs are header glyphs
     # only: their lettering needs the height
-    header_only = name == "antenna" or (name == "wifi" and text)
+    header_only = name == "antenna" or (name in ("wifi", "usb") and text)
     for h in (micro.HEAD_H,) if header_only else (micro.HEAD_H, micro.SPEC_H):
         cell = micro.Cell(canvas.Canvas(_null_pdf()), 0, 0)
         w = micro.ICONS[name](cell, 0, 0, h, text)
@@ -629,3 +630,25 @@ def test_a_wide_row_starts_right_of_its_own_caption(monkeypatch):
     assert at["uid"] == pytest.approx(micro.rows_x())
     assert at["89e4bec55c62671e"] == pytest.approx(micro.rows_x() + efuse_w + gap)
     assert at["GD25Q32x · 4 MiB"] == at["89e4bec55c62671e"]
+
+
+@pytest.mark.parametrize("text", ["2.4 b/g/n +bt", "2.4 n +BT", "+bt"])
+def test_bluetooth_rides_only_on_a_one_standard_wifi_glyph(text):
+    with pytest.raises(ValueError, match="Wi-Fi glyph"):
+        micro.wifi_lines(text)
+
+
+def test_the_wifi_glyph_s_bluetooth_is_parsed_off():
+    assert micro.wifi_bluetooth("2.4/5 ax +bt") == ("2.4/5 ax", True)
+    assert micro.wifi_bluetooth("2.4 n") == ("2.4 n", False)
+    assert micro.wifi_lines("2.4 n +bt") == ("2.4n", "", "")
+
+
+@pytest.mark.parametrize("text", ["X", "OO", "SJX", "ojs"])
+def test_a_usb_glyph_letters_only_otg_jtag_and_serial(text):
+    with pytest.raises(ValueError, match="USB glyph"):
+        micro.usb_letters(text)
+
+
+def test_a_usb_glyph_letters_in_one_order():
+    assert micro.usb_letters("SJO") == "OJS"

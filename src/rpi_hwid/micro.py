@@ -91,13 +91,13 @@ SPEC_H = 2.4 * mm              # the spec strip's glyphs, in the subtitle's plac
 SPEC_GAP = 0.3 * mm            # the strip to the first line under it
 # Under a spec strip the rows are one step tighter than ROW and ROW_PITCH:
 # five of them, none larger than SPEC_ROW, at spec_pitch -- room for a
-# flash row and three rows of serials under a chip row (the ESP32-C3's
-# flash uid and its chip's eFuse id, Tim, 2026-09-27).
+# flash row and four rows of serials under it: a 128-bit flash uid and a
+# chip's eFuse id, two rows each (Tim, 2026-09-27: every id is printed).
 SPEC_ROWS = 5
 SPEC_ROW = 4.4
 EXTRA_GAP = 0.6 * mm           # the last row to an extra section under it
 SPEC_EXTRA_GAP = 0.3 * mm      # ...closed up with the rows under a spec strip
-SPEC_ICON_GAP = 0.45 * mm      # between the strip's glyphs
+SPEC_ICON_GAP = 0.3 * mm       # between the strip's glyphs
 
 GUIDE = HexColor("#999999")    # the cut guides, lighter than any caption
 
@@ -186,10 +186,23 @@ WIFI_FAN = 40.0                # degrees either side of upright the arcs sweep
 WIFI_GAP = 0.25 * mm           # arcs or band to the standards beside them
 
 
+WIFI_BT = "+bt"                # the glyph text's last word: Bluetooth rides on it
+WIFI_BT_H = 0.7                # the rune's height, of the arcs'
+
+
+def wifi_bluetooth(text: str) -> tuple[str, bool]:
+    """'2.4 n +bt' -> ('2.4 n', True): whether the radio has Bluetooth too,
+    drawn as a small rune at the arcs' top right (Tim, 2026-09-29)."""
+    head, _, last = text.rpartition(" ")
+    return (head, True) if last == WIFI_BT and head else (text, False)
+
+
 def wifi_lines(text: str) -> tuple[str, str, str]:
     """'2.4/5 a/b/g/n/ac/ax' -> ('2.4/5', 'a/b/g/n', 'ac/ax'): the bands in
     GHz, then the standards, which split into the classic single-letter
-    amendments and the later two-letter ones. Refused unless it is that."""
+    amendments and the later two-letter ones. Refused unless it is that.
+    A trailing '+bt' (wifi_bluetooth) is set aside first."""
+    text, bt = wifi_bluetooth(text)
     bands, _, standards = text.partition(" ")
     got = standards.split("/")
     if (not all(b.replace(".", "", 1).isdigit() for b in bands.split("/"))
@@ -197,6 +210,10 @@ def wifi_lines(text: str) -> tuple[str, str, str]:
         raise ValueError(
             "a Wi-Fi glyph's text is its bands and its 802.11 standards, "
             f"'2.4/5 a/b/g/n/ac/ax', not {text!r}")
+    if bt and len(got) != 1:
+        # the rune stands where a second line of standards would
+        raise ValueError(f"a Wi-Fi glyph carries Bluetooth only beside one standard, "
+                         f"'2.4 n +bt', not {text + ' ' + WIFI_BT!r}")
     if len(got) == 1:
         # one standard alone (the newest, as the ESP32 labels print it) is
         # joined to the band under the arcs: "2.4n", "2.4/5ax" (Tim,
@@ -231,11 +248,19 @@ def _bold(s: str) -> float:
     return pdfmetrics.stringWidth(s, labels.SANS_BOLD, WIFI_TYPE) if s else 0.0
 
 
+def _wifi_rune(size: float) -> tuple[float, float]:
+    """The small Bluetooth rune's height and width in a `size`-high glyph."""
+    h = _wifi_geometry(size)[0] * WIFI_BT_H
+    return h, h * BLUETOOTH_W
+
+
 def wifi_width(size: float, text: str) -> float:
     if not text:
         return size
     bands, first, second = wifi_lines(text)
     arcs = wifi_arcs_width(size)
+    if wifi_bluetooth(text)[1]:
+        return max(arcs + WIFI_GAP + _wifi_rune(size)[1], _bold(bands))
     return max(arcs + (WIFI_GAP + _bold(first) if first else 0.0),
                max(_bold(bands), arcs if not first else 0.0)
                + (WIFI_GAP + _bold(second) if second else 0.0))
@@ -248,9 +273,14 @@ def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     classic single-letter standards beside the arcs, and the two-letter
     ones (ac, ax), where there are any, beside the band. The standards are
     set flush right, so each line takes only the room it needs; all of it
-    bold, at the smallest size the labels print."""
+    bold, at the smallest size the labels print. With a trailing '+bt'
+    (``Icon("wifi", "2.4 n +bt")``) a small Bluetooth rune stands at the
+    arcs' top right, in the place a second line of standards would take."""
     if not text:
         return float(labels.mark_wifi(cell, x, y, size))
+    if wifi_bluetooth(text)[1]:
+        rune_h, _ = _wifi_rune(size)
+        draw_bluetooth(cell, x + wifi_arcs_width(size) + WIFI_GAP, y, rune_h)
     bands, first, second = wifi_lines(text)
     w = wifi_width(size, text)
     box_h, lw, dot, r = _wifi_geometry(size)
@@ -280,12 +310,52 @@ def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     return w
 
 
+# What a lettered USB glyph may say the port does, in the order it says it:
+# O a USB OTG controller, J a USB JTAG debug port, S a USB serial port.
+USB_LETTERS = "OJS"
+USB_LETTER_GAP = 0.2 * mm
+
+
+def usb_letters(text: str) -> str:
+    if not text or any(ch not in USB_LETTERS for ch in text) or len(set(text)) != len(text):
+        raise ValueError(f"a USB glyph's text is some of {USB_LETTERS!r} (OTG, JTAG, "
+                         f"serial) once each, not {text!r}")
+    return "".join(ch for ch in USB_LETTERS if ch in text)
+
+
+def _usb_letters_width(text: str) -> float:
+    return (sum(_bold(ch) for ch in text) + USB_LETTER_GAP * (len(text) - 1))
+
+
+def usb_width(size: float, text: str) -> float:
+    if not text:
+        return 0.7 * _artwork_width("usb.svg", size)
+    return max(wifi_arcs_width(size), _usb_letters_width(usb_letters(text)))
+
+
 def glyph_usb(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """The USB trident. With text -- ``Icon("usb", "OJS")`` -- what the
+    port does, lettered under it as the Wi-Fi glyph letters its band (Tim,
+    2026-09-29): O for OTG, J for JTAG, S for serial, bold at the smallest
+    size, spaced apart. The trident is then only as wide as the Wi-Fi
+    glyph's arcs, so the glyph is no larger than a Wi-Fi glyph."""
     path = labels.artwork("usb.svg")
     if not path:
         return 0.0
-    # the trident is wide and flat: give it the height's middle 70 %
-    return float(cell.svg(path, x, y + size * 0.15, size * 0.7))
+    if not text:
+        # the trident is wide and flat: give it the height's middle 70 %
+        return float(cell.svg(path, x, y + size * 0.15, size * 0.7))
+    letters = usb_letters(text)
+    w = usb_width(size, text)
+    arcs_w, box_h = wifi_arcs_width(size), _wifi_geometry(size)[0]
+    th = arcs_w * labels.mark_aspect(path)
+    cell.svg(path, x + (w - arcs_w) / 2, y + (box_h - th) / 2, th)
+    lx = x + (w - _usb_letters_width(letters)) / 2
+    bottom = y + _wifi_baseline(size) - WIFI_TYPE * 0.72
+    for ch in letters:
+        cell.text(lx, bottom, ch, labels.SANS_BOLD, WIFI_TYPE)
+        lx += _bold(ch) + USB_LETTER_GAP
+    return w
 
 
 def glyph_ethernet(cell: Cell, x: float, y: float, size: float, text: str) -> float:
@@ -527,13 +597,19 @@ def glyph_cores(cell: Cell, x: float, y: float, size: float, text: str) -> float
 
 
 def memory_type(size: float) -> float:
-    """The point size of a memory glyph's lettering: its cap height is 60 %
-    of the module's board, which is 78 % of the glyph."""
-    return size * 0.78 * 0.6 / 0.72
+    """The point size of a memory glyph's lettering: the smallest the
+    labels print, at most 60 % of the module's board (78 % of the glyph)
+    in cap height. At the spec strip's height that is MIN_SIZE: set any
+    larger, "512K+16M" leaves the chip's revision no room on the strip."""
+    return min(MIN_SIZE, size * 0.78 * 0.6 / 0.72)
+
+
+MEMORY_PAD = 0.2       # of the height: the board's ends beyond its lettering
 
 
 def memory_width(size: float, text: str) -> float:
-    return pdfmetrics.stringWidth(text, labels.SANS_BOLD, memory_type(size)) + size * 0.3
+    return (pdfmetrics.stringWidth(text, labels.SANS_BOLD, memory_type(size))
+            + size * MEMORY_PAD)
 
 
 def glyph_memory(cell: Cell, x: float, y: float, size: float, text: str) -> float:
@@ -573,7 +649,14 @@ BLUETOOTH_W = 0.55     # of the height
 
 def glyph_bluetooth(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     """The Bluetooth rune, drawn: a stem with the two arrowheads crossing
-    it, as the chip's features say Bluetooth."""
+    it, as the chip's features say Bluetooth. A radio with Wi-Fi too
+    carries it small, on the Wi-Fi glyph (glyph_wifi); this one stands
+    alone, for a part with Bluetooth and no Wi-Fi."""
+    return draw_bluetooth(cell, x, y, size)
+
+
+def draw_bluetooth(cell: Cell, x: float, y: float, size: float) -> float:
+    """The rune `size` high with its top-left at (x, y); returns its width."""
     c = cell.c
     w = size * BLUETOOTH_W
 
@@ -593,6 +676,21 @@ def glyph_bluetooth(cell: Cell, x: float, y: float, size: float, text: str) -> f
     c.setLineJoin(0)
     c.setLineWidth(1)
     return w
+
+
+REVISION = MIN_SIZE            # a revision's type: the smallest the labels print
+
+
+def revision_width(size: float, text: str) -> float:
+    return pdfmetrics.stringWidth(text, labels.SANS, REVISION)
+
+
+def glyph_revision(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """A chip's revision, ``Icon("revision", "v0.4")``: its text alone, set
+    like a row's value and centred on the strip, closing the spec strip
+    (Tim, 2026-09-29: "part of the icon line and without the chip:")."""
+    cell.text(x, y + (size - REVISION * 0.72) / 2, text, labels.SANS, REVISION)
+    return revision_width(size, text)
 
 
 def glyph_mesh(cell: Cell, x: float, y: float, size: float, text: str) -> float:
@@ -626,6 +724,7 @@ ICONS: dict[str, IconFn] = {
     "memory": glyph_memory,
     "bluetooth": glyph_bluetooth,
     "mesh": glyph_mesh,
+    "revision": glyph_revision,
 }
 
 
@@ -729,6 +828,8 @@ class MicroLabel:
                     core_counts(i.text)
                 if i.name == "wifi" and i.text:
                     wifi_lines(i.text)
+                if i.name == "usb" and i.text:
+                    usb_letters(i.text)
             except ValueError as exc:
                 raise ValueError(f"{self.host}: {exc}") from None
         if self.specs:
@@ -887,7 +988,8 @@ def _artwork_width(name: str, h: float) -> float:
 # The glyphs that are not square: their width at a height, with their text.
 # A glyph a caller registers is square unless it adds itself here too.
 WIDTHS: dict[str, Callable[[float, str], float]] = {
-    "usb": lambda h, t: 0.7 * _artwork_width("usb.svg", h),
+    "usb": usb_width,
+    "revision": revision_width,
     "ethernet": lambda h, t: h * 0.95,
     # the lettered mast stands in a square; the plain one is narrower
     "antenna": lambda h, t: h if t else h * 0.75,
