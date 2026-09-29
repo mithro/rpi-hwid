@@ -76,10 +76,13 @@ def test_a_device_without_a_relay_gets_no_plug():
     assert m.subtitle == "ESP8266EX  ·  2 MB flash"
 
 
-def test_a_generic_module_is_titled_by_its_chip_with_no_maker():
+def test_a_generic_module_is_a_custom_device_with_no_maker():
+    """Tim, 2026-09-29: "Use `custom` for tasmota devices which are custom
+    made tasmota devices". The chip stays in the subtitle and the glyph."""
     m = _one("esp32-433mhz-cc1101-blue")
     assert m.mark is None
-    assert m.title == "ESP32-C3"
+    assert m.title == "custom"
+    assert Icon("chip", "C3") in m.icons
     assert m.subtitle == "ESP32-C3 v0.4  ·  4 MB flash"
 
 

@@ -595,13 +595,15 @@ an Athom Plug V3 (ESP32-C3), a bare ESP32-C3 on Tasmota's generic module, an
 Athom IR remote and a Sonoff S31 (both ESP8266).
 
 <p>
-<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tasmota-4up.png" alt="One sticker of four Tasmota micro labels: an Athom Plug V3, a generic ESP32-C3, an Athom IR Remote and a Sonoff S31, each with its Wi-Fi MAC in a QR and along the foot" width="98%">
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tasmota-4up.png" alt="One sticker of four Tasmota micro labels: an Athom Plug V3, a custom ESP32-C3 device, an Athom IR Remote and a Sonoff S31, each with its Wi-Fi MAC in a QR and along the foot" width="98%">
 </p>
 
 The maker's mark and the model make the title -- the model as the device
 itself reports it, its template's NAME or the module Tasmota ships for it, so
 the label never disagrees with the plug it is on. A device on one of
-Tasmota's generic modules says only which chip it is, and is titled by that.
+Tasmota's generic modules is custom-made (an ESP32 someone wired up, such as
+a 433 MHz radio node) and is titled `custom`; its chip is in the subtitle
+and on the chip glyph.
 The glyphs are the Tasmota symbol, a mains plug where the device has a
 relay, and the chip. The Wi-Fi MAC is the identifier, in the QR and along the
 foot. Beside the QR: the chip with its revision as the firmware writes it,
