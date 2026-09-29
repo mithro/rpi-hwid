@@ -617,24 +617,34 @@ def test_fewer_rows_under_a_strip_spread_over_its_height():
     assert micro.spec_pitch(2) == micro.spec_pitch(3) == micro.ROW_PITCH
 
 
-def test_the_wifi_band_is_centred_under_the_arcs(monkeypatch):
-    """Tim, 2026-09-29: "Center the frequency text under the wifi logo",
-    however wide the band text is."""
+def _wifi_band_and_arcs(monkeypatch, text):
+    """Where glyph_wifi centres its band text, and each arc's centre."""
     from reportlab.pdfgen import canvas
 
+    cell = micro.Cell(canvas.Canvas(_null_pdf()), 0, 0)
+    drawn, arcs = [], []
+    monkeypatch.setattr(micro.Cell, "text", lambda self, x, y, s, font, size, **k:
+                        drawn.append((x, s, font, size)))
+    real_arc = cell.c.arc
+
+    def arc(x1, y1, x2, y2, *a):
+        arcs.append((x1 + x2) / 2)
+        return real_arc(x1, y1, x2, y2, *a)
+
+    cell.c.arc = arc
+    micro.glyph_wifi(cell, 0, 0, micro.HEAD_H, text)
+    (x, band, font, size), = drawn
+    return x + labels.Label.width(cell, band, font, size) / 2, arcs
+
+
+@pytest.mark.parametrize("text", ["2.4 n +bt", "2.4/5 ax +bt +zb", "2.4 ax"])
+def test_the_wifi_band_is_centred_under_the_arcs(monkeypatch, text):
+    """Tim, 2026-09-29: "Center the frequency text under the wifi logo",
+    however wide the band text is."""
     labels.register_fonts()
-    for text in ("2.4 n +bt", "2.4/5 ax +bt +zb", "2.4 ax"):
-        cell = micro.Cell(canvas.Canvas(_null_pdf()), 0, 0)
-        drawn, arcs = [], []
-        monkeypatch.setattr(micro.Cell, "text", lambda self, x, y, s, font, size, **k:
-                            drawn.append((x, s, font, size)))
-        real_arc = cell.c.arc
-        cell.c.arc = lambda x1, y1, x2, y2, *a: (arcs.append((x1 + x2) / 2),
-                                                 real_arc(x1, y1, x2, y2, *a))
-        micro.glyph_wifi(cell, 0, 0, micro.HEAD_H, text)
-        (x, band, font, size), = drawn
-        centre = x + labels.Label.width(cell, band, font, size) / 2
-        assert all(a == pytest.approx(centre) for a in arcs), text
+    centre, arcs = _wifi_band_and_arcs(monkeypatch, text)
+    assert len(arcs) == 3
+    assert all(a == pytest.approx(centre) for a in arcs)
 
 
 def test_an_unsized_row_under_a_strip_is_set_at_most_spec_row(monkeypatch):
