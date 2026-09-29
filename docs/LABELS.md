@@ -334,8 +334,8 @@ one it is. The strip's glyphs are registered like the header's:
 | `Icon("bluetooth")` | the Bluetooth rune |
 | `Icon("zigbee")` | the Zigbee mark, for an IEEE 802.15.4 radio |
 | `Icon("revision", "v0.4")` | a chip's revision, its text alone at 4 pt |
-| `Icon("wifi", "2.4/5 a/b/g/n/ac/ax")` | the Wi-Fi arcs with the band under them, the single-letter 802.11 standards beside them and the two-letter ones (ac, ax) beside the band, bold at 4 pt (a header glyph). With one standard (`"2.4 n"`) it is joined to the band, `2.4n`, and a trailing `+bt` or `+zb` draws the Bluetooth rune or the Zigbee mark small in the empty corner right or left of the arcs' dot, at no extra width |
-| `Icon("usb", "OJS")` | the USB trident upright with a letter over each prong for what the port does: J (JTAG) over the arrow on the top line, O (OTG) and S (serial) over the round and square prongs on the line under it; a prong with no function has no letter (a header glyph) |
+| `Icon("wifi", "2.4/5 a/b/g/n/ac/ax")` | the Wi-Fi arcs with the band under them, the single-letter 802.11 standards beside them and the two-letter ones (ac, ax) beside the band, bold at 4 pt (a header glyph). With one standard (`"2.4 n"`) it is joined to the band, `2.4n`, and a trailing `+bt` or `+zb` draws the Bluetooth rune or the Zigbee mark in the empty corner right or left of the arcs' dot. The band is always centred under the arcs |
+| `Icon("usb", "OJS")` | the USB logo (`usb.svg`, unchanged) turned upright, and on one line over it a letter for each prong, for what the port does: O (OTG) over the round prong, J (JTAG) over the arrow, S (serial) over the square one; a prong with no function leaves its letter's place empty (a header glyph) |
 
 A strip too wide for the band is refused when the label is made.
 
@@ -384,7 +384,7 @@ the same places:
   `2.4ax` on a C6; `2.4/5ax` on a C5), with the Bluetooth rune and, on a C5
   or C6, the Zigbee mark (its 802.15.4 radio) small in the corners beside
   the arcs' dot; an H2, with no Wi-Fi, has both full size. Then the USB
-  trident, upright, lettered with what the chip's own USB does: `JS` on a
+  logo, upright, lettered over its prongs with what the chip's own USB does: `JS` on a
   C3, C5, C6 or H2 (its USB Serial/JTAG controller), `O` on an S2, `OJS` on
   an S3 or P4, none on an ESP8266, ESP32 or C2, whose port is a USB-UART
   bridge's. It is never wider than the Wi-Fi glyph.
@@ -416,9 +416,11 @@ the same places:
   flash gives none prints its eFuse id alone. The uid and eFuse rows print
   at one size, 4 pt, on every label. A uid row's digits start right of its
   own short caption rather than in the column beside `eFuse`: 20 digits do
-  not fit that column at the 4 pt the labels go down to. The rows under
-  the spec strip are five, one step tighter than the four beside a
-  subtitle: room for a 128-bit flash uid and an eFuse id, two rows each.
+  not fit that column at the 4 pt the labels go down to. Under the spec
+  strip there is room for five rows (a 128-bit flash uid and an eFuse id,
+  two rows each, under the flash row), and however many a label has are
+  spread down to the foot caption's line, no further apart than rows
+  beside a subtitle: a C3's four fill the same height as five.
   The crystal is read and kept in the document, but not printed.
 
   **Trimming.** A flash reads out a fixed 128 bits whatever its maker
