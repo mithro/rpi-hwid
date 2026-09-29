@@ -120,3 +120,19 @@ def test_the_version_is_spiflashs():
     import spiflash
 
     assert db.version() == spiflash.__version__
+
+
+def test_the_nor_filter_follows_spiflash_s_keyword():
+    """spiflash renamed lookup's `type` to `flash_type` after 0.0.post11:
+    the Debian package republishes its newest build, PyPI has the old one,
+    and rpi-hwid must work with either."""
+    def old(self, chip_id, *, type=None, method="jedec"):
+        return []
+
+    def new(self, chip_id, *, flash_type=None, method="jedec"):
+        return []
+
+    assert db.nor_only(old) == {"type": "nor"}
+    assert db.nor_only(new) == {"flash_type": "nor"}
+    # and the one installed is asked the way it answers
+    assert db.flashes(0xC84016)

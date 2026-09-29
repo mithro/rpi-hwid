@@ -17,6 +17,7 @@ Nothing here reads hardware or knows about any board.
 
 from __future__ import annotations
 
+import inspect
 import re
 from collections import Counter
 from typing import TYPE_CHECKING
@@ -24,10 +25,22 @@ from typing import TYPE_CHECKING
 import spiflash
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
+    from collections.abc import Callable, Iterable
 
 # Where a part missing from spiflash is reported.
 ISSUES = "https://github.com/mithro/spiflash/issues"
+
+# The keyword that limits a lookup to SPI NOR parts. spiflash renamed it
+# from `type` to `flash_type` after 0.0.post11 (its main branch,
+# 2026-09-29). The Debian package republishes spiflash's newest build and
+# PyPI still has the old name, so this asks the installed one which it takes.
+def nor_only(lookup: Callable[..., object]) -> dict[str, str]:
+    """The keyword argument that limits `lookup` to SPI NOR parts."""
+    params = inspect.signature(lookup).parameters
+    return {"flash_type": "nor"} if "flash_type" in params else {"type": "nor"}
+
+
+_NOR = nor_only(spiflash.Database.lookup)
 
 
 def version() -> str:
@@ -60,7 +73,7 @@ def flashes(jedec: int | str, ext: str | bytes | None = None) -> list[spiflash.F
     data = _id_bytes(jedec, ext)
     if data is None:
         return []
-    return spiflash.lookup(data, type="nor")
+    return spiflash.lookup(data, **_NOR)
 
 
 # flashrom writes the order-code letters after a part number as a run of

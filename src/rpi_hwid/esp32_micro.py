@@ -248,8 +248,13 @@ def flash_line(host: str, dev: Esp32Device,
         return None
     value = int(info["jedec"], 16)
     inside = embedded_flash(dev.features)
+    # This module's tables first, each line argued from a datasheet or a
+    # read, as labels.flash_from_jedec puts its own before spiflash's: the
+    # part it gives for an id no table of its own names is spiflash's, which
+    # is less precise (GD25Q80 for every GD25Q80x) and at times wrong (a
+    # Boya id as "Bx25Q32xS", spiflash issue #1).
     named = (PART_BY_UID_BITS.get(value, {}).get(dev.flash_uid_bits or 0)
-             or info["part"] or JEDEC_PART.get(value))
+             or JEDEC_PART.get(value) or info["part"])
     size = info["size"] or (inside[0] if inside else None)
     if not size and part is not None and part.flash_mb:
         size = f"{part.flash_mb:g} MiB"
