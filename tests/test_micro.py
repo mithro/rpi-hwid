@@ -316,7 +316,7 @@ def test_the_labels_command_prints_micro_stickers(data_dir, tmp_path, monkeypatc
 
 # --- the spec strip and its glyphs ----------------------------------------------
 
-SPEC_GLYPHS = ("riscv", "xtensa", "cores", "memory", "tasmota", "bluetooth", "mesh")
+SPEC_GLYPHS = ("riscv", "xtensa", "cores", "memory", "tasmota", "bluetooth", "zigbee")
 
 
 def test_the_spec_glyphs_are_registered():
@@ -326,9 +326,9 @@ def test_the_spec_glyphs_are_registered():
 @pytest.mark.parametrize(("name", "text"), [
     ("riscv", ""), ("xtensa", ""), ("cores", "1"), ("cores", "2+1"), ("cores", "1+0"),
     ("memory", "400K"), ("memory", "512K+8M"), ("tasmota", ""), ("bluetooth", ""),
-    ("mesh", ""), ("wifi", "2.4 b/g/n"), ("wifi", "2.4 b/g/n/ax"),
+    ("zigbee", ""), ("wifi", "2.4 b/g/n"), ("wifi", "2.4 b/g/n/ax"),
     ("wifi", "2.4/5 a/b/g/n/ac/ax"), ("wifi", ""), ("chip", "C3"), ("antenna", "433"),
-    ("usb", ""), ("wifi", "2.4 n +bt"), ("wifi", "2.4/5 ax +bt"), ("usb", "OJS"),
+    ("usb", ""), ("wifi", "2.4 n +bt"), ("wifi", "2.4/5 ax +bt +zb"), ("usb", "OJS"),
     ("usb", "JS"), ("usb", "O"), ("revision", "v0.4"),
 ])
 def test_a_glyph_takes_the_width_the_layout_reserves_for_it(name, text):
@@ -537,7 +537,7 @@ def test_the_full_riscv_logo_is_kept_byte_for_byte():
 
 def test_title_fits_says_when_the_header_would_elide_the_title():
     assert micro.title_fits(_label(title="ESP32-C6FH4", icons=(Icon("wifi"),)))
-    crowded = (Icon("wifi"), Icon("bluetooth"), Icon("mesh"), Icon("usb"), Icon("usb"))
+    crowded = (Icon("wifi"), Icon("bluetooth"), Icon("zigbee"), Icon("usb"), Icon("usb"))
     assert not micro.title_fits(_label(title="ESP32-C6FH4", icons=crowded))
 
 
@@ -632,7 +632,7 @@ def test_a_wide_row_starts_right_of_its_own_caption(monkeypatch):
     assert at["GD25Q32x · 4 MiB"] == at["89e4bec55c62671e"]
 
 
-@pytest.mark.parametrize("text", ["2.4 b/g/n +bt", "2.4 n +BT", "+bt"])
+@pytest.mark.parametrize("text", ["2.4 b/g/n +bt", "2.4 b/g/n +zb", "2.4 n +BT", "+bt"])
 def test_bluetooth_rides_only_on_a_one_standard_wifi_glyph(text):
     with pytest.raises(ValueError, match="Wi-Fi glyph"):
         micro.wifi_lines(text)
@@ -642,6 +642,15 @@ def test_the_wifi_glyph_s_bluetooth_is_parsed_off():
     assert micro.wifi_bluetooth("2.4/5 ax +bt") == ("2.4/5 ax", True)
     assert micro.wifi_bluetooth("2.4 n") == ("2.4 n", False)
     assert micro.wifi_lines("2.4 n +bt") == ("2.4n", "", "")
+    assert micro.wifi_marks("2.4 ax +bt +zb") == ("2.4 ax", frozenset({"+bt", "+zb"}))
+
+
+@pytest.mark.parametrize("text", ["2.4 n", "2.4/5 ax", "2.4 ax"])
+def test_bluetooth_and_zigbee_cost_the_wifi_glyph_no_width(text):
+    """They stand in the empty corners beside the arcs' dot (Tim, 2026-09-29)."""
+    w = micro.wifi_width(micro.HEAD_H, text)
+    for marks in (" +bt", " +zb", " +bt +zb"):
+        assert micro.wifi_width(micro.HEAD_H, text + marks) == w
 
 
 @pytest.mark.parametrize("text", ["X", "OO", "SJX", "ojs"])

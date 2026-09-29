@@ -186,23 +186,41 @@ WIFI_FAN = 40.0                # degrees either side of upright the arcs sweep
 WIFI_GAP = 0.25 * mm           # arcs or band to the standards beside them
 
 
-WIFI_BT = "+bt"                # the glyph text's last word: Bluetooth rides on it
-WIFI_BT_H = 0.7                # the rune's height, of the arcs'
+# The glyph text's last words: the other radios that ride on the Wi-Fi
+# glyph, each small in a corner the arcs leave empty beside their dot
+# (Tim, 2026-09-29) -- Bluetooth's rune on the right, the Zigbee mark on
+# the left.
+WIFI_BT = "+bt"
+WIFI_ZB = "+zb"
+WIFI_MARKS = (WIFI_BT, WIFI_ZB)
+WIFI_RUNE_H = 0.42             # the Bluetooth rune's height, of the arcs' box
+WIFI_ZB_D = 0.36               # the Zigbee mark's diameter, of the arcs' box
+WIFI_CORNER = 0.47             # either mark's centre from the dot, of the outer arc's radius
+ZIGBEE_MARK = "zigbee.svg"
+
+
+def wifi_marks(text: str) -> tuple[str, frozenset[str]]:
+    """'2.4 n +bt +zb' -> ('2.4 n', {'+bt', '+zb'}): the radios riding on
+    the Wi-Fi glyph, set aside from its bands and standards."""
+    words = text.split(" ")
+    marks = set()
+    while len(words) > 1 and words[-1] in WIFI_MARKS and words[-1] not in marks:
+        marks.add(words.pop())
+    return " ".join(words), frozenset(marks)
 
 
 def wifi_bluetooth(text: str) -> tuple[str, bool]:
-    """'2.4 n +bt' -> ('2.4 n', True): whether the radio has Bluetooth too,
-    drawn as a small rune at the arcs' top right (Tim, 2026-09-29)."""
-    head, _, last = text.rpartition(" ")
-    return (head, True) if last == WIFI_BT and head else (text, False)
+    """'2.4 n +bt' -> ('2.4 n', True): whether Bluetooth rides on it."""
+    rest, marks = wifi_marks(text)
+    return rest, WIFI_BT in marks
 
 
 def wifi_lines(text: str) -> tuple[str, str, str]:
     """'2.4/5 a/b/g/n/ac/ax' -> ('2.4/5', 'a/b/g/n', 'ac/ax'): the bands in
     GHz, then the standards, which split into the classic single-letter
     amendments and the later two-letter ones. Refused unless it is that.
-    A trailing '+bt' (wifi_bluetooth) is set aside first."""
-    text, bt = wifi_bluetooth(text)
+    A trailing '+bt' or '+zb' (wifi_marks) is set aside first."""
+    text, marks = wifi_marks(text)
     bands, _, standards = text.partition(" ")
     got = standards.split("/")
     if (not all(b.replace(".", "", 1).isdigit() for b in bands.split("/"))
@@ -210,10 +228,10 @@ def wifi_lines(text: str) -> tuple[str, str, str]:
         raise ValueError(
             "a Wi-Fi glyph's text is its bands and its 802.11 standards, "
             f"'2.4/5 a/b/g/n/ac/ax', not {text!r}")
-    if bt and len(got) != 1:
-        # the rune stands where a second line of standards would
-        raise ValueError(f"a Wi-Fi glyph carries Bluetooth only beside one standard, "
-                         f"'2.4 n +bt', not {text + ' ' + WIFI_BT!r}")
+    if marks and len(got) != 1:
+        # the marks stand where the lines of standards would
+        raise ValueError(f"a Wi-Fi glyph carries Bluetooth or Zigbee only beside one "
+                         f"standard, '2.4 n +bt', not {text!r} with {sorted(marks)}")
     if len(got) == 1:
         # one standard alone (the newest, as the ESP32 labels print it) is
         # joined to the band under the arcs: "2.4n", "2.4/5ax" (Tim,
@@ -248,19 +266,11 @@ def _bold(s: str) -> float:
     return pdfmetrics.stringWidth(s, labels.SANS_BOLD, WIFI_TYPE) if s else 0.0
 
 
-def _wifi_rune(size: float) -> tuple[float, float]:
-    """The small Bluetooth rune's height and width in a `size`-high glyph."""
-    h = _wifi_geometry(size)[0] * WIFI_BT_H
-    return h, h * BLUETOOTH_W
-
-
 def wifi_width(size: float, text: str) -> float:
     if not text:
         return size
     bands, first, second = wifi_lines(text)
     arcs = wifi_arcs_width(size)
-    if wifi_bluetooth(text)[1]:
-        return max(arcs + WIFI_GAP + _wifi_rune(size)[1], _bold(bands))
     return max(arcs + (WIFI_GAP + _bold(first) if first else 0.0),
                max(_bold(bands), arcs if not first else 0.0)
                + (WIFI_GAP + _bold(second) if second else 0.0))
@@ -273,14 +283,15 @@ def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     classic single-letter standards beside the arcs, and the two-letter
     ones (ac, ax), where there are any, beside the band. The standards are
     set flush right, so each line takes only the room it needs; all of it
-    bold, at the smallest size the labels print. With a trailing '+bt'
-    (``Icon("wifi", "2.4 n +bt")``) a small Bluetooth rune stands at the
-    arcs' top right, in the place a second line of standards would take."""
+    bold, at the smallest size the labels print.
+
+    The other radios ride on it, small, in the two corners the arcs leave
+    empty either side of their dot (Tim, 2026-09-29), so they cost no
+    width: with '+bt' (``Icon("wifi", "2.4 n +bt +zb")``) the Bluetooth
+    rune on the right, with '+zb' the Zigbee mark on the left."""
     if not text:
         return float(labels.mark_wifi(cell, x, y, size))
-    if wifi_bluetooth(text)[1]:
-        rune_h, _ = _wifi_rune(size)
-        draw_bluetooth(cell, x + wifi_arcs_width(size) + WIFI_GAP, y, rune_h)
+    marks = wifi_marks(text)[1]
     bands, first, second = wifi_lines(text)
     w = wifi_width(size, text)
     box_h, lw, dot, r = _wifi_geometry(size)
@@ -300,6 +311,14 @@ def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
         c.arc(cx - rad, cy - rad, cx + rad, cy + rad, 90 - WIFI_FAN, 2 * WIFI_FAN)
     c.setLineWidth(1)
     c.setLineCap(0)
+    mid, foot, off = x + arcs_w / 2, y + box_h, r * WIFI_CORNER
+    if WIFI_BT in marks:
+        rune_h = box_h * WIFI_RUNE_H
+        draw_bluetooth(cell, mid + off - rune_h * BLUETOOTH_W / 2, foot - rune_h, rune_h)
+    zb = labels.artwork(ZIGBEE_MARK) if WIFI_ZB in marks else None
+    if zb:
+        d = box_h * WIFI_ZB_D
+        cell.svg(zb, mid - off - d / 2, foot - d, d)
     bottom = y + _wifi_baseline(size) - WIFI_TYPE * 0.72
     cell.text(bx, bottom, bands, labels.SANS_BOLD, WIFI_TYPE)
     if first:
@@ -313,8 +332,10 @@ def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
 # What a lettered USB glyph may say the port does, in the order it says it:
 # O a USB OTG controller, J a USB JTAG debug port, S a USB serial port.
 USB_LETTERS = "OJS"
-USB_LETTER_GAP = 0.15 * mm     # the least room between two prongs' letters
-USB_LETTER_DROP = 0.25 * mm    # the letters' baseline to the arrow's tip
+USB_LETTER_GAP = 0.08 * mm     # a side letter to the arrowhead beside it
+USB_ROW_GAP = 0.1 * mm         # between the two lines of letters
+USB_LETTER_DROP = 0.2 * mm     # a line of letters to the prong under it
+USB_HEAD = 0.4 * mm            # the arrowhead's width and height
 
 
 def usb_letters(text: str) -> str:
@@ -325,10 +346,10 @@ def usb_letters(text: str) -> str:
 
 
 def usb_prong_pitch() -> float:
-    """How far apart the upright trident's prongs stand: far enough that
-    the letters over any two neighbours clear each other."""
-    o, j, s = (_bold(ch) for ch in USB_LETTERS)
-    return max(o + j, j + s) / 2 + USB_LETTER_GAP
+    """How far the side prongs stand from the stem: far enough that their
+    letters, on the line under J's, clear the arrowhead between them."""
+    o, _, s = (_bold(ch) for ch in USB_LETTERS)
+    return max(o, s) / 2 + USB_LETTER_GAP + USB_HEAD / 2
 
 
 def usb_width(size: float, text: str) -> float:
@@ -341,16 +362,18 @@ def usb_width(size: float, text: str) -> float:
 def glyph_usb(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     """The USB trident. With text -- ``Icon("usb", "OJS")`` -- it stands
     upright, turned 90 degrees, its prongs up, and over each prong a letter
-    for what the port does (Tim, 2026-09-29): O for OTG over the round
-    prong, J for JTAG over the arrow, S for serial over the square one; a
-    prong the port has no function for carries no letter. Bold at the
-    smallest size, all on one line above the arrow's tip.
+    for what the port does (Tim, 2026-09-29): J for JTAG over the arrow,
+    O for OTG over the round prong, S for serial over the square one; a
+    prong the port has no function for carries no letter. The letters
+    stand as the prongs do: J, over the arrow, on the top line; O and S,
+    over the shorter side prongs, on the line under it either side of the
+    arrow. Side by side on one line three 4 pt letters would make the
+    glyph wider than the Wi-Fi glyph beside it, which it may not be.
 
-    The upright trident is drawn here in the logo's shapes -- the base
-    disc, the stem, the arrowhead, the round and the square prong on their
-    branches -- but spread wider than usb.svg is, so the three letters fit
-    side by side over its prongs: usb.svg turned upright at this height is
-    1.1 mm wide, and its prongs 0.4 mm apart."""
+    The trident is drawn here in the logo's shapes -- the base disc, the
+    stem, the arrowhead, the round and the square prong on their branches
+    -- spread wider than usb.svg, whose prongs turned upright at this
+    height would stand 0.4 mm apart."""
     path = labels.artwork("usb.svg")
     if not path:
         return 0.0
@@ -360,55 +383,49 @@ def glyph_usb(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     letters = usb_letters(text)
     w = usb_width(size, text)
     pitch = usb_prong_pitch()
+    cap = WIFI_TYPE * 0.72
     cx = x + _bold("O") / 2 + pitch
-    prong_x = dict(zip(USB_LETTERS, (cx - pitch, cx, cx + pitch), strict=True))
-    base = y + WIFI_TYPE * 0.72
+    lx, rx = cx - pitch, cx + pitch
+    top_line = y + cap                                   # J's baseline
+    side_line = top_line + USB_ROW_GAP + cap             # O's and S's
+    at_x = {"O": lx, "J": cx, "S": rx}
     for ch in letters:
-        cell.text(prong_x[ch], base - WIFI_TYPE * 0.72, ch, labels.SANS_BOLD, WIFI_TYPE,
-                  align="centre")
-    top, bottom = base + USB_LETTER_DROP, y + size
-    h = bottom - top
-
-    def at(px: float, frac: float) -> tuple[float, float]:
-        """A point `frac` of the trident's height up from its foot."""
-        return cell.pt(px, bottom - h * frac)
-
+        base = top_line if ch == "J" else side_line
+        cell.text(at_x[ch], base - cap, ch, labels.SANS_BOLD, WIFI_TYPE, align="centre")
     c = cell.c
-    lw = h * 0.08
+    foot = y + size
+    tip, side_top = top_line + USB_LETTER_DROP, side_line + USB_LETTER_DROP
+    h = foot - tip
+    lw = h * 0.075
+
+    def pt(px: float, py: float) -> tuple[float, float]:
+        return cell.pt(px, py)
+
     c.setStrokeColor(black)
     c.setFillColor(black)
     c.setLineWidth(lw)
     c.setLineJoin(1)
-    disc = h * 0.13
-    # the stem, from the base disc to the arrowhead
-    c.line(*at(cx, 0.1), *at(cx, 0.8))
-    bx, by = at(cx, disc / h)
-    c.circle(bx, by, disc, stroke=0, fill=1)
-    tip, head_w, head_h = at(cx, 1.0), h * 0.24, h * 0.22
+    disc = h * 0.11
+    c.line(*pt(cx, tip + USB_HEAD * 0.9), *pt(cx, foot - disc))
+    c.circle(*pt(cx, foot - disc), disc, stroke=0, fill=1)
     arrow = c.beginPath()
-    arrow.moveTo(*tip)
-    arrow.lineTo(tip[0] - head_w / 2, tip[1] - head_h)
-    arrow.lineTo(tip[0] + head_w / 2, tip[1] - head_h)
+    arrow.moveTo(*pt(cx, tip))
+    arrow.lineTo(*pt(cx - USB_HEAD / 2, tip + USB_HEAD))
+    arrow.lineTo(*pt(cx + USB_HEAD / 2, tip + USB_HEAD))
     arrow.close()
     c.drawPath(arrow, stroke=0, fill=1)
-    # the branches: out and up from the stem, then straight up to their ends
-    lx, rx = prong_x["O"], prong_x["S"]
-    left = c.beginPath()
-    left.moveTo(*at(cx, 0.28))
-    left.lineTo(*at(lx, 0.5))
-    left.lineTo(*at(lx, 0.72))
-    c.drawPath(left, stroke=1, fill=0)
-    right = c.beginPath()
-    right.moveTo(*at(cx, 0.38))
-    right.lineTo(*at(rx, 0.6))
-    right.lineTo(*at(rx, 0.76))
-    c.drawPath(right, stroke=1, fill=0)
-    ball = h * 0.09
-    ox, oy = at(lx, 0.72)
-    c.circle(ox, oy + ball * 0.6, ball, stroke=0, fill=1)
-    sq = h * 0.17
-    sx, sy = at(rx, 0.76)
-    c.rect(sx - sq / 2, sy, sq, sq, stroke=0, fill=1)
+    # the branches: up and out from the stem, then straight up to their ends
+    ball, sq = h * 0.085, h * 0.15
+    run = foot - disc * 2 - side_top
+    for px, end, join in ((lx, side_top + ball * 2, 0.62), (rx, side_top + sq, 0.5)):
+        branch = c.beginPath()
+        branch.moveTo(*pt(cx, side_top + run * (join + 0.25)))
+        branch.lineTo(*pt(px, side_top + run * join))
+        branch.lineTo(*pt(px, end))
+        c.drawPath(branch, stroke=1, fill=0)
+    c.circle(*pt(lx, side_top + ball), ball, stroke=0, fill=1)
+    sx, sy = pt(rx - sq / 2, side_top + sq)
+    c.rect(sx, sy, sq, sq, stroke=0, fill=1)
     c.setLineWidth(1)
     c.setLineJoin(0)
     return w
@@ -749,22 +766,13 @@ def glyph_revision(cell: Cell, x: float, y: float, size: float, text: str) -> fl
     return revision_width(size, text)
 
 
-def glyph_mesh(cell: Cell, x: float, y: float, size: float, text: str) -> float:
-    """An IEEE 802.15.4 radio -- the one Thread and Zigbee run over -- drawn
-    as what it is for: a mesh, four nodes each linked to the others."""
-    c = cell.c
-    nodes = ((0.5, 0.12), (0.1, 0.6), (0.9, 0.6), (0.5, 0.9))
-    pts = [cell.pt(x + size * u, y + size * v) for u, v in nodes]
-    c.setStrokeColor(black)
-    c.setFillColor(black)
-    c.setLineWidth(size * 0.06)
-    for i, a in enumerate(pts):
-        for b in pts[i + 1:]:
-            c.line(a[0], a[1], b[0], b[1])
-    for px, py in pts:
-        c.circle(px, py, size * 0.1, stroke=0, fill=1)
-    c.setLineWidth(1)
-    return size
+def glyph_zigbee(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """The Zigbee mark (artwork/zigbee.svg), for a part whose 802.15.4
+    radio runs Zigbee and that has no Wi-Fi glyph to carry it (the H2)."""
+    path = labels.artwork(ZIGBEE_MARK)
+    if not path:
+        return 0.0
+    return float(cell.svg(path, x, y, size))
 
 
 ICONS: dict[str, IconFn] = {
@@ -779,7 +787,7 @@ ICONS: dict[str, IconFn] = {
     "cores": glyph_cores,
     "memory": glyph_memory,
     "bluetooth": glyph_bluetooth,
-    "mesh": glyph_mesh,
+    "zigbee": glyph_zigbee,
     "revision": glyph_revision,
 }
 
