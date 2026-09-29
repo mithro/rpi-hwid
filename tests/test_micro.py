@@ -97,10 +97,11 @@ def test_the_antenna_s_text_is_its_mast_set_upright(monkeypatch):
     ((x, y, s, font, size),) = rotated
     assert s == "433"
     assert font == labels.SANS_BOLD
-    assert size >= micro.MIN_SIZE
+    # the Wi-Fi glyph's lettering: "433" the size of "2.4n" (Tim, 2026-09-29)
+    assert size == micro.WIFI_TYPE
     run = cell.width("433", font, size)
-    # standing on the foot and reaching most of the way up the header
-    assert micro.HEAD_H * 0.75 <= run <= y
+    # standing on the foot
+    assert run <= y
     assert y <= micro.HEAD_H
     # the column is centred in the glyph, with the waves either side of it
     assert x + size * 0.72 / 2 == pytest.approx(w / 2)
@@ -461,7 +462,9 @@ def test_the_spec_strip_heads_the_band_beside_the_qr(monkeypatch):
     micro.render_micro([_label(specs=_strip())], _null_pdf())
     strip = [s for s in seen if s[3] == pytest.approx(micro.SPEC_H)]
     assert [s[0] for s in strip] == ["riscv", "cores", "memory", "tasmota"]
-    assert {round(s[2], 6) for s in strip} == {round(micro.band_top(), 6)}
+    # just under the header, above the QR's top (Tim, 2026-09-29)
+    assert {round(s[2], 6) for s in strip} == {round(micro.strip_top(), 6)}
+    assert micro.strip_top() < micro.band_top()
     assert strip[0][1] == pytest.approx(micro.rows_x())
     xs = [s[1] for s in strip]
     assert xs == sorted(xs)
@@ -612,8 +615,7 @@ def test_fewer_rows_under_a_strip_spread_over_its_height():
     do, on the caption's line; two or three stop at ROW_PITCH apart."""
     five, four = micro.spec_pitch(5), micro.spec_pitch(4)
     assert four > five
-    assert four * 3 == pytest.approx(five * 4)
-    assert four <= micro.ROW_PITCH
+    assert four == pytest.approx(min(micro.ROW_PITCH, five * 4 / 3))
     assert micro.spec_pitch(2) == micro.spec_pitch(3) == micro.ROW_PITCH
 
 
@@ -701,3 +703,18 @@ def test_a_usb_glyph_letters_only_otg_jtag_and_serial(text):
 
 def test_a_usb_glyph_letters_in_one_order():
     assert micro.usb_letters("SJO") == "OJS"
+
+
+def test_a_wrapped_identifier_s_halves_stand_close(monkeypatch):
+    """Tim, 2026-09-29: no white between a wrapped id's two rows. The second
+    half stands its digits' height and WRAP_GAP under the first, while the
+    rows around them keep the spread pitch."""
+    drawn = _spy_text(monkeypatch)
+    rows = (MicroRow("flash", "XM25QH32D · 4 MiB"),
+            MicroRow("eFuse", "0123456789abcdef", mono=True, size=4.0),
+            MicroRow("", "fedcba9876543210", mono=True, size=4.0, wrapped=True))
+    micro.render_micro([_label(specs=_strip(), rows=rows)], _null_pdf())
+    y = {d[0]: d[3] for d in drawn}
+    assert y["fedcba9876543210"] - y["0123456789abcdef"] == pytest.approx(
+        micro.wrap_advance(4.0))
+    assert y["0123456789abcdef"] - y["XM25QH32D · 4 MiB"] > micro.wrap_advance(4.0)

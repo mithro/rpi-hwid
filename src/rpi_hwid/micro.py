@@ -98,6 +98,11 @@ SPEC_ROW = 4.4
 EXTRA_GAP = 0.6 * mm           # the last row to an extra section under it
 SPEC_EXTRA_GAP = 0.3 * mm      # ...closed up with the rows under a spec strip
 SPEC_ICON_GAP = 0.3 * mm       # between the strip's glyphs
+# A spec strip starts this far under the header rather than level with the
+# QR: the strip and the rows under it take the band-gap's room too (Tim,
+# 2026-09-29).
+STRIP_GAP = 0.15 * mm
+WRAP_GAP = 0.25 * mm           # a wrapped identifier's two halves, cap to top
 
 GUIDE = HexColor("#999999")    # the cut guides, lighter than any caption
 
@@ -132,16 +137,35 @@ def caption_baseline() -> float:
     return foot_top() + CAPTION * 0.72
 
 
-def spec_pitch(lines: int = SPEC_ROWS) -> float:
-    """The row pitch under a spec strip: `lines` rows of at most
+def strip_top() -> float:
+    """Where a spec strip starts: just under the header, above the QR's top."""
+    return MICRO_PAD + HEAD_H + STRIP_GAP
+
+
+def rows_top() -> float:
+    """Where the first line under a spec strip starts."""
+    return strip_top() + SPEC_H + SPEC_GAP
+
+
+def wrap_advance(size: float) -> float:
+    """How far a wrapped identifier's second half stands under its first:
+    the digits' height and a hair, no row's worth of white between them
+    (Tim, 2026-09-29)."""
+    return size * 0.72 + WRAP_GAP
+
+
+def spec_pitch(lines: int = SPEC_ROWS, wrapped: float = 0.0) -> float:
+    """The row pitch under a spec strip: `lines` lines of at most
     SPEC_ROW-point type spread evenly from the strip down to the caption's
     baseline, but never further apart than ROW_PITCH (Tim, 2026-09-29:
-    use the height there is). Five, the most there may be, are set
-    tighter than ROW_PITCH; four fill the same height a little looser."""
-    first = band_top() + SPEC_H + SPEC_GAP
-    if lines < 2:
+    use the height there is). `wrapped` is the height the second halves of
+    wrapped identifiers take (wrap_advance each), which is not spread;
+    `lines` counts the lines that are, not those second halves."""
+    gaps = lines - 1
+    if gaps < 1:
         return ROW_PITCH
-    return min(ROW_PITCH, (caption_baseline() - first - SPEC_ROW * 0.72) / (lines - 1))
+    room = caption_baseline() - rows_top() - SPEC_ROW * 0.72 - wrapped
+    return min(ROW_PITCH, room / gaps)
 
 
 def max_rows(specs: bool) -> int:
@@ -448,16 +472,17 @@ MAST_RUN = 0.84        # of the glyph's height: how tall a lettered mast stands
 
 
 def mast_size(text: str, size: float) -> float:
-    """The bold point size at which `text`, set upright, is the mast of a
-    `size`-high antenna. Refused below MIN_SIZE rather than shrunk further:
-    a band that would print smaller than that belongs in a row instead."""
-    per_point = pdfmetrics.stringWidth(text, labels.SANS_BOLD, 1)
-    s = size * MAST_RUN / per_point
-    if s < MIN_SIZE:
+    """The bold point size of `text` set upright as the mast of a
+    `size`-high antenna: the Wi-Fi glyph's lettering, so "433" reads the
+    same size as "2.4n" beside it (Tim, 2026-09-29). Refused where the
+    text would stand taller than the mast has room for."""
+    run = pdfmetrics.stringWidth(text, labels.SANS_BOLD, WIFI_TYPE)
+    if run > size * MAST_RUN:
         raise ValueError(
-            f"the antenna's band {text!r} would stand as its mast at {s:.1f} pt, below "
-            f"the {MIN_SIZE:.0f} pt the micro labels print; give it fewer characters")
-    return s
+            f"the antenna's band {text!r} set upright at {WIFI_TYPE:g} pt is "
+            f"{run / mm:.1f} mm, taller than the {size * MAST_RUN / mm:.1f} mm mast; "
+            "give it fewer characters")
+    return WIFI_TYPE
 
 
 def glyph_antenna(cell: Cell, x: float, y: float, size: float, text: str) -> float:
@@ -506,9 +531,12 @@ def _lettered_antenna(cell: Cell, x: float, y: float, size: float, text: str) ->
     fx, fy = cell.pt(cx, foot_y)
     foot = size * 0.25
     c.line(fx - foot, fy, fx + foot, fy)
-    # the waves round the top of the lettering, clear of its sides
+    # the waves round the top of the lettering, clear of its sides, drawn
+    # as heavy as the Wi-Fi glyph's arcs (Tim, 2026-09-29)
+    wave = _wifi_geometry(size)[1]
+    c.setLineWidth(wave)
     hx, hy = cell.pt(cx, bottom - run + size * 0.18)
-    for r in (thick / 2 + lw * 1.4, thick / 2 + lw * 2.9):
+    for r in (thick / 2 + wave * 1.8, thick / 2 + wave * 3.9):
         c.arc(hx - r, hy - r, hx + r, hy + r, -40, 80)
         c.arc(hx - r, hy - r, hx + r, hy + r, 140, 80)
     c.setLineWidth(1)
@@ -817,6 +845,9 @@ class MicroRow:
     mono: bool = False
     size: float | None = None
     wide: bool = False
+    # the second half of the identifier on the row above, set close under
+    # it rather than a row's pitch away (Tim, 2026-09-29)
+    wrapped: bool = False
 
     @property
     def blank(self) -> bool:
@@ -930,22 +961,29 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
     rx = rows_x()
     rw = right - rx
     pitch, y = ROW_PITCH, top
+    wraps = [r for r in m.rows if r.wrapped and not r.blank]
     if m.specs:
-        # the strip heads the band, and the lines under it close up a little
+        # the strip starts just under the header, above the QR's top, and
+        # the lines under it spread down to the foot caption's line
         sx = rx
         for icon in m.specs:
-            ICONS[icon.name](cell, sx, top, SPEC_H, icon.text)
+            ICONS[icon.name](cell, sx, strip_top(), SPEC_H, icon.text)
             sx += _icon_width(cell, icon, SPEC_H) + SPEC_ICON_GAP
-        # an extra section under the rows takes a row's place
-        lines = len(m.rows) + (1 if m.subtitle else 0) + (1 if m.extra else 0)
-        pitch, y = spec_pitch(lines), top + SPEC_H + SPEC_GAP
+        # an extra section under the rows takes a row's place; a wrapped
+        # identifier's second half takes only wrap_advance
+        lines = (len(m.rows) - len(wraps) + (1 if m.subtitle else 0)
+                 + (1 if m.extra else 0))
+        wrapped = sum(wrap_advance(r.size or SPEC_ROW) for r in wraps)
+        pitch, y = spec_pitch(lines, wrapped), rows_top()
     if m.subtitle:
         cell.fit(rx, y, m.subtitle, labels.SANS, SUBTITLE, rw, min_size=MIN_SIZE)
     if m.subtitle or not m.specs:
         y += pitch
     # rows below the QR's foot run beside the foot's caption: it must end
     # short of them
-    if m.rows and y + (len(m.rows) - 1) * pitch + ROW * 0.72 > top + q:
+    advances = [wrap_advance(r.size or (SPEC_ROW if m.specs else ROW)) if r.wrapped
+                 else pitch for r in m.rows[1:]]
+    if m.rows and y + sum(advances) + ROW * 0.72 > top + q:
         room = rx - MICRO_PAD - 0.8 * mm
         if cell.width(m.ident_caption, labels.SANS, CAPTION) > room:
             raise ValueError(
@@ -959,7 +997,10 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
                True: column([r for r in m.rows if r.wide])}
     largest = SPEC_ROW if m.specs else ROW
     last_h = ROW * 0.72
-    for r in m.rows:
+    for i, r in enumerate(m.rows):
+        if i and r.wrapped:
+            # the second half of an identifier, close under its first
+            y += advances[i - 1] - pitch
         if r.blank:
             y += pitch
             continue

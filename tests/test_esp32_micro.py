@@ -28,7 +28,9 @@ def flash(value):
 
 
 def uid(caption, value, wide=False):
-    return MicroRow(caption, value, mono=True, size=UID, wide=wide)
+    """A serial's row; one with no caption is the second half of the id on
+    the row above, set close under it (wrapped)."""
+    return MicroRow(caption, value, mono=True, size=UID, wide=wide, wrapped=not caption)
 
 
 def fuid(caption, value):
@@ -375,7 +377,7 @@ def test_no_row_overflows_or_touches_another(monkeypatch, which):
     labs = (_all_labels()[:sum(len(d) for d in REAL.values())] if which == "real"
             else [esp32_micro.sample_label(p, i) for i, p in enumerate(espressif.PARTS)]
             + [esp32_micro.sample_label(p, i + 1) for i, p in enumerate(espressif.PARTS)])
-    below_strip = micro.band_top() + micro.SPEC_H
+    below_strip = micro.strip_top() + micro.SPEC_H
     for lab in labs:
         drawn = []
         real = micro.Cell.text

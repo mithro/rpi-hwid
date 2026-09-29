@@ -313,7 +313,8 @@ def uid_rows(caption: str, uid: str, wide: bool = False) -> list[MicroRow]:
     else:
         half = (len(uid) + 1) // 2
         parts = [uid[:half], uid[half:]]
-    return [MicroRow(caption if i == 0 else "", h, mono=True, size=UID_PT, wide=wide)
+    return [MicroRow(caption if i == 0 else "", h, mono=True, size=UID_PT, wide=wide,
+                     wrapped=i > 0)
             for i, h in enumerate(parts)]
 
 
