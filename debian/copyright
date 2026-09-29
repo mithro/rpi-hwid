@@ -181,6 +181,15 @@ License: GPL-3.0-only
  https://github.com/arendst/Tasmota, whose licence is GPL-3.0-only; see
  src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/zigbee.svg
+Copyright: Pictogrammers (Material Design Icons contributors)
+License: Apache-2.0
+ The Zigbee mark from the Material Design Icons package @mdi/svg 7.4.47
+ (svg/zigbee.svg), copied byte for byte. Zigbee is a trademark of the
+ Connectivity Standards Alliance; the mark is drawn only on the label of a
+ part with a Zigbee-capable 802.15.4 radio. See
+ src/rpi_hwid/artwork/README.md.
+
 License: Apache-2.0
  On Debian systems, the complete text of the Apache License Version 2.0
  can be found in '/usr/share/common-licenses/Apache-2.0'.
