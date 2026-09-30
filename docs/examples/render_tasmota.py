@@ -66,7 +66,9 @@ def main() -> None:
         with tempfile.TemporaryDirectory(dir=HERE) as tmp:
             ms = tasmota_micro.micro_labels(collect.load_collected(args.data))
             page = render_page(ms, 150, tmp)
-            page.convert("L").save(HERE / "tasmota-sheet.png", optimize=True)
+            # a palette, not greyscale: the host name is printed in colour
+            page.convert("RGB").quantize(colors=32).save(HERE / "tasmota-sheet.png",
+                                                         optimize=True)
             print(f"tasmota-sheet.png, {len(ms)} labels")
 
 
