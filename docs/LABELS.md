@@ -613,8 +613,9 @@ error naming the device. The Wi-Fi MAC is the identifier, in the QR and along th
 foot. Beside the QR: the chip with its revision as the firmware writes it,
 the flash size, the ESP chip id (the number the web UI and the sheet's
 Device ID column show, which Tasmota derives from the MAC's low 24 bits) and
-the flash's JEDEC id. No IP, host name, Wi-Fi network or firmware version is
-printed. A document missing any of these is an error naming the device and
+the flash's JEDEC id. Under them, pale, in the white beside the QR's foot: the
+device's host name (Tim, 2026-09-30). No IP, Wi-Fi network or firmware version
+is printed. A document missing any of these is an error naming the device and
 the `rpi-hwid tasmota` command that reads it.
 
 ## Artwork

@@ -163,19 +163,43 @@ def _spy_text(monkeypatch):
 
 
 def test_nothing_that_can_change_is_printed(monkeypatch, tmp_path):
-    """No IP, no firmware version, no host name, no Wi-Fi network: only what
-    the device will say about itself for as long as it exists."""
+    """No IP, no firmware version, no Wi-Fi network: only what the device
+    will say about itself for as long as it exists -- and, pale, its host
+    name (Tim, 2026-09-30), which
+    test_the_hostname_is_printed_pale_in_the_spare_space covers."""
     drawn = _spy_text(monkeypatch)
     ms = tasmota_micro.micro_labels(_docs())
     micro.render_micro(ms, tmp_path / "t.pdf")
     text = " ".join(drawn)
-    for host, d in DEVICES.items():
+    for d in DEVICES.values():
         assert d["ip"] not in text
-        assert host not in text
         assert d["status"]["StatusFWR"]["Version"].split("(")[0] not in text
-        assert d["status"]["StatusNET"]["Hostname"] not in text
         assert d["status"]["StatusSTS"]["Wifi"]["SSId"] not in text
         assert d["status"]["StatusNET"]["Mac"].lower() in text
+
+
+def test_the_hostname_is_printed_pale_in_the_spare_space(monkeypatch, tmp_path):
+    """Tim, 2026-09-30: "On the tasmota label in the spare white space, put
+    the hostname in a pale color": under the rows, right of the QR, its foot
+    on the QR's, lighter than any caption."""
+    drawn = []
+    real = micro.Cell.text
+
+    def text(self, x, y, s, font=labels.SANS, size=8, align="left", color=None, **kw):
+        drawn.append((s, x, y, size, color))
+        return real(self, x, y, s, font, size, align, **({"color": color} if color else {}))
+
+    monkeypatch.setattr(micro.Cell, "text", text)
+    micro.render_micro([_one("au-plug-29")], tmp_path / "t.pdf")
+    (host,) = [d for d in drawn if d[0] == "au-plug-29"]
+    (last_row,) = [d for d in drawn if d[0] == "20 40 16"]
+    _, x, y, size, color = host
+    assert color == tasmota_micro.HOST_COLOR
+    assert min(color.red, color.green, color.blue) > max(
+        labels.GREY.red, labels.GREY.green, labels.GREY.blue)
+    assert x >= micro.rows_x()
+    assert y > last_row[2] + last_row[3] * 0.72
+    assert y + size * 0.72 == pytest.approx(micro.band_top() + micro.qr_size())
 
 
 def test_every_label_draws_inside_its_quarter(monkeypatch, tmp_path):

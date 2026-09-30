@@ -17,8 +17,9 @@ what the sheet, the router's leases and Tasmota's own name for the device
   * the flash chip's JEDEC id (manufacturer, type, capacity), read by the
     firmware at boot.
 
-Nothing that can change is printed: not the IP, the host name, the Wi-Fi
-network or the firmware version. The model is what the device says it is
+Nothing that can change is printed: not the IP, the Wi-Fi network or the
+firmware version. The one exception is the host name, pale in the white
+under the rows (Tim, 2026-09-30). The model is what the device says it is
 -- the NAME of its template, or the module Tasmota ships for it -- rather
 than what the sheet says, so a label never disagrees with the device it
 is stuck to. A device on one of Tasmota's generic modules is custom-made,
@@ -34,7 +35,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any
 
-from reportlab.lib.colors import black
+from reportlab.lib.colors import HexColor, black
 
 from rpi_hwid import esp32_micro, espressif, labels, micro
 from rpi_hwid.micro import Icon, MicroLabel, MicroRow
@@ -59,6 +60,11 @@ KNOWN_MODELS = {"zha zbbridge": ("sonoff", "Zigbee Bridge")}
 # A "custom" wordmark in the style of athom's and in the same space (Tim,
 # 2026-09-30), drawn by tools/make_custom_mark.py.
 CUSTOM_MARK = "custom.svg"
+
+# The host name the device is filed under, printed pale in the white under
+# the rows (Tim, 2026-09-30): lighter than any caption, so it reads as a
+# note beside what the device says about itself.
+HOST_COLOR = HexColor("#aaaaaa")
 
 READ_WITH = ("rpi-hwid tasmota --sheet <gdoc2netcfg IoT sheet> --site <site>=<octet> "
              "--out <dir> {host}")
@@ -119,6 +125,20 @@ micro.ICONS.setdefault("tasmota", glyph_tasmota)
 
 
 # --- the label ----------------------------------------------------------------------
+
+
+def host_note(host: str) -> micro.ExtraFn:
+    """The label's extra section: `host`, pale, at most a row's size,
+    its foot on the QR's."""
+
+    def draw(cell: micro.Cell, box: tuple[float, float, float, float]) -> None:
+        x, y, w, h = box
+        size = min(micro.ROW, h / 0.72)
+        size = cell.fitted_size(host, labels.SANS, size, w, min_size=micro.MIN_SIZE)
+        cell.fit(x, y + h - size * 0.72, host, labels.SANS, size, w,
+                 min_size=micro.MIN_SIZE, color=HOST_COLOR)
+
+    return draw
 
 
 def chip_glyph_text(chip: str) -> str:
@@ -197,6 +217,7 @@ def tasmota_label(host: str, t: Mapping[str, Any]) -> MicroLabel:
         rows=(MicroRow("chip id", str(t["esp_chip_id"]), mono=True),
               MicroRow("flash id", " ".join(re.findall("..", jedec)), mono=True)),
         read_with=READ_WITH.format(host=host),
+        extra=host_note(host),
     )
 
 
