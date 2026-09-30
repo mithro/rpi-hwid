@@ -80,10 +80,14 @@ def test_a_device_without_a_relay_gets_no_plug():
 
 def test_a_generic_module_is_a_custom_device_with_no_maker():
     """Tim, 2026-09-29: "Use `custom` for tasmota devices which are custom
-    made tasmota devices". The chip stays in the subtitle and the glyph."""
+    made tasmota devices". The chip stays in the subtitle and the glyph.
+    Tim, 2026-09-30: "custom" is a wordmark in the style of athom's, taking
+    the same space: in the mark's place, with no model to title it."""
     m = _one("esp32-433mhz-cc1101-blue")
-    assert m.mark is None
-    assert m.title == "custom"
+    assert m.mark == "custom.svg"
+    assert m.title == ""
+    custom, athom = labels.artwork("custom.svg"), labels.artwork("athom.png")
+    assert labels.mark_aspect(custom) == pytest.approx(labels.mark_aspect(athom), rel=1e-3)
     assert Icon("chip", "C3") in m.icons
     assert m.subtitle == "ESP32-C3 v0.4  ·  4 MB flash"
 

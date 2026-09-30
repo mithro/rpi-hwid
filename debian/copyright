@@ -231,6 +231,16 @@ License: trademark
  of docs.ai-thinker.com, pixels untouched; see
  src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/custom.svg
+Copyright: 2026 Tim Ansell
+License: Apache-2.0
+ The "custom" wordmark a custom-made Tasmota device's label carries in
+ place of a maker's mark. The letters are set in Lato Light (Copyright (c)
+ 2010-2011 Lukasz Dziedzic, SIL Open Font License 1.1, Debian's
+ fonts-lato) and turned into outlines by tools/make_custom_mark.py; the
+ OFL's requirements do not apply to a document created using the font.
+ See src/rpi_hwid/artwork/README.md.
+
 Files: src/rpi_hwid/artwork/athom.png
 Copyright: Athom (AthomTech)
 License: trademark

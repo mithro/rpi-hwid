@@ -22,8 +22,8 @@ network or the firmware version. The model is what the device says it is
 -- the NAME of its template, or the module Tasmota ships for it -- rather
 than what the sheet says, so a label never disagrees with the device it
 is stuck to. A device on one of Tasmota's generic modules is custom-made,
-an ESP32 someone wired up rather than a product, and is titled
-``custom``.
+an ESP32 someone wired up rather than a product, and carries a
+"custom" wordmark where a maker's mark would be.
 
 A label whose identifier or one of its facts was not read is not drawn:
 the error names the device and the command that reads it.
@@ -54,9 +54,11 @@ MAKER_MARKS = {"athom": "athom.png", "sonoff": "sonoff.png"}
 # tasmota/include/tasmota_template.h.
 KNOWN_MODELS = {"zha zbbridge": ("sonoff", "Zigbee Bridge")}
 
-# The title of a custom-made device: one flashed with a generic module
+# The mark of a custom-made device: one flashed with a generic module
 # (tasmota.GENERIC_MODULES), whose chip the subtitle and the chip glyph say.
-CUSTOM = "custom"
+# A "custom" wordmark in the style of athom's and in the same space (Tim,
+# 2026-09-30), drawn by tools/make_custom_mark.py.
+CUSTOM_MARK = "custom.svg"
 
 READ_WITH = ("rpi-hwid tasmota --sheet <gdoc2netcfg IoT sheet> --site <site>=<octet> "
              "--out <dir> {host}")
@@ -169,10 +171,11 @@ def tasmota_label(host: str, t: Mapping[str, Any]) -> MicroLabel:
     if not size:
         raise _not_read(host, "flash size (StatusMEM.FlashSize of Status 0)", None)
 
+    mark: str | None
     if t.get("generic"):
         # a device on one of Tasmota's generic modules is one someone built:
         # no maker, and no model the firmware knows (Tim, 2026-09-29)
-        mark, title = None, CUSTOM
+        mark, title = CUSTOM_MARK, ""
     else:
         mark, title = maker_and_title(t["model"])
     icons = [Icon("tasmota")]

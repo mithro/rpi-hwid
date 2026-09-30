@@ -602,8 +602,9 @@ The maker's mark and the model make the title -- the model as the device
 itself reports it, its template's NAME or the module Tasmota ships for it, so
 the label never disagrees with the plug it is on. A device on one of
 Tasmota's generic modules is custom-made (an ESP32 someone wired up, such as
-a 433 MHz radio node) and is titled `custom`; its chip is in the subtitle
-and on the chip glyph.
+a 433 MHz radio node): in the maker's mark's place it carries a "custom"
+wordmark in the style of athom's and the same size, with no model after
+it; its chip is in the subtitle and on the chip glyph.
 The glyphs are the Tasmota symbol, a mains plug where the device has a
 relay, the chip, and the ESP32 labels' Wi-Fi glyph for the chip's family:
 its band and standard, with the Bluetooth rune where the chip has
