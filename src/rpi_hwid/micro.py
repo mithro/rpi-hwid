@@ -222,6 +222,8 @@ WIFI_BT = "+bt"
 WIFI_ZB = "+zb"
 WIFI_MARKS = (WIFI_BT, WIFI_ZB)
 WIFI_RUNE_H = 0.62             # the Bluetooth rune's height, of the arcs' box
+WIFI_RUNE_WEIGHT = 0.06        # ...and its line, of its height: a third lighter
+                               # than the full-size rune's (Tim, 2026-09-30)
 WIFI_ZB_D = 0.42               # the Zigbee mark's diameter, of the arcs' box
 WIFI_MARK_OUT = 0.16 * mm      # how far either mark reaches past the arcs' ends
 ZIGBEE_MARK = "zigbee.svg"
@@ -349,9 +351,8 @@ def glyph_wifi(cell: Cell, x: float, y: float, size: float, text: str) -> float:
     foot, left, right = y + box_h, ax - WIFI_MARK_OUT, ax + arcs_w + WIFI_MARK_OUT
     if WIFI_BT in marks:
         rune_h = box_h * WIFI_RUNE_H
-        # the full-size rune's weight: drawn heavier it read as too bold
-        # (Tim, 2026-09-30)
-        draw_bluetooth(cell, right - rune_h * BLUETOOTH_W, foot - rune_h, rune_h)
+        draw_bluetooth(cell, right - rune_h * BLUETOOTH_W, foot - rune_h, rune_h,
+                       weight=WIFI_RUNE_WEIGHT)
     zb = labels.artwork(ZIGBEE_MARK) if WIFI_ZB in marks else None
     if zb:
         d = box_h * WIFI_ZB_D

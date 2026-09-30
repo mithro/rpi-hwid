@@ -691,9 +691,10 @@ def test_a_wide_row_starts_right_of_its_own_caption(monkeypatch):
     assert at["GD25Q32x · 4 MiB"] == at["89e4bec55c62671e"]
 
 
-def test_the_wifi_glyph_s_bluetooth_is_no_bolder_than_the_rune(monkeypatch):
-    """Tim, 2026-09-30: the Bluetooth rune beside the Wi-Fi dot less bold;
-    its line is no heavier, for its height, than the full-size rune's."""
+def test_the_wifi_glyph_s_bluetooth_is_lighter_than_the_rune(monkeypatch):
+    """Tim, 2026-09-30: the Bluetooth rune beside the Wi-Fi dot less bold,
+    then even thinner: its line a third lighter, for its height, than the
+    full-size rune's."""
     weights = []
     real = micro.draw_bluetooth
 
@@ -704,7 +705,7 @@ def test_the_wifi_glyph_s_bluetooth_is_no_bolder_than_the_rune(monkeypatch):
     monkeypatch.setattr(micro, "draw_bluetooth", spy)
     micro.render_micro([_label(specs=(Icon("wifi", "2.4 n +bt"),))], _null_pdf())
     assert weights
-    assert all(w <= 0.09 for w in weights)
+    assert all(w <= 0.06 for w in weights)
 
 
 @pytest.mark.parametrize("text", ["2.4 b/g/n +bt", "2.4 b/g/n +zb", "2.4 n +BT", "+bt"])
