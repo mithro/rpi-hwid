@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from rpi_hwid import labels, micro, tasmota, tasmota_micro
+from rpi_hwid import esp32_micro, espressif, labels, micro, tasmota, tasmota_micro
 from rpi_hwid.micro import Icon, MicroRow
 from rpi_hwid.model import ProbeDocument
 
@@ -50,7 +50,8 @@ def test_the_athom_plug_label():
     assert m.host == "au-plug-29"
     assert m.mark == "athom.png"
     assert m.title == "Plug V3"
-    assert m.icons == (Icon("tasmota"), Icon("plug"), Icon("chip", "C3"))
+    assert m.icons == (Icon("tasmota"), Icon("plug"), Icon("chip", "C3"),
+                       Icon("wifi", "2.4 n +bt"))
     assert m.ident_caption == "Wi-Fi MAC"
     assert m.ident == "7c:2c:67:d7:c0:e8"
     assert m.qr_content == "7c:2c:67:d7:c0:e8"
@@ -63,7 +64,8 @@ def test_the_sonoff_s31_label():
     m = _one("us-plug-1")
     assert m.mark == "sonoff.png"
     assert m.title == "S31"
-    assert m.icons == (Icon("tasmota"), Icon("plug"), Icon("chip", "8266"))
+    assert m.icons == (Icon("tasmota"), Icon("plug"), Icon("chip", "8266"),
+                       Icon("wifi", "2.4 n"))
     assert m.subtitle == "ESP8266EX  ·  4 MB flash"
     assert m.rows[1] == MicroRow("flash id", "ef 40 16", mono=True)
 
@@ -84,6 +86,24 @@ def test_a_generic_module_is_a_custom_device_with_no_maker():
     assert m.title == "custom"
     assert Icon("chip", "C3") in m.icons
     assert m.subtitle == "ESP32-C3 v0.4  ·  4 MB flash"
+
+
+def test_the_wifi_glyph_is_the_esp32_labels_own():
+    """Tim, 2026-09-30: the same style of Wi-Fi icon as the ESP32 labels:
+    the lettered glyph, its band and standard, with the Bluetooth rune
+    where the chip has Bluetooth -- and the title still prints whole."""
+    for m in tasmota_micro.micro_labels(_docs()):
+        chip = m.subtitle.split()[0]
+        wifi = esp32_micro.wifi_icons(espressif.family_for(chip))
+        assert m.icons[-len(wifi):] == wifi, m.host
+        assert micro.title_fits(m), m.host
+
+
+def test_a_chip_of_no_known_family_is_fatal_and_names_the_host():
+    doc = _doc("us-plug-1")
+    doc.evidence["verdict"]["tasmota"]["chip"] = "ESP32-C61"
+    with pytest.raises(espressif.UnknownPartError, match=r"us-plug-1.*ESP32-C61"):
+        tasmota_micro.micro_labels({"us-plug-1": doc})
 
 
 def test_a_known_model_without_its_maker_in_the_name():

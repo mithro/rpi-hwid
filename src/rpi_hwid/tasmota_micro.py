@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from reportlab.lib.colors import black
 
-from rpi_hwid import labels, micro
+from rpi_hwid import esp32_micro, espressif, labels, micro
 from rpi_hwid.micro import Icon, MicroLabel, MicroRow
 
 if TYPE_CHECKING:
@@ -180,6 +180,12 @@ def tasmota_label(host: str, t: Mapping[str, Any]) -> MicroLabel:
         icons.append(Icon("plug"))
     glyph = chip_glyph_text(t["chip"])
     icons.append(Icon("chip", glyph) if glyph else Icon("chip"))
+    # the ESP32 labels' Wi-Fi glyph, from the chip's family (Tim, 2026-09-30)
+    try:
+        family = espressif.family_for(t["chip"])
+    except espressif.UnknownPartError as e:
+        raise espressif.UnknownPartError(f"{host}: {e}") from e
+    icons += esp32_micro.wifi_icons(family)
     chip = " ".join(x for x in (t["chip"], t.get("chip_revision")) if x)
     return MicroLabel(
         host=host, title=title, mark=mark, icons=tuple(icons),

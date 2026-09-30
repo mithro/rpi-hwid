@@ -605,7 +605,10 @@ Tasmota's generic modules is custom-made (an ESP32 someone wired up, such as
 a 433 MHz radio node) and is titled `custom`; its chip is in the subtitle
 and on the chip glyph.
 The glyphs are the Tasmota symbol, a mains plug where the device has a
-relay, and the chip. The Wi-Fi MAC is the identifier, in the QR and along the
+relay, the chip, and the ESP32 labels' Wi-Fi glyph for the chip's family:
+its band and standard, with the Bluetooth rune where the chip has
+Bluetooth. A chip that `rpi_hwid.espressif` places in no family is an
+error naming the device. The Wi-Fi MAC is the identifier, in the QR and along the
 foot. Beside the QR: the chip with its revision as the firmware writes it,
 the flash size, the ESP chip id (the number the web UI and the sheet's
 Device ID column show, which Tasmota derives from the MAC's low 24 bits) and
