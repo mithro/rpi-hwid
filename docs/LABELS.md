@@ -480,7 +480,11 @@ the same places:
   strip there is room for five rows (a 128-bit flash uid and an eFuse id,
   two rows each, under the flash row), and however many a label has are
   spread down to the foot caption's line, no further apart than rows
-  beside a subtitle: a C3's four fill the same height as five.
+  beside a subtitle. An id over two rows keeps its halves together, the
+  second close under the first with no row's white between them; the rest
+  of the height goes between the facts. The spec strip starts just under
+  the header rather than level with the QR, so the strip and rows have that
+  room too.
   The crystal is read and kept in the document, but not printed.
 
   **Trimming.** A flash reads out a fixed 128 bits whatever its maker

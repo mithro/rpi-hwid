@@ -97,10 +97,11 @@ def test_the_antenna_s_text_is_its_mast_set_upright(monkeypatch):
     ((x, y, s, font, size),) = rotated
     assert s == "433"
     assert font == labels.SANS_BOLD
-    assert size >= micro.MIN_SIZE
+    # the Wi-Fi glyph's lettering: "433" the size of "2.4n" (Tim, 2026-09-29)
+    assert size == micro.WIFI_TYPE
     run = cell.width("433", font, size)
-    # standing on the foot and reaching most of the way up the header
-    assert micro.HEAD_H * 0.75 <= run <= y
+    # standing on the foot
+    assert run <= y
     assert y <= micro.HEAD_H
     # the column is centred in the glyph, with the waves either side of it
     assert x + size * 0.72 / 2 == pytest.approx(w / 2)
@@ -461,10 +462,29 @@ def test_the_spec_strip_heads_the_band_beside_the_qr(monkeypatch):
     micro.render_micro([_label(specs=_strip())], _null_pdf())
     strip = [s for s in seen if s[3] == pytest.approx(micro.SPEC_H)]
     assert [s[0] for s in strip] == ["riscv", "cores", "memory", "tasmota"]
-    assert {round(s[2], 6) for s in strip} == {round(micro.band_top(), 6)}
+    # just under the header, above the QR's top (Tim, 2026-09-29)
+    assert {round(s[2], 6) for s in strip} == {round(micro.strip_top(), 6)}
+    assert micro.strip_top() < micro.band_top()
     assert strip[0][1] == pytest.approx(micro.rows_x())
     xs = [s[1] for s in strip]
     assert xs == sorted(xs)
+
+
+def test_the_first_row_stands_clear_of_the_strip(monkeypatch):
+    """Tim, 2026-09-30: a little white between the strip's glyphs and the
+    first line under them (flash)."""
+    drawn = []
+    real = micro.Cell.text
+
+    def text(self, x, y, s, *a, **kw):
+        drawn.append((s, y))
+        return real(self, x, y, s, *a, **kw)
+
+    monkeypatch.setattr(micro.Cell, "text", text)
+    rows = (MicroRow("flash", "W25Q32 · 4 MiB"), MicroRow("uid", "0123456789abcdef"))
+    micro.render_micro([_label(specs=_strip(), rows=rows)], _null_pdf())
+    (y,) = [y for s, y in drawn if s == "W25Q32 · 4 MiB"]
+    assert y - (micro.strip_top() + micro.SPEC_H) >= 0.6 * micro.mm
 
 
 def test_five_rows_under_the_strip_stop_at_the_foot_caption(monkeypatch):
@@ -612,8 +632,7 @@ def test_fewer_rows_under_a_strip_spread_over_its_height():
     do, on the caption's line; two or three stop at ROW_PITCH apart."""
     five, four = micro.spec_pitch(5), micro.spec_pitch(4)
     assert four > five
-    assert four * 3 == pytest.approx(five * 4)
-    assert four <= micro.ROW_PITCH
+    assert four == pytest.approx(min(micro.ROW_PITCH, five * 4 / 3))
     assert micro.spec_pitch(2) == micro.spec_pitch(3) == micro.ROW_PITCH
 
 
@@ -672,6 +691,23 @@ def test_a_wide_row_starts_right_of_its_own_caption(monkeypatch):
     assert at["GD25Q32x · 4 MiB"] == at["89e4bec55c62671e"]
 
 
+def test_the_wifi_glyph_s_bluetooth_is_lighter_than_the_rune(monkeypatch):
+    """Tim, 2026-09-30: the Bluetooth rune beside the Wi-Fi dot less bold,
+    then even thinner: its line a third lighter, for its height, than the
+    full-size rune's."""
+    weights = []
+    real = micro.draw_bluetooth
+
+    def spy(cell, x, y, size, weight=0.09):
+        weights.append(weight)
+        return real(cell, x, y, size, weight)
+
+    monkeypatch.setattr(micro, "draw_bluetooth", spy)
+    micro.render_micro([_label(specs=(Icon("wifi", "2.4 n +bt"),))], _null_pdf())
+    assert weights
+    assert all(w <= 0.06 for w in weights)
+
+
 @pytest.mark.parametrize("text", ["2.4 b/g/n +bt", "2.4 b/g/n +zb", "2.4 n +BT", "+bt"])
 def test_bluetooth_rides_only_on_a_one_standard_wifi_glyph(text):
     with pytest.raises(ValueError, match="Wi-Fi glyph"):
@@ -701,3 +737,18 @@ def test_a_usb_glyph_letters_only_otg_jtag_and_serial(text):
 
 def test_a_usb_glyph_letters_in_one_order():
     assert micro.usb_letters("SJO") == "OJS"
+
+
+def test_a_wrapped_identifier_s_halves_stand_close(monkeypatch):
+    """Tim, 2026-09-29: no white between a wrapped id's two rows. The second
+    half stands its digits' height and WRAP_GAP under the first, while the
+    rows around them keep the spread pitch."""
+    drawn = _spy_text(monkeypatch)
+    rows = (MicroRow("flash", "XM25QH32D · 4 MiB"),
+            MicroRow("eFuse", "0123456789abcdef", mono=True, size=4.0),
+            MicroRow("", "fedcba9876543210", mono=True, size=4.0, wrapped=True))
+    micro.render_micro([_label(specs=_strip(), rows=rows)], _null_pdf())
+    y = {d[0]: d[3] for d in drawn}
+    assert y["fedcba9876543210"] - y["0123456789abcdef"] == pytest.approx(
+        micro.wrap_advance(4.0))
+    assert y["0123456789abcdef"] - y["XM25QH32D · 4 MiB"] > micro.wrap_advance(4.0)
