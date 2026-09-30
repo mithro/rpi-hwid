@@ -470,6 +470,23 @@ def test_the_spec_strip_heads_the_band_beside_the_qr(monkeypatch):
     assert xs == sorted(xs)
 
 
+def test_the_first_row_stands_clear_of_the_strip(monkeypatch):
+    """Tim, 2026-09-30: a little white between the strip's glyphs and the
+    first line under them (flash)."""
+    drawn = []
+    real = micro.Cell.text
+
+    def text(self, x, y, s, *a, **kw):
+        drawn.append((s, y))
+        return real(self, x, y, s, *a, **kw)
+
+    monkeypatch.setattr(micro.Cell, "text", text)
+    rows = (MicroRow("flash", "W25Q32 · 4 MiB"), MicroRow("uid", "0123456789abcdef"))
+    micro.render_micro([_label(specs=_strip(), rows=rows)], _null_pdf())
+    (y,) = [y for s, y in drawn if s == "W25Q32 · 4 MiB"]
+    assert y - (micro.strip_top() + micro.SPEC_H) >= 0.6 * micro.mm
+
+
 def test_five_rows_under_the_strip_stop_at_the_foot_caption(monkeypatch):
     """Right of the QR the rows may run down beside the foot's caption: the
     last one sits on that caption's baseline, clear of the identifier.

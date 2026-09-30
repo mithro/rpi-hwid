@@ -88,7 +88,8 @@ CAP_GAP = 0.35 * mm            # foot caption to the identifier
 ROW_PITCH = 2.1 * mm
 MAX_ROWS = 4                   # beside the subtitle's line, which is always kept
 SPEC_H = 2.4 * mm              # the spec strip's glyphs, in the subtitle's place
-SPEC_GAP = 0.3 * mm            # the strip to the first line under it
+SPEC_GAP = 0.6 * mm            # the strip to the first line under it: a
+                               # little white between (Tim, 2026-09-30)
 # Under a spec strip the rows are one step tighter than ROW and ROW_PITCH:
 # five of them, none larger than SPEC_ROW, at spec_pitch -- room for a
 # flash row and four rows of serials under it: a 128-bit flash uid and a
