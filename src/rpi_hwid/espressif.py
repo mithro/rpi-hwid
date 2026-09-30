@@ -412,6 +412,29 @@ ESP32_P4 = Family(
 FAMILIES = (ESP8266, ESP32, ESP32_S2, ESP32_S3, ESP32_C2, ESP32_C3, ESP32_C5, ESP32_C6,
             ESP32_H2, ESP32_P4)
 
+
+def family_for(chip: str) -> Family:
+    """The family of a chip named as firmware names it rather than as a
+    part: Tasmota's ``ESP32-C3``, ``ESP32-C3FH4``, ``ESP32-D0WD-V3`` or
+    ``ESP8266EX``. The ESP8285 is an ESP8266 with its flash inside. After
+    ESP32-, a letter and its digits name a newer family (S2, C3, C61) and
+    must be one the table has -- an ESP32-C61 is not a C6; anything else
+    (D0WD, PICO, U4WDH, and S0WD, the one package that looks like a
+    family) is a package of the original ESP32. UnknownPartError where no
+    family fits."""
+    name = chip.upper()
+    if re.match(r"ESP82(66|85)", name):
+        return ESP8266
+    by_name = {f.name: f for f in FAMILIES}
+    newer = re.match(r"ESP32-([CSHP]\d+)", name)
+    if newer and newer.group(1) != "S0":
+        found = by_name.get(f"ESP32-{newer.group(1)}")
+    else:
+        found = ESP32 if re.fullmatch(r"ESP32(-.*)?", name) else None
+    if found is None:
+        raise UnknownPartError(f"{chip!r} is no family in rpi_hwid.espressif's table")
+    return found
+
 # --- the parts -------------------------------------------------------------------
 
 

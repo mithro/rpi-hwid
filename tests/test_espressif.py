@@ -217,3 +217,22 @@ def test_the_newest_wifi_standard_is_the_one_printed(family, newest):
     802.11 standard the radio has -- n for Wi-Fi 4, ax for Wi-Fi 6."""
     fam = {f.name: f for f in espressif.FAMILIES}[family]
     assert fam.wifi_newest == newest
+
+
+@pytest.mark.parametrize(("chip", "family"), [
+    ("ESP8266EX", espressif.ESP8266), ("ESP8285", espressif.ESP8266),
+    ("ESP32", espressif.ESP32), ("ESP32-D0WD-V3", espressif.ESP32),
+    ("ESP32-PICO-V3-02", espressif.ESP32), ("ESP32-S0WD", espressif.ESP32),
+    ("ESP32-C3", espressif.ESP32_C3),
+    ("ESP32-C3FH4", espressif.ESP32_C3), ("ESP32-S3", espressif.ESP32_S3),
+    ("ESP32-C6", espressif.ESP32_C6), ("esp32-s2", espressif.ESP32_S2)])
+def test_a_chip_as_tasmota_names_it_is_a_family(chip, family):
+    """Tasmota reports the chip (StatusFWR.Hardware) as ESP.getChipModel()
+    or a package name, never a part the table lists."""
+    assert espressif.family_for(chip) is family
+
+
+@pytest.mark.parametrize("chip", ["ESP32-C61", "ESP31B", "RP2040", ""])
+def test_a_chip_of_no_family_is_an_error_naming_it(chip):
+    with pytest.raises(espressif.UnknownPartError, match=re.escape(repr(chip))):
+        espressif.family_for(chip)
