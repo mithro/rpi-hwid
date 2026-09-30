@@ -36,6 +36,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from reportlab.lib.colors import HexColor, black
+from reportlab.pdfbase import pdfmetrics
 
 from rpi_hwid import esp32_micro, espressif, labels, micro
 from rpi_hwid.micro import Icon, MicroLabel, MicroRow
@@ -61,10 +62,10 @@ KNOWN_MODELS = {"zha zbbridge": ("sonoff", "Zigbee Bridge")}
 # 2026-09-30), drawn by tools/make_custom_mark.py.
 CUSTOM_MARK = "custom.svg"
 
-# The host name the device is filed under, printed pale in the white under
-# the rows (Tim, 2026-09-30): lighter than any caption, so it reads as a
-# note beside what the device says about itself.
-HOST_COLOR = HexColor("#aaaaaa")
+# The host name the device is filed under, filling the white under the
+# rows in a pale colour, not a grey (Tim, 2026-09-30): lighter than any
+# caption, so it reads as a note beside what the device says about itself.
+HOST_COLOR = HexColor("#7aa6de")
 
 READ_WITH = ("rpi-hwid tasmota --sheet <gdoc2netcfg IoT sheet> --site <site>=<octet> "
              "--out <dir> {host}")
@@ -128,15 +129,17 @@ micro.ICONS.setdefault("tasmota", glyph_tasmota)
 
 
 def host_note(host: str) -> micro.ExtraFn:
-    """The label's extra section: `host`, pale, at most a row's size,
-    its foot on the QR's."""
+    """The label's extra section: `host` in HOST_COLOR, as large as the
+    region holds -- its width, or its height from the font's ascender to
+    its descender -- with that ink centred both ways (Tim, 2026-09-30)."""
 
     def draw(cell: micro.Cell, box: tuple[float, float, float, float]) -> None:
         x, y, w, h = box
-        size = min(micro.ROW, h / 0.72)
-        size = cell.fitted_size(host, labels.SANS, size, w, min_size=micro.MIN_SIZE)
-        cell.fit(x, y + h - size * 0.72, host, labels.SANS, size, w,
-                 min_size=micro.MIN_SIZE, color=HOST_COLOR)
+        asc, desc = pdfmetrics.getAscentDescent(labels.SANS, 1)
+        size = min(w / pdfmetrics.stringWidth(host, labels.SANS, 1), h / (asc - desc))
+        baseline = y + h / 2 + (asc + desc) * size / 2
+        cell.text(x + w / 2, baseline - size * 0.72, host, labels.SANS, size,
+                  align="centre", color=HOST_COLOR)
 
     return draw
 

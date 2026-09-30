@@ -166,7 +166,8 @@ def test_nothing_that_can_change_is_printed(monkeypatch, tmp_path):
     """No IP, no firmware version, no Wi-Fi network: only what the device
     will say about itself for as long as it exists -- and, pale, its host
     name (Tim, 2026-09-30), which
-    test_the_hostname_is_printed_pale_in_the_spare_space covers."""
+    test_the_hostname_fills_the_spare_space_centred_in_a_pale_colour
+    covers."""
     drawn = _spy_text(monkeypatch)
     ms = tasmota_micro.micro_labels(_docs())
     micro.render_micro(ms, tmp_path / "t.pdf")
@@ -178,28 +179,53 @@ def test_nothing_that_can_change_is_printed(monkeypatch, tmp_path):
         assert d["status"]["StatusNET"]["Mac"].lower() in text
 
 
-def test_the_hostname_is_printed_pale_in_the_spare_space(monkeypatch, tmp_path):
+def test_the_hostname_fills_the_spare_space_centred_in_a_pale_colour(monkeypatch, tmp_path):
     """Tim, 2026-09-30: "On the tasmota label in the spare white space, put
-    the hostname in a pale color": under the rows, right of the QR, its foot
-    on the QR's, lighter than any caption."""
-    drawn = []
-    real = micro.Cell.text
+    the hostname in a pale color", then "a pale color other than gray",
+    "centered in the region and take up the entire region": the room under
+    the rows, right of the QR. As large as the region holds, ascender to
+    descender, its ink centred both ways."""
+    import dataclasses
 
-    def text(self, x, y, s, font=labels.SANS, size=8, align="left", color=None, **kw):
-        drawn.append((s, x, y, size, color))
-        return real(self, x, y, s, font, size, align, **({"color": color} if color else {}))
+    from reportlab.pdfbase import pdfmetrics
 
-    monkeypatch.setattr(micro.Cell, "text", text)
-    micro.render_micro([_one("au-plug-29")], tmp_path / "t.pdf")
-    (host,) = [d for d in drawn if d[0] == "au-plug-29"]
-    (last_row,) = [d for d in drawn if d[0] == "20 40 16"]
-    _, x, y, size, color = host
-    assert color == tasmota_micro.HOST_COLOR
-    assert min(color.red, color.green, color.blue) > max(
-        labels.GREY.red, labels.GREY.green, labels.GREY.blue)
-    assert x >= micro.rows_x()
-    assert y > last_row[2] + last_row[3] * 0.72
-    assert y + size * 0.72 == pytest.approx(micro.band_top() + micro.qr_size())
+    for m in tasmota_micro.micro_labels(_docs()):
+        drawn, boxes = [], []
+        real_text, real_extra = micro.Cell.text, m.extra
+
+        def text(self, x, y, s, font=labels.SANS, size=8, align="left", color=None,
+                 _drawn=drawn, _real=real_text, **kw):
+            _drawn.append((s, x, y, font, size, align, color))
+            return _real(self, x, y, s, font, size, align,
+                         **({"color": color} if color else {}))
+
+        def extra(cell, box, _boxes=boxes, _real=real_extra):
+            _boxes.append(box)
+            _real(cell, box)
+
+        monkeypatch.setattr(micro.Cell, "text", text)
+        micro.render_micro([dataclasses.replace(m, extra=extra)], tmp_path / "t.pdf")
+        ((bx, by, bw, bh),) = boxes
+        (host,) = [d for d in drawn if d[0] == m.host]
+        s, x, y, font, size, align, color = host
+
+        # a pale colour, not a grey
+        assert color == tasmota_micro.HOST_COLOR
+        rgb = (color.red, color.green, color.blue)
+        assert max(rgb) - min(rgb) > 0.15, m.host
+        assert min(rgb) > max(labels.GREY.red, labels.GREY.green, labels.GREY.blue)
+
+        # centred both ways: the ink from ascender to descender
+        w = pdfmetrics.stringWidth(s, font, size)
+        left = x - w / 2 if align == "centre" else x
+        asc, desc = pdfmetrics.getAscentDescent(font, size)
+        baseline = y + size * 0.72
+        assert left + w / 2 == pytest.approx(bx + bw / 2), m.host
+        assert (baseline - asc + baseline - desc) / 2 == pytest.approx(by + bh / 2), m.host
+        # and as large as the region holds: it meets its width or its height
+        assert w <= bw + 1e-6, m.host
+        assert asc - desc <= bh + 1e-6, m.host
+        assert max(w / bw, (asc - desc) / bh) == pytest.approx(1, abs=0.01), m.host
 
 
 def test_every_label_draws_inside_its_quarter(monkeypatch, tmp_path):
