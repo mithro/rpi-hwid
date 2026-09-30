@@ -113,6 +113,23 @@ def foot_top() -> float:
     return MICRO_H - MICRO_PAD - (CAPTION * 0.72 + CAP_GAP + IDENT_MAX * 0.72)
 
 
+def ident_size(ident: str) -> float:
+    """The foot's identifier's size: IDENT_MAX, or smaller to fit whole
+    across the label; never under MIN_SIZE."""
+    iw = MICRO_W - 2 * MICRO_PAD
+    size = IDENT_MAX
+    while size > MIN_SIZE and pdfmetrics.stringWidth(ident, labels.MONO, size) > iw:
+        size -= 0.25
+    return size
+
+
+def ident_top(ident: str) -> float:
+    """Where the foot's identifier's letters start: under the caption, and
+    lower by as much as it is set smaller than IDENT_MAX."""
+    return (foot_top() + CAPTION * 0.72 + CAP_GAP
+            + (IDENT_MAX - ident_size(ident)) * 0.72)
+
+
 def band_top() -> float:
     return MICRO_PAD + HEAD_H + BAND_GAP
 
@@ -1045,13 +1062,12 @@ def draw_micro(cell: Cell, m: MicroLabel) -> None:
     fy = foot_top()
     cell.text(MICRO_PAD, fy, m.ident_caption, labels.SANS, CAPTION, color=labels.GREY)
     iw = w - 2 * MICRO_PAD
-    size = cell.fitted_size(m.ident, labels.MONO, IDENT_MAX, iw, min_size=MIN_SIZE)
+    size = ident_size(m.ident)
     if cell.width(m.ident, labels.MONO, size) > iw + 0.01:
         raise ValueError(
             f"{m.host}: the {m.title} label's {m.ident_caption} ({m.ident!r}) does not fit "
             f"whole at {MIN_SIZE:.1f} pt")
-    vy = fy + CAPTION * 0.72 + CAP_GAP + (IDENT_MAX - size) * 0.72
-    cell.text(MICRO_PAD, vy, m.ident, labels.MONO, size)
+    cell.text(MICRO_PAD, ident_top(m.ident), m.ident, labels.MONO, size)
 
 
 def title_room(m: MicroLabel) -> float:
