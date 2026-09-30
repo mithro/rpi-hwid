@@ -128,16 +128,45 @@ micro.ICONS.setdefault("tasmota", glyph_tasmota)
 # --- the label ----------------------------------------------------------------------
 
 
-def host_note(host: str) -> micro.ExtraFn:
-    """The label's extra section: `host` in HOST_COLOR, as large as the
-    region holds -- its width, or its height from the font's ascender to
-    its descender -- with that ink centred both ways (Tim, 2026-09-30)."""
+# Where each letter a host name uses puts ink, top and bottom, in thousandths
+# of the type size above the baseline: the glyph bounding boxes of Helvetica
+# (labels.SANS) from Adobe's core-font metrics, Helvetica.afm version 002.000.
+INK = {
+    "-": (322, 232), ".": (106, 0), "_": (-75, -125),
+    "0": (703, -19), "1": (703, 0), "2": (703, 0), "3": (703, -19), "4": (703, 0),
+    "5": (688, -19), "6": (703, -19), "7": (688, 0), "8": (703, -19), "9": (703, -19),
+    "a": (538, -15), "b": (718, -15), "c": (538, -15), "d": (718, -15), "e": (538, -15),
+    "f": (728, 0), "g": (538, -220), "h": (718, 0), "i": (718, 0), "j": (718, -210),
+    "k": (718, 0), "l": (718, 0), "m": (538, 0), "n": (538, 0), "o": (538, -14),
+    "p": (538, -207), "q": (538, -207), "r": (538, 0), "s": (538, -15), "t": (669, -7),
+    "u": (523, -15), "v": (523, 0), "w": (523, 0), "x": (523, 0), "y": (523, -214),
+    "z": (523, 0),
+}
+
+
+def ink(text: str) -> tuple[float, float]:
+    """How far above the baseline `text`'s ink reaches, and its lowest
+    point (below the baseline, negative), per point of type. A letter
+    missing from INK counts as the font's whole ascent and descent."""
+    asc, desc = pdfmetrics.getAscentDescent(labels.SANS, 1000)
+    tops, bottoms = zip(*(INK.get(ch, (asc, desc)) for ch in text), strict=True)
+    return max(tops) / 1000, min(bottoms) / 1000
+
+
+def host_note(host: str, ident: str) -> micro.ExtraFn:
+    """The label's extra section: `host` in HOST_COLOR, filling the white
+    right of the QR from the rows down to the identifier (`ident`), which
+    runs past the section's own foot. Its ink is as large as that white
+    holds, less the rows' EXTRA_GAP above and below, by its width or its
+    height, and centred both ways (Tim, 2026-09-30)."""
 
     def draw(cell: micro.Cell, box: tuple[float, float, float, float]) -> None:
-        x, y, w, h = box
-        asc, desc = pdfmetrics.getAscentDescent(labels.SANS, 1)
-        size = min(w / pdfmetrics.stringWidth(host, labels.SANS, 1), h / (asc - desc))
-        baseline = y + h / 2 + (asc + desc) * size / 2
+        x, y, w, _ = box
+        h = micro.ident_top(ident) - micro.EXTRA_GAP - y
+        top, bottom = ink(host)
+        size = min(w / pdfmetrics.stringWidth(host, labels.SANS, 1), h / (top - bottom))
+        # the ink's middle on the white's middle
+        baseline = y + h / 2 + (top + bottom) / 2 * size
         cell.text(x + w / 2, baseline - size * 0.72, host, labels.SANS, size,
                   align="centre", color=HOST_COLOR)
 
@@ -220,7 +249,7 @@ def tasmota_label(host: str, t: Mapping[str, Any]) -> MicroLabel:
         rows=(MicroRow("chip id", str(t["esp_chip_id"]), mono=True),
               MicroRow("flash id", " ".join(re.findall("..", jedec)), mono=True)),
         read_with=READ_WITH.format(host=host),
-        extra=host_note(host),
+        extra=host_note(host, t["mac"]),
     )
 
 

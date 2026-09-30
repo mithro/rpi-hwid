@@ -182,9 +182,10 @@ def test_nothing_that_can_change_is_printed(monkeypatch, tmp_path):
 def test_the_hostname_fills_the_spare_space_centred_in_a_pale_colour(monkeypatch, tmp_path):
     """Tim, 2026-09-30: "On the tasmota label in the spare white space, put
     the hostname in a pale color", then "a pale color other than gray",
-    "centered in the region and take up the entire region": the room under
-    the rows, right of the QR. As large as the region holds, ascender to
-    descender, its ink centred both ways."""
+    "centered in the region and take up the entire region", "center the
+    text vertically in the whitespace too": the white right of the QR, from
+    the last row down to the identifier. Its own ink as large as that
+    holds, centred both ways, as much white above it as below."""
     import dataclasses
 
     from reportlab.pdfbase import pdfmetrics
@@ -205,7 +206,7 @@ def test_the_hostname_fills_the_spare_space_centred_in_a_pale_colour(monkeypatch
 
         monkeypatch.setattr(micro.Cell, "text", text)
         micro.render_micro([dataclasses.replace(m, extra=extra)], tmp_path / "t.pdf")
-        ((bx, by, bw, bh),) = boxes
+        ((bx, _, bw, _),) = boxes
         (host,) = [d for d in drawn if d[0] == m.host]
         s, x, y, font, size, align, color = host
 
@@ -215,17 +216,28 @@ def test_the_hostname_fills_the_spare_space_centred_in_a_pale_colour(monkeypatch
         assert max(rgb) - min(rgb) > 0.15, m.host
         assert min(rgb) > max(labels.GREY.red, labels.GREY.green, labels.GREY.blue)
 
-        # centred both ways: the ink from ascender to descender
+        # the white between the last row's baseline and the identifier's top
+        (row,) = [d for d in drawn if d[0] == m.rows[-1].value]
+        row_base = row[2] + row[4] * 0.72
+        (ident,) = [d for d in drawn if d[0] == m.ident]
+        ident_top = ident[2]
+        assert ident_top == pytest.approx(micro.ident_top(m.ident))
+        # the name's own ink: its tallest letter to its lowest descender
+        top, bottom = tasmota_micro.ink(s)
+        baseline = y + size * 0.72
+        ink_top, ink_bottom = baseline - top * size, baseline - bottom * size
+        # centred both ways, as much white above it as below
         w = pdfmetrics.stringWidth(s, font, size)
         left = x - w / 2 if align == "centre" else x
-        asc, desc = pdfmetrics.getAscentDescent(font, size)
-        baseline = y + size * 0.72
         assert left + w / 2 == pytest.approx(bx + bw / 2), m.host
-        assert (baseline - asc + baseline - desc) / 2 == pytest.approx(by + bh / 2), m.host
-        # and as large as the region holds: it meets its width or its height
+        assert ink_top - row_base == pytest.approx(ident_top - ink_bottom), m.host
+        # as large as that white holds, a gap either side: it meets the
+        # region's width or its height
+        gap = micro.EXTRA_GAP
+        assert ink_top - row_base >= gap - 1e-6, m.host
+        high = ident_top - row_base - 2 * gap
         assert w <= bw + 1e-6, m.host
-        assert asc - desc <= bh + 1e-6, m.host
-        assert max(w / bw, (asc - desc) / bh) == pytest.approx(1, abs=0.01), m.host
+        assert max(w / bw, (ink_bottom - ink_top) / high) == pytest.approx(1, abs=0.01), m.host
 
 
 def test_every_label_draws_inside_its_quarter(monkeypatch, tmp_path):
