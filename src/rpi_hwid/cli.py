@@ -6,7 +6,8 @@
                                                           on a Pi: which FPGA board?
     rpi-hwid tinytapeout [--json] [--no-repl] [--no-stop-service]
                                                           on a Pi: which Tiny Tapeout board?
-    rpi-hwid esp32 [--json] [--read PORT…]               on a Pi: which ESP32s are on USB?
+    rpi-hwid esp32 [--json] [--read PORT…] [--radio PORT…]
+                                                          on a Pi: which ESP32s are on USB?
     rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--no-stop-service] HOST…
                                                           over ssh: one JSON per host
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
@@ -108,10 +109,19 @@ def cmd_esp32(args: argparse.Namespace) -> int:
     from rpi_hwid import esp32
 
     e = esp32.collect_esp32(args.read or ())
+    if args.radio:
+        from rpi_hwid import esp32_radio
+
+        reads = esp32_radio.collect_radios(args.radio)
+        # through the document's shape, which shares e's device dicts
+        esp32_radio.merge_radios(esp32.merge_esp32({}, e), reads)
+        e["radio_reads"] = reads
     if args.json:
         print(json.dumps(e, indent=1))
     else:
         esp32.describe(e)
+        if args.radio:
+            esp32_radio.describe(reads)
     return 0
 
 
@@ -121,6 +131,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
     try:
         # checked before anything is probed, so a mistyped host costs nothing
         esp32_reads(args.hosts, args.esp32_read or ())
+        esp32_reads(args.hosts, args.esp32_radio or (), "--esp32-radio")
     except ValueError as exc:
         print(f"rpi-hwid collect: {exc}", file=sys.stderr)
         return 2
@@ -130,6 +141,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         workers=args.workers, tinytapeout=args.tinytapeout,
         take_port=not args.no_stop_service,
         esp32=args.esp32, esp32_read=tuple(args.esp32_read or ()),
+        esp32_radio=tuple(args.esp32_radio or ()),
     )
     failed = 0
     for r in results:
@@ -233,6 +245,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--esp32-read", action="append", metavar="HOST=PORT",
                    help="reset the ESP32 on PORT of HOST into its bootloader and read "
                         "its chip, flash and eFuse (disruptive; implies --esp32 there)")
+    p.add_argument("--esp32-radio", action="append", metavar="HOST=PORT",
+                   help="reset the 433 MHz node on PORT of HOST and ask its firmware which "
+                        "radio it drives (disruptive; implies --esp32 there)")
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_collect)
 
@@ -241,6 +256,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--read", action="append", metavar="PORT",
                    help="reset the ESP32 on PORT into its bootloader and read its chip, "
                         "flash and eFuse with the host's esptool (disruptive)")
+    p.add_argument("--radio", action="append", metavar="PORT",
+                   help="reset the 433 MHz node on PORT and ask its firmware which radio "
+                        "it drives (disruptive)")
     p.set_defaults(func=cmd_esp32)
 
     sub.add_parser("labels", help="print-ready labels from collected data (rpi-hwid labels -h)",
