@@ -691,6 +691,22 @@ def test_a_wide_row_starts_right_of_its_own_caption(monkeypatch):
     assert at["GD25Q32x · 4 MiB"] == at["89e4bec55c62671e"]
 
 
+def test_the_wifi_glyph_s_bluetooth_is_no_bolder_than_the_rune(monkeypatch):
+    """Tim, 2026-09-30: the Bluetooth rune beside the Wi-Fi dot less bold;
+    its line is no heavier, for its height, than the full-size rune's."""
+    weights = []
+    real = micro.draw_bluetooth
+
+    def spy(cell, x, y, size, weight=0.09):
+        weights.append(weight)
+        return real(cell, x, y, size, weight)
+
+    monkeypatch.setattr(micro, "draw_bluetooth", spy)
+    micro.render_micro([_label(specs=(Icon("wifi", "2.4 n +bt"),))], _null_pdf())
+    assert weights
+    assert all(w <= 0.09 for w in weights)
+
+
 @pytest.mark.parametrize("text", ["2.4 b/g/n +bt", "2.4 b/g/n +zb", "2.4 n +BT", "+bt"])
 def test_bluetooth_rides_only_on_a_one_standard_wifi_glyph(text):
     with pytest.raises(ValueError, match="Wi-Fi glyph"):
