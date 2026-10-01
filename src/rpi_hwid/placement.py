@@ -115,23 +115,55 @@ def parse_slot(text: str) -> tuple[int, int | None]:
     return int(m.group(1)), (QUARTERS.index(q) if q else None)
 
 
+PLAN_KEYS = ("labels", "guides", "sheet", "outline")
+
+
+def check_shape(plan: Any) -> None:
+    """PlacementError naming the first thing in `plan` that is not the
+    shape a plan has, before anything is looked up or drawn."""
+    if not isinstance(plan, dict):
+        raise PlacementError('a plan is a JSON object, {"labels": [...]}')
+    unknown = sorted(set(plan) - set(PLAN_KEYS))
+    if unknown:
+        raise PlacementError(f"unknown key{'s' if len(unknown) > 1 else ''} "
+                             f"{', '.join(unknown)} (a plan has {', '.join(PLAN_KEYS)})")
+    if not isinstance(plan.get("labels"), list):
+        raise PlacementError("the plan has no labels list (an empty one prints none)")
+    for i, p in enumerate(plan["labels"]):
+        if not isinstance(p, dict):
+            raise PlacementError(f"labels[{i}] is not an object with an id and a slot")
+        for key in ("id", "slot"):
+            if not isinstance(p.get(key), str):
+                raise PlacementError(f"labels[{i}] has no {key} string")
+    guides = plan.get("guides", [])
+    if not isinstance(guides, list) or not all(isinstance(g, str) for g in guides):
+        raise PlacementError("guides is a list of sticker numbers as strings")
+    sheet = plan.get("sheet")
+    if sheet is not None and not (isinstance(sheet, dict) and isinstance(sheet.get("id"), str)
+                                  and isinstance(sheet.get("note", ""), str)):
+        raise PlacementError("sheet is an object with an id string (and a note string)")
+    if not isinstance(plan.get("outline", False), bool):
+        raise PlacementError("outline is true or false")
+
+
 def check(plan: dict[str, Any], by_id: dict[str, Entry]
           ) -> list[tuple[Entry, int, int | None]]:
     """The plan's labels as (entry, sticker, quarter), or PlacementError
     for the first thing wrong with it."""
+    check_shape(plan)
     placed: list[tuple[Entry, int, int | None]] = []
     whole: set[int] = set()
     quarters: set[tuple[int, int]] = set()
-    names = Counter(p["id"] for p in plan.get("labels", ()))
+    names = Counter(p["id"] for p in plan["labels"])
     again = sorted(i for i, n in names.items() if n > 1)
     if again:
         raise PlacementError(f"placed more than once: {', '.join(again)}")
-    for p in plan.get("labels", ()):
+    for p in plan["labels"]:
         e = by_id.get(p["id"])
         if e is None:
             raise PlacementError(f"no label {p['id']!r} in this data (rpi-hwid labels --list "
                                  "--json names the ones there are)")
-        sticker, q = parse_slot(str(p["slot"]))
+        sticker, q = parse_slot(p["slot"])
         if e.size == "sticker" and q is not None:
             raise PlacementError(f"{e.id} takes a whole sticker, not the quarter {p['slot']}")
         if e.size == "quarter" and q is None:
@@ -147,7 +179,7 @@ def check(plan: dict[str, Any], by_id: dict[str, Entry]
             quarters.add((sticker, q))
         placed.append((e, sticker, q))
     for g in plan.get("guides", ()):
-        sticker, q = parse_slot(str(g))
+        sticker, q = parse_slot(g)
         if q is not None or sticker in whole:
             raise PlacementError(f"cut guides go on a sticker of micro labels, not {g}")
     return placed
@@ -228,7 +260,7 @@ def render(docs: Any, plan: dict[str, Any], out: str | Path | IO[bytes],
                 cell.outline()
             micro.draw_micro(cell, e.record)
     for g in plan.get("guides", ()):
-        sticker, _ = parse_slot(str(g))
+        sticker, _ = parse_slot(g)
         micro.cut_guides(labels.Label(c, *labels.label_origin(sticker - 1)))
     if plan.get("sheet"):
         draw_margins(c, plan["sheet"])
@@ -242,15 +274,26 @@ def list_json(docs: Any, only: set[str], pinned_names: Any = None) -> str:
 
 
 def place_main(docs: Any, plan_path: Path, out: Path, only: set[str],
-               pinned_names: Any = None) -> int:
-    """``rpi-hwid labels --place``: 0, or 2 with the plan's fault on stderr."""
-    plan = json.loads(plan_path.read_text())
+               pinned_names: Any = None, outline: bool = False) -> int:
+    """``rpi-hwid labels --place``: 0, or 2 with the plan's fault on stderr.
+    `outline` (``--outline``) outlines the placed labels whatever the plan
+    says."""
+    try:
+        plan = json.loads(plan_path.read_text())
+    except OSError as exc:
+        print(f"{plan_path}: {exc.strerror or exc}", file=sys.stderr)
+        return 2
+    except json.JSONDecodeError as exc:
+        print(f"{plan_path}: not JSON: {exc}", file=sys.stderr)
+        return 2
+    if outline and isinstance(plan, dict):
+        plan = {**plan, "outline": True}
     try:
         n = render(docs, plan, out, only, pinned_names)
     except PlacementError as exc:
         print(f"{plan_path}: {exc}", file=sys.stderr)
         return 2
-    sheet = plan.get("sheet", {}).get("id")
+    sheet = (plan.get("sheet") or {}).get("id")
     on = f" on sheet {sheet}" if sheet else ""
     print(f"{n} label{'' if n == 1 else 's'} placed{on} -> {out}")
     return 0

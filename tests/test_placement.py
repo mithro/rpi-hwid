@@ -167,6 +167,47 @@ def test_a_plan_that_overprints_or_misfits_is_refused(docs, widgets, tmp_path, p
         placement.render(docs, plan_for(docs, picks), tmp_path / "p.pdf")
 
 
+def test_a_whole_label_after_a_quarter_of_its_sticker_is_refused(docs, widgets, tmp_path):
+    with pytest.raises(placement.PlacementError, match="twice"):
+        placement.render(docs, plan_for(docs, [("widget", "4c"), ("rpi", "4")]),
+                         tmp_path / "p.pdf")
+
+
+@pytest.mark.parametrize("guides", [["4a"], ["4"]])
+def test_guides_go_only_on_a_sticker_of_micro_labels(docs, widgets, tmp_path, guides):
+    plan = plan_for(docs, [("rpi", "4")], guides=guides)
+    with pytest.raises(placement.PlacementError, match="cut guides"):
+        placement.render(docs, plan, tmp_path / "p.pdf")
+
+
+@pytest.mark.parametrize(("plan", "match"), [
+    ([], "a JSON object"),
+    ({}, "no labels list"),
+    ({"label": [{"id": "x", "slot": "1"}]}, "unknown key label "),
+    ({"labels": None}, "no labels list"),
+    ({"labels": ["x"]}, "labels\\[0\\]"),
+    ({"labels": [{"slot": "1"}]}, "labels\\[0\\].*id"),
+    ({"labels": [{"id": "x"}]}, "labels\\[0\\].*slot"),
+    ({"labels": [{"id": ["x"], "slot": "1"}]}, "labels\\[0\\].*id"),
+    ({"labels": [], "guides": "4"}, "guides"),
+    ({"labels": [], "sheet": {"note": "x"}}, "sheet.*id"),
+    ({"labels": [], "sheet": "K7QX"}, "sheet.*id"),
+    ({"labels": [], "outline": "yes"}, "outline"),
+    ({"labels": [], "sheets": {"id": "x"}}, "sheets"),
+])
+def test_a_malformed_plan_is_refused_by_what_is_wrong(docs, tmp_path, plan, match):
+    with pytest.raises(placement.PlacementError, match=match):
+        placement.render(docs, plan, tmp_path / "p.pdf")
+    assert not (tmp_path / "p.pdf").exists()
+
+
+def test_a_null_sheet_is_no_marking(docs, tmp_path):
+    """A later pass may say "sheet": null: nothing in the margins."""
+    pdf = tmp_path / "p.pdf"
+    placement.render(docs, {"labels": [], "sheet": None}, pdf)
+    assert ink_box(pdf, tmp_path) is None
+
+
 def test_a_label_the_data_does_not_have_is_refused_by_name(docs, widgets, tmp_path):
     plan = {"labels": [{"id": "nowhere/rpi/Pi 9", "slot": "1"}]}
     with pytest.raises(placement.PlacementError, match="nowhere/rpi/Pi 9"):
@@ -286,6 +327,48 @@ def test_the_place_command_reads_a_plan_file(data_dir, docs, widgets, tmp_path, 
                      "--out", str(pdf)]) == 0
     assert "2 labels placed on sheet AB12" in capsys.readouterr().out
     assert pdf.exists()
+
+
+@pytest.mark.parametrize(("text", "match"), [
+    ("{not json", "not JSON"),
+    (None, "No such file"),
+])
+def test_the_place_command_names_an_unreadable_plan_and_fails(data_dir, tmp_path, capsys,
+                                                              text, match):
+    (tmp_path / "plans").mkdir()
+    path = tmp_path / "plans" / "plan.json"
+    if text is not None:
+        path.write_text(text)
+    assert cli_main(["labels", "--data", str(data_dir), "--place", str(path),
+                     "--out", str(tmp_path / "plans" / "o.pdf")]) == 2
+    err = capsys.readouterr().err
+    assert str(path) in err
+    assert match in err
+
+
+def test_the_place_command_with_a_null_sheet(data_dir, docs, tmp_path, capsys):
+    (tmp_path / "plans").mkdir()
+    path = tmp_path / "plans" / "plan.json"
+    path.write_text(json.dumps({**plan_for(docs, [("rpi", "2")]), "sheet": None}))
+    assert cli_main(["labels", "--data", str(data_dir), "--place", str(path),
+                     "--out", str(tmp_path / "plans" / "o.pdf")]) == 0
+    assert "1 label placed ->" in capsys.readouterr().out
+
+
+def test_outline_on_the_command_line_outlines_a_placed_label(data_dir, docs, tmp_path):
+    (tmp_path / "plans").mkdir()
+    path = tmp_path / "plans" / "plan.json"
+    path.write_text(json.dumps(plan_for(docs, [("rpi", "2")])))
+    pdf = tmp_path / "plans" / "o.pdf"
+    assert cli_main(["labels", "--data", str(data_dir), "--place", str(path), "--outline",
+                     "--out", str(pdf)]) == 0
+    box = ink_box(pdf, tmp_path)
+    # the outline is the sticker's own edge: the ink reaches all four sides
+    x0, y0, x1, y1 = sticker_box(2)
+    assert box[0] <= x0 + 1.5
+    assert box[2] >= x1 - 1.5
+    assert box[1] <= y0 + 1.5
+    assert box[3] >= y1 - 1.5
 
 
 def test_the_place_command_names_a_bad_plan_and_fails(data_dir, tmp_path, capsys):

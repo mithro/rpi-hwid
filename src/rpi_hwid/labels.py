@@ -1933,7 +1933,8 @@ def main(argv=None):
         print(placement.list_json(docs, set(only), pinned))
         return 0
     if args.place:
-        return placement.place_main(docs, args.place, args.out, set(only), pinned)
+        return placement.place_main(docs, args.place, args.out, set(only), pinned,
+                                    args.outline)
     if args.list:
         rows = list(all_labels(docs, set(only), pinned))
         # The host column is as wide as the widest host and no wider: these

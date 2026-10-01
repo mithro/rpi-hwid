@@ -105,7 +105,10 @@ its cut; a sheet printed shifted shows it in every tick alike, and one scaled
 (a printer's "fit to page") in ticks that drift further off towards the
 page's edges. A plan that names a label the
 data does not make, a slot off the sheet, a whole label in a quarter or two
-labels in one place is refused, naming the fault, and nothing is drawn.
+labels in one place is refused, naming the fault, and nothing is drawn; so is
+one that is not a plan's shape (no `labels` list, a key it does not know, a
+label without its `id` or `slot`), and a plan file that is not JSON.
+`--outline` outlines the placed labels for a trial print on plain paper.
 `rpi-hwid-sheet` keeps track of which slots are used and writes the plans.
 
 Every label carries only what cannot change, and every identifier that might
