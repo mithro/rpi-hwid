@@ -1,0 +1,189 @@
+"""A label sheet's state: which slots are used, and where new labels go.
+
+Each sheet is one JSON file, ``<root>/sheets/<ID>.json``, holding its id,
+when, where and by whom it was started, the printer it goes through, every
+used slot and what was printed there, the stickers whose micro cut guides
+are printed, and each pass that printed on it. The root is
+``$XDG_STATE_HOME/rpi-hwid`` (``~/.local/state/rpi-hwid``): this is a
+machine's record of the paper in its drawer, not something to commit.
+
+A slot is a sticker, ``"1"``-``"21"``, or a quarter of one, ``"7a"``-``"7d"``,
+as ``rpi-hwid labels --place`` takes them.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import random
+import tempfile
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+from typing import Any, NamedTuple
+
+STOCK = "L7160"
+STICKERS = 21
+QUARTERS = "abcd"
+# No 0/O, 1/I/L or U/V: an id is read off paper and typed back in.
+ALPHABET = "23456789ABCDEFGHJKMNPQRSTWXYZ"
+ID_LEN = 4
+
+
+class SheetFullError(RuntimeError):
+    """The labels asked for do not fit in what is left of the sheet."""
+
+
+class NoSuchSheetError(LookupError):
+    pass
+
+
+class Want(NamedTuple):
+    """A label to place: its id, and "sticker" or "quarter"."""
+
+    id: str
+    size: str
+
+
+def new_id(existing: set[str], rng: random.Random | None = None) -> str:
+    rng = rng or random.SystemRandom()
+    while True:
+        i = "".join(rng.choice(ALPHABET) for _ in range(ID_LEN))
+        if i not in existing:
+            return i
+
+
+def default_root() -> Path:
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "rpi-hwid"
+
+
+@dataclass
+class Sheet:
+    id: str
+    stock: str
+    created: str               # ISO 8601, with its offset
+    host: str                  # the machine that started it
+    user: str
+    version: str               # rpi-hwid's
+    printer: str               # the IPP printer URI it goes through
+    slots: dict[str, dict[str, Any]] = field(default_factory=dict)
+    guides: list[str] = field(default_factory=list)
+    marked: bool = False       # its id, note and ticks are printed
+    passes: list[dict[str, Any]] = field(default_factory=list)
+
+    @classmethod
+    def new(cls, sheet_id: str, printer: str, host: str, user: str, version: str,
+            now: str) -> Sheet:
+        return cls(sheet_id, STOCK, now, host, user, version, printer)
+
+    # --- what is free ---
+
+    def _started(self, sticker: int) -> bool:
+        return any(f"{sticker}{q}" in self.slots for q in QUARTERS)
+
+    def free_stickers(self) -> list[int]:
+        return [n for n in range(1, STICKERS + 1)
+                if str(n) not in self.slots and not self._started(n)]
+
+    def free_quarters(self) -> list[str]:
+        """The free quarters of stickers already started with micro labels."""
+        return [f"{n}{q}" for n in range(1, STICKERS + 1) if self._started(n)
+                for q in QUARTERS if f"{n}{q}" not in self.slots]
+
+    # --- where the next labels go ---
+
+    def allocate(self, wants: list[Want]) -> tuple[list[tuple[str, str]], list[str]]:
+        """(label id, slot) for each of `wants`, in their order, and the
+        stickers whose cut guides this pass must print. Whole labels take
+        the first free stickers; micro labels the free quarters of stickers
+        already started, then fresh stickers after the whole labels'."""
+        whole = [w for w in wants if w.size == "sticker"]
+        micro = [w for w in wants if w.size == "quarter"]
+        free = self.free_stickers()
+        quarters = self.free_quarters()
+        fresh = len(free) - len(whole)
+        need = max(0, len(micro) - len(quarters))
+        if fresh < 0 or need > fresh * len(QUARTERS):
+            raise SheetFullError(
+                f"sheet {self.id} has {len(free)} free sticker{'' if len(free) == 1 else 's'} "
+                f"and {len(quarters)} free quarter{'' if len(quarters) == 1 else 's'}; "
+                f"this needs {len(whole)} whole and {len(micro)} micro: start a new sheet")
+        at: dict[str, str] = {}
+        for w, n in zip(whole, free, strict=False):
+            at[w.id] = str(n)
+        spare = free[len(whole):]
+        guides: list[str] = []
+        slots = list(quarters)
+        for n in spare:
+            slots += [f"{n}{q}" for q in QUARTERS]
+        for w, slot in zip(micro, slots, strict=False):
+            at[w.id] = slot
+            sticker = slot[:-1]
+            if sticker not in self.guides and sticker not in guides:
+                guides.append(sticker)
+        return [(w.id, at[w.id]) for w in wants], sorted(guides, key=int)
+
+    # --- recording ---
+
+    def record_pass(self, placed: list[tuple[str, str, str, str]], guides: list[str], *,
+                    at: str, host: str, user: str, job: int | None, job_state: str,
+                    data: str, marked: bool) -> None:
+        """Mark `placed` (label id, slot, host, title) used by a new pass."""
+        n = len(self.passes) + 1
+        for label, slot, lhost, title in placed:
+            self.slots[slot] = {"label": label, "host": lhost, "title": title, "pass": n}
+        self.guides = sorted(set(self.guides) | set(guides), key=int)
+        self.marked = self.marked or marked
+        self.passes.append({"pass": n, "at": at, "host": host, "user": user, "job": job,
+                            "job_state": job_state, "data": data,
+                            "labels": [label for label, *_ in placed]})
+
+    def revision(self) -> str:
+        """Changes whenever a slot is used: a plan made against one revision
+        is refused against another."""
+        blob = json.dumps([self.slots, self.guides, self.marked, len(self.passes)],
+                          sort_keys=True)
+        return hashlib.sha256(blob.encode()).hexdigest()[:12]
+
+    def note(self) -> str:
+        """What the sheet's margins say beside its id."""
+        when = self.created[:16].replace("T", " ")
+        return f"{self.stock} · started {when} on {self.host} by {self.user} · " \
+               f"rpi-hwid {self.version}"
+
+
+class Store:
+    """The sheets under `root`, one file each."""
+
+    def __init__(self, root: Path) -> None:
+        self.root = Path(root)
+        self.sheets = self.root / "sheets"
+
+    def path(self, sheet_id: str) -> Path:
+        return self.sheets / f"{sheet_id.upper()}.json"
+
+    def ids(self) -> list[str]:
+        if not self.sheets.is_dir():
+            return []
+        return sorted(p.stem for p in self.sheets.glob("*.json"))
+
+    def load(self, sheet_id: str) -> Sheet:
+        p = self.path(sheet_id)
+        if not p.exists():
+            raise NoSuchSheetError(f"no sheet {sheet_id.upper()} in {self.sheets} (rpi-hwid-sheet "
+                              "list shows the sheets there are; rpi-hwid-sheet new starts one)")
+        return Sheet(**json.loads(p.read_text()))
+
+    def save(self, sheet: Sheet) -> None:
+        """Write the sheet's file whole or not at all."""
+        self.sheets.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=self.sheets, prefix=f".{sheet.id}.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(asdict(sheet), f, indent=1, ensure_ascii=False)
+                f.write("\n")
+            os.replace(tmp, self.path(sheet.id))
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
