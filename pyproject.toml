@@ -37,6 +37,7 @@ Issues = "https://github.com/mithro/rpi-hwid/issues"
 
 [project.scripts]
 rpi-hwid = "rpi_hwid.cli:main"
+rpi-hwid-sheet = "rpi_hwid.sheet.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "pytest-cov>=5.0",

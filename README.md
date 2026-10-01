@@ -209,6 +209,7 @@ rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] HOST…
 rpi-hwid tasmota --sheet CSV --site NAME=OCTET --out DIR
                                                       over HTTP, read-only: Tasmota plugs
 rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
+rpi-hwid-sheet print SHEET HOST…                      a host's labels into a part-used sheet
 rpi-hwid name --netv2 DNA… | --arty SERIAL…           the derived board names
 rpi-hwid revision CODE…                               decode Pi revision codes
 ```
@@ -221,6 +222,8 @@ rpi-hwid revision CODE…                               decode Pi revision codes
   document the rest of the package consumes, and reading it from Python.
 - [docs/LABELS.md](docs/LABELS.md) — the derived names, the five label layouts,
   the label options and the artwork.
+- [docs/SHEETS.md](docs/SHEETS.md) — `rpi-hwid-sheet`: labels printed a few at a
+  time into a sheet's free slots, read afresh, checked, and fed by hand.
 - [docs/ESPRESSIF.md](docs/ESPRESSIF.md) — the Espressif parts the ESP32 labels
   know (ISA, cores, SRAM, radios, Tasmota support), every value cited.
 - [docs/DEVELOPING.md](docs/DEVELOPING.md) — contributor notes.
