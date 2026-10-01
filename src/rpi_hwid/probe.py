@@ -557,22 +557,52 @@ HEADER_BUSES = {
 BUS_SETTLE_S = 5.0
 
 
-def open_bus(bus, enable=None):
-    """Make /dev/i2c-<bus> readable, as (there now, brought up by this call).
+I2C_DEV_LOAD = ["sudo", "modprobe", "i2c-dev"]
+I2C_DEV_UNLOAD = ["sudo", "modprobe", "-r", "i2c-dev"]
 
-    The second half is what says to put it back: a bus the board was
-    already carrying is left alone, and an overlay this applied is taken
-    out again -- whether or not its node ever turned up."""
-    path = ROOT + "/dev/i2c-%d" % bus
-    if os.path.exists(path):
-        return True, False
-    if not enable:
-        return False, False
-    sh(enable)
-    deadline = time.time() + BUS_SETTLE_S
+
+def wait_for(path, seconds):
+    """Whether `path` exists, or turns up within `seconds` (udev is slow)."""
+    deadline = time.time() + seconds
     while not os.path.exists(path) and time.time() < deadline:
         time.sleep(0.1)
-    return os.path.exists(path), True
+    return os.path.exists(path)
+
+
+def open_bus(bus, enable=None):
+    """Make /dev/i2c-<bus> readable, as (there now, commands that undo it).
+
+    A bus already there is left alone. Otherwise the cheap step first: a
+    controller can be up (config.txt's dtparam=i2c_arm=on) with no node,
+    because nothing loaded i2c-dev, which makes the nodes -- rpi3-netv2,
+    2026-10-01, where the probe's dtparam then hung in the kernel,
+    unkillable, until the Pi was power-cycled. So i2c-dev is loaded, where
+    it is not already, and the board's enable (dtparam) is reached for only
+    when the module alone brings no bus up. Whatever this did is undone
+    afterwards, the overlay before the module, whether or not the node
+    ever turned up: the host is left as it was found."""
+    path = ROOT + "/dev/i2c-%d" % bus
+    if os.path.exists(path):
+        return True, []
+    undo = []
+    adapter = os.path.exists(ROOT + "/sys/class/i2c-adapter/i2c-%d" % bus)
+    if not os.path.exists(ROOT + "/sys/module/i2c_dev") and (adapter or enable):
+        sh(I2C_DEV_LOAD)
+        undo.append(I2C_DEV_UNLOAD)
+        # the module makes nodes only for adapters already there: wait for
+        # udev only if this bus has one
+        if wait_for(path, BUS_SETTLE_S if adapter else 0):
+            return True, undo
+    if not enable:
+        return False, undo
+    sh(enable)
+    undo.insert(0, ["sudo", "dtparam", "-r"])
+    return wait_for(path, BUS_SETTLE_S), undo
+
+
+def close_bus(undo):
+    for cmd in undo:
+        sh(cmd)
 
 
 def id_bus_scan(bus, enable=None):
@@ -582,18 +612,16 @@ def id_bus_scan(bus, enable=None):
     carrying the R-Pi magic counts, so a bus that answers at every address
     yields nothing rather than eight HATs -- and nothing found is reported
     apart from no bus to look at, because only the first rules a HAT out."""
-    present, mine = open_bus(bus, enable)
+    present, undo = open_bus(bus, enable)
     if not present:
-        if mine:
-            sh(["sudo", "dtparam", "-r"])
+        close_bus(undo)
         return {}, False
     found = {}
     for addr in range(0x50, 0x58):
         info = eeprom_decode(eeprom_read(bus, addr))
         if info:
             found["0x%02x" % addr] = info
-    if mine:
-        sh(["sudo", "dtparam", "-r"])
+    close_bus(undo)
     return found, True
 
 
@@ -602,14 +630,12 @@ def user_bus_scan(bus, enable=None):
 
     The same distinction the ID bus makes: a HAT that carries devices
     rather than an EEPROM is invisible on a bus that was never opened."""
-    present, mine = open_bus(bus, enable)
+    present, undo = open_bus(bus, enable)
     if not present:
-        if mine:
-            sh(["sudo", "dtparam", "-r"])
+        close_bus(undo)
         return None, False
     devices = i2c_scan(bus)
-    if mine:
-        sh(["sudo", "dtparam", "-r"])
+    close_bus(undo)
     return devices, True
 
 
