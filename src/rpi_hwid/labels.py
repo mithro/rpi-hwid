@@ -1768,7 +1768,18 @@ ONLY_CHOICES = KINDS + FPGA_KINDS
 
 
 def all_labels(docs, only, pinned_names=None, order=None):
-    """Every label as (host, kind, title, draw, record), host by host.
+    """Every label as (host, kind, title, draw, record), host by host, then
+    the micro labels four to a sticker (``whole_labels`` explains the order).
+    """
+    yield from whole_labels(docs, only, pinned_names, order)
+    # Micro labels, four to a sticker, after every whole one (rpi_hwid.micro).
+    from rpi_hwid import micro
+    yield from micro.sticker_rows(docs, set(only))
+
+
+def whole_labels(docs, only, pinned_names=None, order=None):
+    """Every whole-sticker label as (host, kind, title, draw, record), host
+    by host.
 
     A machine's labels come out together and in the order someone works
     through it: the board itself, then what is plugged into it -- FPGA, Tiny
@@ -1852,9 +1863,6 @@ def all_labels(docs, only, pinned_names=None, order=None):
                 yield host, b.kind, f"{b.short} {b.memory} {b.serial}", draw_board, b
         for row in attached.get(host, ()):
             yield (host,) + row
-    # Micro labels, four to a sticker, after every whole one (rpi_hwid.micro).
-    from rpi_hwid import micro
-    yield from micro.sticker_rows(docs, only)
 
 
 def label_origin(index):

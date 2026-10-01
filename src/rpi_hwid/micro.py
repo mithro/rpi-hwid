@@ -1218,11 +1218,9 @@ def kinds() -> tuple[str, ...]:
 StickerRow = tuple[str, str, str, Callable[[Any, Group], None], Group]
 
 
-def sticker_rows(docs: Any, only: set[str]) -> list[StickerRow]:
-    """``labels.all_labels`` rows for the micro labels of the kinds in
-    `only`: one row per sticker of four, kind "micro", its title every
-    label's on it. They come after every whole label, so the quarters of a
-    sticker are never left empty between two hosts' whole labels."""
+def selected(docs: Any, only: set[str]) -> list[tuple[str, MicroLabel]]:
+    """(kind, label) for every micro label of the kinds in `only`, kind by
+    kind."""
     wanted = {kind: mod for kind, mod in sorted(providers().items()) if kind in only}
     made = {kind: mod.micro_labels(docs) for kind, mod in wanted.items()}
     # A module may say it REPLACES another kind: printed together, a device
@@ -1232,7 +1230,15 @@ def sticker_rows(docs: Any, only: set[str]) -> list[StickerRow]:
         if base in made:
             taken = {(m.host, m.ident) for m in made[kind]}
             made[base] = [m for m in made[base] if (m.host, m.ident) not in taken]
-    micros: list[MicroLabel] = [m for kind in wanted for m in made[kind]]
+    return [(kind, m) for kind in wanted for m in made[kind]]
+
+
+def sticker_rows(docs: Any, only: set[str]) -> list[StickerRow]:
+    """``labels.all_labels`` rows for the micro labels of the kinds in
+    `only`: one row per sticker of four, kind "micro", its title every
+    label's on it. They come after every whole label, so the quarters of a
+    sticker are never left empty between two hosts' whole labels."""
+    micros = [m for _kind, m in selected(docs, only)]
     rows: list[StickerRow] = []
     for group in pack(micros):
         present = [m for m in group if m is not None]
