@@ -46,7 +46,10 @@ QUARTERS = "abcd"
 # The Brother's unprintable edge, from its media-*-margin (432 hundredths
 # of a millimetre): the sheet's marking keeps inside it.
 PRINTER_EDGE = 4.32 * mm
-SHEET_ID_SIZE = 11.0
+# The id is read off the paper and typed back in: large, in the labels'
+# monospaced face, its characters spaced apart (Tim, 2026-10-01).
+SHEET_ID_SIZE = 16.0
+SHEET_ID_SPACING = 1.0 * mm
 NOTE_SIZE = 6.5
 EDGE_SIZE = 6.5
 # The margin text's middle, this far in from the printer's edge: clear of
@@ -55,8 +58,10 @@ TEXT_IN = 3.2 * mm
 # A registration tick stops this far short of the grid (so no sticker is
 # inked) and of the printer's edge, and is at most TICK_LEN long.
 TICK_CLEAR = 0.4 * mm
-TICK_LEN = 2.5 * mm
-TICK_WEIGHT = 0.4
+# Solid bars, not hairlines: they are looked for through a sheet of labels
+# and its backing held to the light (Tim, 2026-10-01).
+TICK_LEN = 4.0 * mm
+TICK_WEIGHT = 0.5 * mm
 
 
 class PlacementError(ValueError):
@@ -195,8 +200,14 @@ def draw_margins(c: canvas.Canvas, sheet: dict[str, str]) -> None:
     for edge, mid in (("TOP EDGE", labels.PAGE_H - PRINTER_EDGE - TEXT_IN),
                       ("BOTTOM EDGE", PRINTER_EDGE + TEXT_IN)):
         c.setFillColor(black)
-        c.setFont(labels.MONO, SHEET_ID_SIZE)
-        c.drawString(left, mid - SHEET_ID_SIZE * 0.36, sheet["id"])
+        # the spacing is graphics state, and would carry over to the note
+        c.saveState()
+        t = c.beginText(left, mid - SHEET_ID_SIZE * 0.36)
+        t.setFont(labels.MONO, SHEET_ID_SIZE)
+        t.setCharSpace(SHEET_ID_SPACING)
+        t.textOut(sheet["id"])
+        c.drawText(t)
+        c.restoreState()
         c.setFillColor(labels.GREY)
         if sheet.get("note"):
             c.setFont(labels.SANS, NOTE_SIZE)

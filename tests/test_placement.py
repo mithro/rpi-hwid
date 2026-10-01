@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 
@@ -232,7 +233,8 @@ def test_the_sheet_id_is_printed_top_and_bottom_outside_the_labels(docs, tmp_pat
         pytest.skip("pdftotext not installed")
     text = subprocess.run(["pdftotext", "-layout", str(pdf), "-"], check=True,
                           capture_output=True, text=True).stdout
-    assert text.count("K7QX") == 2
+    # spaced out, so a text extractor may see gaps between its characters
+    assert len(re.findall(r"K\s*7\s*Q\s*X", text)) == 2
     assert text.count("ten64 2026-10-01 09:30") == 2
     top = labels.PAGE_H - labels.MARGIN_Y
     bottom = labels.MARGIN_Y
@@ -378,3 +380,37 @@ def test_the_place_command_names_a_bad_plan_and_fails(data_dir, tmp_path, capsys
     assert cli_main(["labels", "--data", str(data_dir), "--place", str(path),
                      "--out", str(tmp_path / "plans" / "o.pdf")]) == 2
     assert "nowhere/rpi/x" in capsys.readouterr().err
+
+
+def test_the_sheet_id_is_large_monospaced_and_spaced_out(docs, monkeypatch):
+    """Tim, 2026-10-01: the id is read off the sheet to be typed back in."""
+    from reportlab.pdfbase import pdfmetrics
+
+    labels.register_fonts()
+    assert placement.SHEET_ID_SIZE >= 16
+    face = pdfmetrics.getFont(labels.MONO)
+    wide, narrow = (pdfmetrics.stringWidth(ch, labels.MONO, 10) for ch in "Wi")
+    assert wide == narrow, f"{face.fontName} is not fixed width"
+    # at least a quarter of a character's width between characters
+    em = pdfmetrics.stringWidth("M", labels.MONO, placement.SHEET_ID_SIZE)
+    assert 0.25 * em <= placement.SHEET_ID_SPACING
+
+
+def test_the_ticks_are_bold_enough_to_see_through_a_label_backing(docs, tmp_path):
+    """Tim, 2026-10-01: hairlines vanish behind a sheet of labels. Each
+    tick is a solid bar at least 0.5 mm wide and, above and below the grid,
+    3.5 mm long."""
+    pdf = tmp_path / "p.pdf"
+    placement.render(docs, {"labels": [], "sheet": {"id": "K7QX"}}, pdf)
+    ink, ink_row = raster(pdf, tmp_path, 300)
+    mm = 72 / 25.4
+    grid_top = labels.PAGE_H - labels.MARGIN_Y
+    x, _ = labels.label_origin(1)
+    # solid across 0.5 mm, all the way along 3.5 mm
+    for dx in (-0.2 * mm, 0, 0.2 * mm):
+        for y in (grid_top + 0.6 * mm, grid_top + 2 * mm, grid_top + 3.9 * mm):
+            assert ink(x + dx, y, y), f"tick above x={x:.1f} has a gap at {dx:.2f}, {y:.1f}"
+    side = (placement.PRINTER_EDGE + labels.MARGIN_X) / 2
+    y = grid_top - labels.LABEL_H
+    for dy in (-0.2 * mm, 0, 0.2 * mm):
+        assert ink_row(y + dy, side - 0.5, side + 0.5)
