@@ -1913,12 +1913,27 @@ def main(argv=None):
     ap.add_argument("--names", type=Path,
                     help="JSON map of Arty serial -> name, the registry that pins names")
     ap.add_argument("--list", action="store_true", help="print what would be generated")
+    ap.add_argument("--json", action="store_true",
+                    help="with --list: every label on its own, with the id --place takes")
+    ap.add_argument("--place", type=Path, metavar="PLAN",
+                    help="draw only the labels a JSON plan names, in the slots it gives "
+                         "them (rpi_hwid.placement)")
     args = ap.parse_args(argv)
 
     ARTWORK_DIR = str(args.artwork) if args.artwork else None
     docs = load_collected(args.data)
     pinned = json.loads(args.names.read_text()) if args.names else None
     only = args.only or list(KINDS) + micro_kinds
+    if args.json and not args.list:
+        ap.error("--json goes with --list")
+    if args.place and (args.list or args.start):
+        ap.error("--place gives every label its slot: it takes no --list or --start")
+    from rpi_hwid import placement
+    if args.list and args.json:
+        print(placement.list_json(docs, set(only), pinned))
+        return 0
+    if args.place:
+        return placement.place_main(docs, args.place, args.out, set(only), pinned)
     if args.list:
         rows = list(all_labels(docs, set(only), pinned))
         # The host column is as wide as the widest host and no wider: these
