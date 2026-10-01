@@ -33,8 +33,14 @@ Raspberry Pi Zero W Rev 1.1  serial 000000005157f671  rev 9000c1
 ```
 
 Nothing found on the header and nowhere to look are kept apart, because only
-the first rules a HAT out. A bus the board declares but has disabled is brought
-up for the scan and put back; one that will not come up at all — an image with
+the first rules a HAT out. A bus the board declares but has no `/dev` node for
+is brought up for the scan and put back. The cheap step comes first: a controller
+already enabled in `config.txt` lacks a node only because nothing loaded
+`i2c-dev`, so the probe loads that module, and applies the bus's overlay with
+`dtparam` only when the module alone brings no bus up (a `dtparam` call once hung
+in the kernel on a Pi 3B+ whose `i2c_arm` was on but `i2c-dev` unloaded, until it
+was power-cycled). A host with `i2c-dev` in `/etc/modules` and both buses on in
+`config.txt` is read with no command at all. One that will not come up at all — an image with
 no I2C support, or an Armbian board, which needs a reboot to add an overlay — is
 reported as unread rather than counted as empty:
 
