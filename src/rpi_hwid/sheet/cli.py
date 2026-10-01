@@ -585,7 +585,15 @@ def main(argv: list[str] | None = None) -> int:
         argv, extra = argv[:at], argv[at + 1:]
     # progress and errors in the order they happen, even into a pipe or a log
     sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
-    args = parser().parse_args(argv)
+    ap = parser()
+    # Python 3.11's argparse takes no positional after an option once a
+    # nargs="*" positional has matched empty: print SHEET --prepare HOST
+    # leaves HOST over. Hosts are the only bare words print takes.
+    args, rest = ap.parse_known_args(argv)
+    if rest and args.cmd == "print" and not any(r.startswith("-") for r in rest):
+        args.hosts += rest
+    elif rest:
+        ap.error(f"unrecognized arguments: {' '.join(rest)}")
     args.extra = extra
     store = state.Store(args.state or state.default_root())
     try:
