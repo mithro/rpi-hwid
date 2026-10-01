@@ -8,24 +8,29 @@ already part-used means knowing which of its stickers are gone.
 
 ```
 $ export RPI_HWID_PRINTER=ipp://10.1.20.222/ipp/print
-$ rpi-hwid-sheet new
-K7QX  L7160 · started 2026-10-01 10:12 on ten64 by tim · rpi-hwid 0.4.post12  -> ~/.local/state/rpi-hwid/sheets/K7QX.json
-$ rpi-hwid-sheet print K7QX rpi5-433mhz -- --esp32
-  rpi5-433mhz: Raspberry Pi 5 Model B Rev 1.0; header ['hat']; power pd-5a; esp32 …
-Sheet K7QX (L7160 · started 2026-10-01 10:12 on ten64 by tim · rpi-hwid 0.4.post12), pass 1, printer ipp://10.1.20.222/ipp/print
+$ rpi-hwid-sheet print new rpi4-esp
+new sheet 65D7
+  rpi4-esp: Raspberry Pi 4 Model B Rev 1.4; header bare; power undetermined
+1 of 1 host(s) written to ~/.local/state/rpi-hwid/reads/65D7/2026-10-01T154207
+Sheet 65D7 (L7160 · started 2026-10-01 15:42 on ten64 by tim · rpi-hwid 0.0.post348), pass 1, printer ipp://10.1.20.222/ipp/print
   first pass: the sheet's id, note and registration ticks go in its margins
   slot  label
-  1     rpi5-433mhz/rpi/Pi 5 4 GB d88100008543dc30
-  2a    rpi5-433mhz/esp32-433/ESP32 433 MHz e4:65:b8:0b:4c:20
-  cut guides on sticker 2
-  data: ~/.local/state/rpi-hwid/reads/K7QX/2026-10-01T101500
-  preview: ~/.local/state/rpi-hwid/plans/K7QX-p1-2026-10-01T101502/preview.png
-  pdf: ~/.local/state/rpi-hwid/plans/K7QX-p1-2026-10-01T101502/pass.pdf
-Print 2 labels on sheet K7QX through the manual feed? [y/N] y
-job 312 sent to Brother MFC-L3760CDW series.
-Put sheet K7QX in the printer's manual feed slot (one sheet; the job waits for it), the TOP EDGE going in first.
-sheet K7QX pass 1 printed; 19 free stickers, 3 free quarters
+  1     rpi4-esp/rpi/Pi 4 Model B 8 GB 1000000053f279e5
+  2     rpi4-esp/usb/Realtek 802.11n WLAN Adapter 64:70:02:0c:68:02
+  data: ~/.local/state/rpi-hwid/reads/65D7/2026-10-01T154207
+  preview: ~/.local/state/rpi-hwid/plans/65D7-p1-2026-10-01T154210/preview.png
+  pdf: ~/.local/state/rpi-hwid/plans/65D7-p1-2026-10-01T154210/pass.pdf
+Print 2 labels on sheet 65D7 through the manual feed? [y/N] y
+job 314 sent to Brother MFC-L3760CDW series.
+Put sheet 65D7 in the printer's manual feed slot (one sheet; the job waits for it), the TOP EDGE going in first.
+the printer is waiting for sheet 65D7 in its manual feed slot
+sheet 65D7 pass 1 printed; 19 free stickers, 0 free quarters
 ```
+
+That is a real run (2026-10-01, the Welland Brother MFC-L3760CDW), made as
+`--prepare` then `commit`; the interactive form prints the same with the
+question between. Anything after `--` goes to the collector:
+`rpi-hwid-sheet print K7QX rpi5-433mhz -- --esp32`.
 
 ## What it does
 
