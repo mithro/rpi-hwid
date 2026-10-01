@@ -10,7 +10,10 @@ and how to read that from Python. For what the probe itself reads, see
 `rpi-hwid collect` pushes the probe source to each host over ssh (nothing is
 installed on the Pi), in parallel, and writes `<host>.json` per host. The FPGA
 module is appended with `--fpga` for every host, or with `--jtag HOST` and
-`--flash HOST` for the hosts that should drive JTAG; the Tiny Tapeout module with
+`--flash HOST` for the hosts that should drive JTAG, and with `--force-offline
+HOST` for a host whose Cynthion should give up its ECP5 TraceID (which stops its
+capture for a few seconds and may drop power to its TARGET port, so it is never
+part of `--fpga` or `--jtag`); the Tiny Tapeout module with
 `--tinytapeout`, which on a rig stops `fpgas-tt.service` for the length of its
 read unless `--no-stop-service` is given (see [PROBE.md](PROBE.md#a-port-a-service-already-holds)).
 A login banner before the JSON is skipped.
