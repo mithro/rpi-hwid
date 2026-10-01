@@ -265,7 +265,7 @@ def test_collect_hands_each_host_its_own_radio_ports(monkeypatch, tmp_path):
     seen = {}
 
     def fake(host, users, jump, fpga, jtag, flash, tinytapeout=False, take_port=True,
-             esp32=False, esp32_read=(), esp32_radio=()):
+             esp32=False, esp32_read=(), esp32_radio=(), **other):
         seen[host] = (esp32, tuple(esp32_read), tuple(esp32_radio))
         return collect.Result(host, False, error="not really")
 
