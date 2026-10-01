@@ -585,7 +585,9 @@ def open_bus(bus, enable=None):
     if os.path.exists(path):
         return True, []
     undo = []
-    adapter = os.path.exists(ROOT + "/sys/class/i2c-adapter/i2c-%d" % bus)
+    # /sys/bus/i2c/devices/i2c-N: there on 4.19 and 6.18 alike, where
+    # /sys/class/i2c-adapter is gone from the newer kernels
+    adapter = os.path.exists(ROOT + "/sys/bus/i2c/devices/i2c-%d" % bus)
     if not os.path.exists(ROOT + "/sys/module/i2c_dev") and (adapter or enable):
         sh(I2C_DEV_LOAD)
         undo.append(I2C_DEV_UNLOAD)

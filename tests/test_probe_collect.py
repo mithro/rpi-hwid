@@ -1246,7 +1246,7 @@ class Host:
 
     def sync(self):
         for bus in range(3):
-            adapter = self.root / f"sys/class/i2c-adapter/i2c-{bus}"
+            adapter = self.root / f"sys/bus/i2c/devices/i2c-{bus}"
             node = self.root / f"dev/i2c-{bus}"
             if bus in self.adapters:
                 adapter.mkdir(parents=True, exist_ok=True)
