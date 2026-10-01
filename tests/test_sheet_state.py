@@ -168,3 +168,37 @@ def test_the_default_store_is_under_xdg_state_home(monkeypatch, tmp_path):
     monkeypatch.delenv("XDG_STATE_HOME")
     monkeypatch.setenv("HOME", str(tmp_path))
     assert state.default_root() == tmp_path / ".local" / "state" / "rpi-hwid"
+
+
+def test_a_pass_that_printed_nothing_can_be_taken_back(tmp_path):
+    s = sheet(slots=used("9"))
+    s.record_pass([("a", "1", "h", "t"), ("b", "2a", "h", "u")], ["2"], at="x", host="h",
+                  user="u", job=7, job_state="sent", data="d", marked=True)
+    before = sheet(slots=used("9"))
+    s.drop_pass(1)
+    assert s.slots == before.slots
+    assert s.guides == []
+    assert not s.marked
+    assert s.passes == []
+
+
+def test_only_the_last_pass_can_be_taken_back():
+    s = sheet()
+    for n in (1, 2):
+        s.record_pass([(f"l{n}", str(n), "h", "t")], [], at="x", host="h", user="u", job=n,
+                      job_state="sent", data="d", marked=n == 1)
+    with pytest.raises(ValueError, match="last"):
+        s.drop_pass(1)
+
+
+def test_marking_slots_used_by_hand():
+    s = sheet()
+    s.mark(["1", "5c"], why="peeled off before the tool", at="2026-10-01T11:00:00+10:00")
+    assert s.slots["5c"]["why"] == "peeled off before the tool"
+    assert s.free_quarters() == ["5a", "5b", "5d"]
+    with pytest.raises(state.SlotUsedError, match="5c"):
+        s.mark(["5c"], why="again", at="x")
+    with pytest.raises(state.SlotUsedError, match="5"):
+        s.mark(["5"], why="whole over a quarter", at="x")
+    with pytest.raises(ValueError, match="22"):
+        s.mark(["22"], why="off the sheet", at="x")

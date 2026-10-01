@@ -38,6 +38,21 @@ class NoSuchSheetError(LookupError):
     pass
 
 
+class SlotUsedError(ValueError):
+    """A slot asked for is already used."""
+
+
+def parse_slot(text: str) -> tuple[int, str]:
+    """``"7"`` -> (7, ""), ``"7c"`` -> (7, "c"); ValueError off the sheet."""
+    t = text.strip().lower()
+    q = t[-1] if t and t[-1] in QUARTERS else ""
+    n = t[:-1] if q else t
+    if not n.isdigit() or not 1 <= int(n) <= STICKERS:
+        raise ValueError(f"{text!r} is not a slot: a sticker is 1-{STICKERS}, a quarter "
+                         f"of one 1a-{STICKERS}d")
+    return int(n), q
+
+
 class Want(NamedTuple):
     """A label to place: its id, and "sticker" or "quarter"."""
 
@@ -133,11 +148,35 @@ class Sheet:
         n = len(self.passes) + 1
         for label, slot, lhost, title in placed:
             self.slots[slot] = {"label": label, "host": lhost, "title": title, "pass": n}
+        new_guides = sorted(set(guides) - set(self.guides), key=int)
         self.guides = sorted(set(self.guides) | set(guides), key=int)
         self.marked = self.marked or marked
         self.passes.append({"pass": n, "at": at, "host": host, "user": user, "job": job,
                             "job_state": job_state, "data": data,
-                            "labels": [label for label, *_ in placed]})
+                            "labels": [label for label, *_ in placed],
+                            "guides": new_guides, "marked": marked})
+
+    def drop_pass(self, n: int) -> None:
+        """Take back pass `n`, the last, whose job printed nothing: its
+        slots, guides and the sheet's marking are free again."""
+        if not self.passes or self.passes[-1]["pass"] != n:
+            raise ValueError(f"only the last pass of sheet {self.id} can be taken back")
+        p = self.passes.pop()
+        self.slots = {k: v for k, v in self.slots.items() if v.get("pass") != n}
+        self.guides = [g for g in self.guides if g not in p.get("guides", [])]
+        self.marked = any(q.get("marked") for q in self.passes)
+
+    def mark(self, slots: list[str], why: str, at: str) -> None:
+        """Record `slots` used without printing: stickers peeled off or
+        printed before this sheet was tracked."""
+        for text in slots:
+            n, q = parse_slot(text)
+            slot = f"{n}{q}"
+            taken = slot in self.slots or str(n) in self.slots or (
+                not q and self._started(n))
+            if taken:
+                raise SlotUsedError(f"slot {slot} of sheet {self.id} is already used")
+            self.slots[slot] = {"why": why, "at": at}
 
     def revision(self) -> str:
         """Changes whenever a slot is used: a plan made against one revision
