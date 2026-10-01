@@ -395,8 +395,29 @@ def commit(store: state.Store, d: Path, poll: float, wait: float) -> int:
     print(f"job {job.id} sent to {attrs.get('printer-make-and-model', ['the printer'])[0]}.")
     if job.ignored:
         print(f"warning: the printer ignored {', '.join(job.ignored)}", file=sys.stderr)
+    sheet.passes[-1]["plan"] = d.name
+    store.save(sheet)
     print(FEED.format(id=sheet.id))
     return follow(store, sheet, d, meta, pr, job.id, n, poll, wait)
+
+
+def cmd_follow(args: argparse.Namespace, store: state.Store) -> int:
+    """Wait again for a sheet's last job, one that outlasted --wait."""
+    sheet = store.load(args.sheet)
+    last = sheet.passes[-1] if sheet.passes else None
+    if last is None or last["job_state"] in ("completed", "canceled", "aborted"):
+        raise ToolError(f"sheet {sheet.id} has nothing outstanding to follow")
+    d = store.root / "plans" / last.get("plan", "")
+    if not last.get("plan"):
+        # a pass recorded before passes named their plan: the plan sent as its job
+        for m in sorted((store.root / "plans").glob(f"{sheet.id}-*/meta.json")):
+            if json.loads(m.read_text()).get("committed") == last["job"]:
+                d = m.parent
+    if not (d / "meta.json").exists():
+        raise ToolError(f"no plan for sheet {sheet.id}'s job {last['job']}")
+    meta = json.loads((d / "meta.json").read_text())
+    return follow(store, sheet, d, meta, ipp.Printer(meta["printer"]), last["job"],
+                  last["pass"], args.poll, args.wait)
 
 
 def follow(store: state.Store, sheet: state.Sheet, d: Path, meta: dict[str, Any],
@@ -405,10 +426,16 @@ def follow(store: state.Store, sheet: state.Sheet, d: Path, meta: dict[str, Any]
     deadline = time.monotonic() + wait
     js: int = ipp.JOB_PENDING
     done = 0
+    told = False
     while True:
         a = pr.job(job_id)
         js = (a.get("job-state") or [ipp.JOB_PENDING])[0]
         done = (a.get("job-impressions-completed") or [0])[0] or 0
+        if js == ipp.JOB_STOPPED and not told:
+            why = pr.attributes(["printer-state-reasons"]).get("printer-state-reasons", [])
+            if any(str(r).startswith("media-needed") for r in why):
+                print(f"the printer is waiting for sheet {sheet.id} in its manual feed slot")
+                told = True
         if js in ipp.JOB_DONE or time.monotonic() >= deadline:
             break
         time.sleep(poll)
@@ -431,8 +458,8 @@ def follow(store: state.Store, sheet: state.Sheet, d: Path, meta: dict[str, Any]
         print(f"job {job_id} {name} after {done} sheet(s): its slots stay used; check the "
               f"sheet (rpi-hwid-sheet status {sheet.id})", file=sys.stderr)
     else:
-        print(f"job {job_id} is still {name} after {wait:g}s: its slots stay used; check "
-              f"the printer and the sheet", file=sys.stderr)
+        print(f"job {job_id} is still {name} after {wait:g}s: its slots stay used; once "
+              f"it ends, rpi-hwid-sheet follow {sheet.id} records how", file=sys.stderr)
     return 1
 
 
@@ -488,6 +515,11 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("plan")
     p.add_argument("--wait", type=float, default=DEFAULT_WAIT)
     p.set_defaults(func=cmd_commit)
+
+    p = sub.add_parser("follow", help="wait again for a sheet's last job and record its end")
+    p.add_argument("sheet")
+    p.add_argument("--wait", type=float, default=DEFAULT_WAIT)
+    p.set_defaults(func=cmd_follow)
     return ap
 
 
@@ -497,6 +529,8 @@ def main(argv: list[str] | None = None) -> int:
     if "--" in argv:
         at = argv.index("--")
         argv, extra = argv[:at], argv[at + 1:]
+    # progress and errors in the order they happen, even into a pipe or a log
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
     args = parser().parse_args(argv)
     args.extra = extra
     store = state.Store(args.state or state.default_root())

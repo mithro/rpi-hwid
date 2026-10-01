@@ -59,6 +59,9 @@ class Printer:
         if msg.code == ipp.GET_PRINTER_ATTRIBUTES:
             return 0, [(ipp.PRINTER_GROUP, {
                 "printer-state": ipp.enum(self.printer_state),
+                # a job stopped is one waiting for its sheet, as the Brother's are
+                "printer-state-reasons": ipp.keyword(
+                    "media-needed-error" if self.end[0] == ipp.JOB_STOPPED else "none"),
                 "printer-make-and-model": ipp.text("Fake MFC"),
                 "media-source-supported": [ipp.keyword(s) for s in self.sources]})]
         if msg.code == ipp.PRINT_JOB:
@@ -397,3 +400,41 @@ def test_a_job_that_does_not_finish_in_time_keeps_its_slots_used(run, printer):
     s = state.Store(run.root).load(sid)
     assert len(s.slots) == 2
     assert s.passes[0]["job_state"] == "processing"
+
+
+def test_follow_picks_up_a_job_that_outlasted_the_wait(run, printer):
+    p = printer(end=(ipp.JOB_STOPPED, 0))
+    sid = new_sheet(run, p)
+    plan, _ = prepare(run, sid, "pi3")
+    rc, out, _ = run("commit", plan, "--wait", "0.05")
+    assert rc == 1
+    # the printer said why: it wants the sheet in the manual feed
+    assert "waiting for sheet" in out
+    p.end = (ipp.JOB_COMPLETED, 1)
+    rc, out, err = run("follow", sid)
+    assert rc == 0, err
+    s = state.Store(run.root).load(sid)
+    assert s.passes[0]["job_state"] == "completed"
+    assert len(s.slots) == 2
+
+
+def test_follow_frees_the_slots_of_a_job_cancelled_while_waiting(run, printer):
+    p = printer(end=(ipp.JOB_STOPPED, 0))
+    sid = new_sheet(run, p)
+    plan, _ = prepare(run, sid, "pi3")
+    run("commit", plan, "--wait", "0.05")
+    p.end = (ipp.JOB_CANCELED, 0)
+    rc, _, err = run("follow", sid)
+    assert rc == 1
+    assert "canceled" in err
+    assert state.Store(run.root).load(sid).slots == {}
+    # and its plan can go again
+    p.end = (ipp.JOB_COMPLETED, 1)
+    assert run("commit", plan)[0] == 0
+
+
+def test_follow_with_nothing_outstanding_says_so(run, printer):
+    sid = new_sheet(run, printer())
+    rc, _, err = run("follow", sid)
+    assert rc == 2
+    assert "nothing" in err
