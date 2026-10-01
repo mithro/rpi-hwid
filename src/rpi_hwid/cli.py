@@ -144,6 +144,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         take_port=not args.no_stop_service,
         esp32=args.esp32, esp32_read=tuple(args.esp32_read or ()),
         esp32_radio=tuple(args.esp32_radio or ()),
+        force_offline_hosts=tuple(args.force_offline or ()),
     )
     failed = 0
     for r in results:
@@ -238,6 +239,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="drive JTAG on this host (implies --fpga for it)")
     p.add_argument("--flash", action="append", metavar="HOST",
                    help="identify the Arty flash on this host (reloads the FPGA)")
+    p.add_argument("--force-offline", action="append", metavar="HOST",
+                   help="read the ECP5 TraceID of the Cynthion on this host (stops its "
+                        "capture for a few seconds and may drop power to its TARGET port)")
     p.add_argument("--tinytapeout", action="store_true",
                    help="append the Tiny Tapeout module on every host")
     p.add_argument("--no-stop-service", action="store_true",
