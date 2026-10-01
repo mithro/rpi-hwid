@@ -585,18 +585,20 @@ def open_bus(bus, enable=None):
     if os.path.exists(path):
         return True, []
     undo = []
+    # A board with no enable (the Orange Pi) takes the buses it has and
+    # runs no sudo at all, the module included.
+    if not enable:
+        return False, undo
     # /sys/bus/i2c/devices/i2c-N: there on 4.19 and 6.18 alike, where
     # /sys/class/i2c-adapter is gone from the newer kernels
     adapter = os.path.exists(ROOT + "/sys/bus/i2c/devices/i2c-%d" % bus)
-    if not os.path.exists(ROOT + "/sys/module/i2c_dev") and (adapter or enable):
+    if not os.path.exists(ROOT + "/sys/module/i2c_dev"):
         sh(I2C_DEV_LOAD)
         undo.append(I2C_DEV_UNLOAD)
         # the module makes nodes only for adapters already there: wait for
         # udev only if this bus has one
         if wait_for(path, BUS_SETTLE_S if adapter else 0):
             return True, undo
-    if not enable:
-        return False, undo
     sh(enable)
     undo.insert(0, ["sudo", "dtparam", "-r"])
     return wait_for(path, BUS_SETTLE_S), undo

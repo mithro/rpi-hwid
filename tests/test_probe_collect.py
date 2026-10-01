@@ -1302,7 +1302,7 @@ def test_a_bus_missing_only_i2c_dev_is_opened_by_loading_it(pi):
     assert d["header_buses_read"] == {"id": True, "user": True}
     assert MODPROBE in host.calls
     assert not any(c[:2] == ["sudo", "dtparam"] for c in host.calls)
-    assert host.calls[-1] == UNLOAD or UNLOAD in host.calls
+    assert UNLOAD in host.calls
     assert not host.loaded, "left as it was found"
 
 
@@ -1313,6 +1313,9 @@ def test_dtparam_is_the_fallback_when_the_module_brings_nothing_up(pi):
     d = probe.collect()
     assert d["header_buses_read"] == {"id": True, "user": True}
     assert host.calls.index(MODPROBE) < host.calls.index(["sudo", "dtparam", "i2c_arm=on"])
+    # undone in reverse: the overlay out before the module is unloaded
+    last_unload = len(host.calls) - 1 - host.calls[::-1].index(UNLOAD)
+    assert host.calls.index(["sudo", "dtparam", "-r"]) < last_unload
     assert host.overlays == []
     assert not host.loaded
     assert 1 not in host.adapters
@@ -1334,6 +1337,16 @@ def test_buses_already_there_need_no_command(pi):
     probe.collect()
     assert MODPROBE not in host.calls
     assert not any(c[:2] == ["sudo", "dtparam"] for c in host.calls)
+
+
+def test_an_orange_pi_with_an_adapter_but_no_node_still_runs_no_sudo(opi_root):
+    """The Orange Pi's buses have no enable: the probe takes what it has and
+    never runs sudo there, even where i2c-dev would bring a node up."""
+    root, calls = opi_root
+    for bus in (0, 1):
+        (root / f"sys/bus/i2c/devices/i2c-{bus}").mkdir(parents=True)
+    probe.collect()
+    assert calls == []
 
 
 def test_probe_main_prints_text_and_json(fake_root, capsys, monkeypatch):
