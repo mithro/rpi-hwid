@@ -202,12 +202,77 @@ def test_the_sheet_id_is_printed_top_and_bottom_outside_the_labels(docs, tmp_pat
 
     page = Image.open(tmp_path / "page.png").convert("L")
     h = page.height
+    # across the labels themselves, that is: the registration ticks beside
+    # the rows stand in the side margins
+    x0 = round(labels.MARGIN_X / PT_PER_PX) + 1
+    x1 = round((labels.PAGE_W - labels.MARGIN_X) / PT_PER_PX) - 1
     for py in range(round(h - top / PT_PER_PX) + 2, round(h - bottom / PT_PER_PX) - 2):
-        row = page.crop((0, py, page.width, py + 1))
+        row = page.crop((x0, py, x1, py + 1))
         assert min(row.getdata()) > 215, f"ink across the label grid at row {py}"
     # and inside the printer's unprintable edge, 4.32 mm
     assert box[1] > placement.PRINTER_EDGE
     assert box[3] < labels.PAGE_H - placement.PRINTER_EDGE
+
+
+def raster(pdf, tmp_path, dpi):
+    from PIL import Image
+
+    if shutil.which("pdftoppm") is None:
+        pytest.skip("pdftoppm not installed")
+    subprocess.run(["pdftoppm", "-r", str(dpi), "-gray", "-png", "-singlefile", str(pdf),
+                    str(tmp_path / "r")], check=True)
+    page = Image.open(tmp_path / "r.png").convert("L")
+    scale = dpi / 72.0
+
+    def ink(x, y0, y1):
+        """Is there ink at x (points) anywhere between heights y0 and y1?"""
+        px = round(x * scale)
+        top, bottom = sorted((round(page.height - y0 * scale), round(page.height - y1 * scale)))
+        return any(page.getpixel((px + dx, py)) < 128
+                   for py in range(top, bottom + 1) for dx in (-1, 0, 1))
+
+    def ink_row(y, x0, x1):
+        py = round(page.height - y * scale)
+        left, right = round(x0 * scale), round(x1 * scale)
+        return any(page.getpixel((px, py + dy)) < 128
+                   for px in range(left, right + 1) for dy in (-1, 0, 1))
+
+    return ink, ink_row
+
+
+def test_registration_ticks_point_at_every_die_cut(docs, tmp_path):
+    """On a sheet's first pass the margins carry ticks in line with every
+    die-cut edge -- each column's sides above and below the grid, each
+    row's top and bottom beside it -- so a print that is shifted or scaled
+    shows it against the stickers."""
+    pdf = tmp_path / "p.pdf"
+    placement.render(docs, {"labels": [], "sheet": {"id": "K7QX"}}, pdf)
+    ink, ink_row = raster(pdf, tmp_path, 150)
+    grid_top = labels.PAGE_H - labels.MARGIN_Y
+    grid_bottom = labels.MARGIN_Y
+    for col in range(labels.COLS):
+        x, _ = labels.label_origin(col)
+        for edge in (x, x + labels.LABEL_W):
+            assert ink(edge, grid_top + 1, grid_top + 3), f"no tick above x={edge:.1f}"
+            assert ink(edge, grid_bottom - 3, grid_bottom - 1), f"no tick below x={edge:.1f}"
+        # and none mid-column, where the sheet's id and note are
+        mid = x + labels.LABEL_W / 2
+        assert not ink(mid, grid_top + 1, grid_top + 2.0)
+    side = (placement.PRINTER_EDGE + labels.MARGIN_X) / 2
+    for row in range(labels.ROWS + 1):
+        y = labels.PAGE_H - labels.MARGIN_Y - row * labels.LABEL_H
+        assert ink_row(y, side - 0.5, side + 0.5), f"no tick beside y={y:.1f}"
+        assert ink_row(y, labels.PAGE_W - side - 0.5, labels.PAGE_W - side + 0.5)
+    # mid-row, nothing
+    assert not ink_row(labels.PAGE_H - labels.MARGIN_Y - labels.LABEL_H / 2,
+                       side - 0.5, side + 0.5)
+
+
+def test_no_ticks_without_the_sheet_marking(docs, tmp_path):
+    """A later pass prints only its labels: the ticks are already there."""
+    pdf = tmp_path / "p.pdf"
+    placement.render(docs, {"labels": []}, pdf)
+    assert ink_box(pdf, tmp_path) is None
 
 
 def test_the_place_command_reads_a_plan_file(data_dir, docs, widgets, tmp_path, capsys):

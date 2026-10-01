@@ -49,6 +49,14 @@ PRINTER_EDGE = 4.32 * mm
 SHEET_ID_SIZE = 11.0
 NOTE_SIZE = 6.5
 EDGE_SIZE = 6.5
+# The margin text's middle, this far in from the printer's edge: clear of
+# it, and of the registration ticks nearer the grid.
+TEXT_IN = 3.2 * mm
+# A registration tick stops this far short of the grid (so no sticker is
+# inked) and of the printer's edge, and is at most TICK_LEN long.
+TICK_CLEAR = 0.4 * mm
+TICK_LEN = 2.5 * mm
+TICK_WEIGHT = 0.4
 
 
 class PlacementError(ValueError):
@@ -148,17 +156,15 @@ def check(plan: dict[str, Any], by_id: dict[str, Entry]
 def draw_margins(c: canvas.Canvas, sheet: dict[str, str]) -> None:
     """The sheet's id and note in its top and bottom margins, clear of the
     label grid and of the printer's unprintable edge, each saying which
-    edge it is so the sheet goes back through the right way round."""
+    edge it is so the sheet goes back through the right way round, and the
+    registration ticks."""
     left = labels.MARGIN_X
     right = labels.PAGE_W - labels.MARGIN_X
-    # the band between the printer's edge and the grid, text centred in it
-    band = labels.MARGIN_Y - PRINTER_EDGE
-    for edge, mid in (("TOP EDGE", labels.PAGE_H - PRINTER_EDGE - band / 2),
-                      ("BOTTOM EDGE", PRINTER_EDGE + band / 2)):
-        base = mid - SHEET_ID_SIZE * 0.36
+    for edge, mid in (("TOP EDGE", labels.PAGE_H - PRINTER_EDGE - TEXT_IN),
+                      ("BOTTOM EDGE", PRINTER_EDGE + TEXT_IN)):
         c.setFillColor(black)
         c.setFont(labels.MONO, SHEET_ID_SIZE)
-        c.drawString(left, base, sheet["id"])
+        c.drawString(left, mid - SHEET_ID_SIZE * 0.36, sheet["id"])
         c.setFillColor(labels.GREY)
         if sheet.get("note"):
             c.setFont(labels.SANS, NOTE_SIZE)
@@ -166,6 +172,35 @@ def draw_margins(c: canvas.Canvas, sheet: dict[str, str]) -> None:
         c.setFont(labels.SANS_BOLD, EDGE_SIZE)
         c.drawRightString(right, mid - EDGE_SIZE * 0.36, edge)
     c.setFillColor(black)
+    draw_ticks(c)
+
+
+def draw_ticks(c: canvas.Canvas) -> None:
+    """A tick in the margin in line with every die-cut edge: each column's
+    two sides above and below the grid, each row's top and bottom either
+    side of it. Printed true, every tick meets its cut; a sheet printed
+    shifted shows it in every tick alike, and one scaled (a printer's "fit
+    to page") in ticks that drift further off the further they are from the
+    page's middle."""
+    top = labels.PAGE_H - labels.MARGIN_Y
+    bottom = top - labels.ROWS * labels.LABEL_H
+    c.saveState()
+    c.setStrokeColor(black)
+    c.setLineWidth(TICK_WEIGHT)
+    for col in range(labels.COLS):
+        x, _ = labels.label_origin(col)
+        for edge in (x, x + labels.LABEL_W):
+            c.line(edge, top + TICK_CLEAR, edge, top + TICK_CLEAR + TICK_LEN)
+            c.line(edge, bottom - TICK_CLEAR, edge, bottom - TICK_CLEAR - TICK_LEN)
+    # the side margins are narrower than a tick: each runs from the
+    # printer's edge to the grid, clear of both
+    near = PRINTER_EDGE + TICK_CLEAR
+    far = labels.MARGIN_X - TICK_CLEAR
+    for row in range(labels.ROWS + 1):
+        y = top - row * labels.LABEL_H
+        c.line(near, y, far, y)
+        c.line(labels.PAGE_W - near, y, labels.PAGE_W - far, y)
+    c.restoreState()
 
 
 def render(docs: Any, plan: dict[str, Any], out: str | Path | IO[bytes],

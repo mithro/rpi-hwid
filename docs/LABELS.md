@@ -98,7 +98,12 @@ the stickers whose micro cut guides are drawn — once, with a sticker's first
 micro label, since they cross all four quarters. `sheet`, on a sheet's first
 pass, prints its id and note in the top and bottom margins, clear of the grid
 and of the printer's unprintable edge, each end saying which edge it is so the
-sheet goes back through the right way round. A plan that names a label the
+sheet goes back through the right way round. It also prints registration
+ticks in line with every die-cut edge — each column's sides above and below
+the grid, each row's top and bottom beside it. Printed true, every tick meets
+its cut; a sheet printed shifted shows it in every tick alike, and one scaled
+(a printer's "fit to page") in ticks that drift further off towards the
+page's edges. A plan that names a label the
 data does not make, a slot off the sheet, a whole label in a quarter or two
 labels in one place is refused, naming the fault, and nothing is drawn.
 `rpi-hwid-sheet` keeps track of which slots are used and writes the plans.
