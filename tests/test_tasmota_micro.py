@@ -1,0 +1,297 @@
+"""Tasmota micro labels, from documents the collector wrote."""
+
+from __future__ import annotations
+
+import copy
+import glob
+import json
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from rpi_hwid import esp32_micro, espressif, labels, micro, tasmota, tasmota_micro
+from rpi_hwid.micro import Icon, MicroRow
+from rpi_hwid.model import ProbeDocument
+
+DEVICES = json.loads((Path(__file__).parent / "tasmota_devices.json").read_text())
+
+
+def _doc(host, errors=None, **raw_changes):
+    d = copy.deepcopy(DEVICES[host])
+    mac = d["status"]["StatusNET"]["Mac"]
+    dev = tasmota.SheetDevice(host=host, name="tasmota-" + mac.replace(":", "")[6:],
+                              ip=d["ip"], mac=tasmota.normalise_mac(mac), site="Welland")
+    raw = {"status": d["status"], "module": d["module"], "template": d["template"],
+           "info": tasmota.parse_info_page("x" + d["in"])}
+    raw.update(raw_changes)
+    for k in errors or ():
+        raw.pop(k, None)
+    return tasmota.document(dev, raw, {k: f"no answer to {k}" for k in errors or ()})
+
+
+def _docs(*hosts):
+    return {h: _doc(h) for h in hosts or DEVICES}
+
+
+def _one(host):
+    (m,) = tasmota_micro.micro_labels({host: _doc(host)})
+    return m
+
+
+def test_the_module_is_found_by_the_micro_layout():
+    assert micro.providers()["tasmota"] is tasmota_micro
+    assert "tasmota" in micro.kinds()
+
+
+def test_the_athom_plug_label():
+    m = _one("au-plug-29")
+    assert m.host == "au-plug-29"
+    assert m.mark == "athom.png"
+    assert m.title == "Plug V3"
+    assert m.icons == (Icon("tasmota"), Icon("plug"), Icon("chip", "C3"),
+                       Icon("wifi", "2.4 n +bt"))
+    assert m.ident_caption == "Wi-Fi MAC"
+    assert m.ident == "7c:2c:67:d7:c0:e8"
+    assert m.qr_content == "7c:2c:67:d7:c0:e8"
+    assert m.subtitle == "ESP32-C3 rev.4  ·  4 MB flash"
+    assert m.rows == (MicroRow("chip id", "14139624", mono=True),
+                      MicroRow("flash id", "20 40 16", mono=True))
+
+
+def test_the_sonoff_s31_label():
+    m = _one("us-plug-1")
+    assert m.mark == "sonoff.png"
+    assert m.title == "S31"
+    assert m.icons == (Icon("tasmota"), Icon("plug"), Icon("chip", "8266"),
+                       Icon("wifi", "2.4 n"))
+    assert m.subtitle == "ESP8266EX  ·  4 MB flash"
+    assert m.rows[1] == MicroRow("flash id", "ef 40 16", mono=True)
+
+
+def test_a_device_without_a_relay_gets_no_plug():
+    m = _one("ir-ac-remote")
+    assert m.mark == "athom.png"
+    assert m.title == "IR Remote"
+    assert Icon("plug") not in m.icons
+    assert m.subtitle == "ESP8266EX  ·  2 MB flash"
+
+
+def test_a_generic_module_is_a_custom_device_with_no_maker():
+    """Tim, 2026-09-29: "Use `custom` for tasmota devices which are custom
+    made tasmota devices". The chip stays in the subtitle and the glyph.
+    Tim, 2026-09-30: "custom" is a wordmark in the style of athom's, taking
+    the same space: in the mark's place, with no model to title it."""
+    m = _one("esp32-433mhz-cc1101-blue")
+    assert m.mark == "custom.svg"
+    assert m.title == ""
+    custom, athom = labels.artwork("custom.svg"), labels.artwork("athom.png")
+    assert labels.mark_aspect(custom) == pytest.approx(labels.mark_aspect(athom), rel=1e-3)
+    assert Icon("chip", "C3") in m.icons
+    assert m.subtitle == "ESP32-C3 v0.4  ·  4 MB flash"
+
+
+def test_the_wifi_glyph_is_the_esp32_labels_own():
+    """Tim, 2026-09-30: the same style of Wi-Fi icon as the ESP32 labels:
+    the lettered glyph, its band and standard, with the Bluetooth rune
+    where the chip has Bluetooth -- and the title still prints whole."""
+    for m in tasmota_micro.micro_labels(_docs()):
+        chip = m.subtitle.split()[0]
+        wifi = esp32_micro.wifi_icons(espressif.family_for(chip))
+        assert m.icons[-len(wifi):] == wifi, m.host
+        assert micro.title_fits(m), m.host
+
+
+def test_a_chip_of_no_known_family_is_fatal_and_names_the_host():
+    doc = _doc("us-plug-1")
+    doc.evidence["verdict"]["tasmota"]["chip"] = "ESP32-C61"
+    with pytest.raises(espressif.UnknownPartError, match=r"us-plug-1.*ESP32-C61"):
+        tasmota_micro.micro_labels({"us-plug-1": doc})
+
+
+def test_a_known_model_without_its_maker_in_the_name():
+    doc = _doc("ir-ac-remote", template=dict(DEVICES["ir-ac-remote"]["template"],
+                                             NAME="ZHA ZBBridge"),
+               module={"Module": {"0": "ZHA ZBBridge"}})
+    (m,) = tasmota_micro.micro_labels({"bridge-zigbee-1": doc})
+    assert (m.mark, m.title) == ("sonoff.png", "Zigbee Bridge")
+
+
+def test_pi_documents_give_no_tasmota_labels(docs):
+    assert tasmota_micro.micro_labels(docs) == []
+
+
+def test_labels_come_in_host_order():
+    ms = tasmota_micro.micro_labels(_docs())
+    assert [m.host for m in ms] == sorted(DEVICES)
+
+
+@pytest.mark.parametrize(("missing", "what"), [
+    ("info", "ESP chip id"),
+    ("module", "model"),
+])
+def test_an_unread_identifier_is_fatal_and_names_the_host_and_command(missing, what):
+    doc = _doc("au-plug-29", errors=[missing])
+    with pytest.raises(labels.IdentifierNotReadError) as err:
+        tasmota_micro.micro_labels({"au-plug-29": doc})
+    msg = str(err.value)
+    assert "au-plug-29" in msg
+    assert what in msg
+    assert "rpi-hwid tasmota" in msg
+    assert "au-plug-29" in msg.split("rpi-hwid tasmota", 1)[1]
+
+
+def test_an_unread_flash_id_is_fatal():
+    raw_status = copy.deepcopy(DEVICES["au-plug-29"]["status"])
+    del raw_status["StatusMEM"]["FlashChipId"]
+    doc = _doc("au-plug-29", status=raw_status)
+    with pytest.raises(labels.IdentifierNotReadError, match=r"au-plug-29.*flash"):
+        tasmota_micro.micro_labels({"au-plug-29": doc})
+
+
+def _spy_text(monkeypatch):
+    drawn = []
+    real = micro.Cell.text
+
+    def text(self, x, y, s, *a, **kw):
+        drawn.append(s)
+        return real(self, x, y, s, *a, **kw)
+
+    monkeypatch.setattr(micro.Cell, "text", text)
+    return drawn
+
+
+def test_nothing_that_can_change_is_printed(monkeypatch, tmp_path):
+    """No IP, no firmware version, no Wi-Fi network: only what the device
+    will say about itself for as long as it exists -- and, pale, its host
+    name (Tim, 2026-09-30), which
+    test_the_hostname_fills_the_spare_space_centred_in_a_pale_colour
+    covers."""
+    drawn = _spy_text(monkeypatch)
+    ms = tasmota_micro.micro_labels(_docs())
+    micro.render_micro(ms, tmp_path / "t.pdf")
+    text = " ".join(drawn)
+    for d in DEVICES.values():
+        assert d["ip"] not in text
+        assert d["status"]["StatusFWR"]["Version"].split("(")[0] not in text
+        assert d["status"]["StatusSTS"]["Wifi"]["SSId"] not in text
+        assert d["status"]["StatusNET"]["Mac"].lower() in text
+
+
+def test_the_hostname_fills_the_spare_space_centred_in_a_pale_colour(monkeypatch, tmp_path):
+    """Tim, 2026-09-30: "On the tasmota label in the spare white space, put
+    the hostname in a pale color", then "a pale color other than gray",
+    "centered in the region and take up the entire region", "center the
+    text vertically in the whitespace too": the white right of the QR, from
+    the last row down to the identifier. Its own ink as large as that
+    holds, centred both ways, as much white above it as below."""
+    import dataclasses
+
+    from reportlab.pdfbase import pdfmetrics
+
+    for m in tasmota_micro.micro_labels(_docs()):
+        drawn, boxes = [], []
+        real_text, real_extra = micro.Cell.text, m.extra
+
+        def text(self, x, y, s, font=labels.SANS, size=8, align="left", color=None,
+                 _drawn=drawn, _real=real_text, **kw):
+            _drawn.append((s, x, y, font, size, align, color))
+            return _real(self, x, y, s, font, size, align,
+                         **({"color": color} if color else {}))
+
+        def extra(cell, box, _boxes=boxes, _real=real_extra):
+            _boxes.append(box)
+            _real(cell, box)
+
+        monkeypatch.setattr(micro.Cell, "text", text)
+        micro.render_micro([dataclasses.replace(m, extra=extra)], tmp_path / "t.pdf")
+        ((bx, _, bw, _),) = boxes
+        (host,) = [d for d in drawn if d[0] == m.host]
+        s, x, y, font, size, align, color = host
+
+        # a pale colour, not a grey
+        assert color == tasmota_micro.HOST_COLOR
+        rgb = (color.red, color.green, color.blue)
+        assert max(rgb) - min(rgb) > 0.15, m.host
+        assert min(rgb) > max(labels.GREY.red, labels.GREY.green, labels.GREY.blue)
+
+        # the white between the last row's baseline and the identifier's top
+        (row,) = [d for d in drawn if d[0] == m.rows[-1].value]
+        row_base = row[2] + row[4] * 0.72
+        (ident,) = [d for d in drawn if d[0] == m.ident]
+        ident_top = ident[2]
+        assert ident_top == pytest.approx(micro.ident_top(m.ident))
+        # the name's own ink: its tallest letter to its lowest descender
+        top, bottom = tasmota_micro.ink(s)
+        baseline = y + size * 0.72
+        ink_top, ink_bottom = baseline - top * size, baseline - bottom * size
+        # centred both ways, as much white above it as below
+        w = pdfmetrics.stringWidth(s, font, size)
+        left = x - w / 2 if align == "centre" else x
+        assert left + w / 2 == pytest.approx(bx + bw / 2), m.host
+        assert ink_top - row_base == pytest.approx(ident_top - ink_bottom), m.host
+        # as large as that white holds, a gap either side: it meets the
+        # region's width or its height
+        gap = micro.EXTRA_GAP
+        assert ink_top - row_base >= gap - 1e-6, m.host
+        high = ident_top - row_base - 2 * gap
+        assert w <= bw + 1e-6, m.host
+        assert max(w / bw, (ink_bottom - ink_top) / high) == pytest.approx(1, abs=0.01), m.host
+
+
+def test_every_label_draws_inside_its_quarter(monkeypatch, tmp_path):
+    drawn = []
+    real = micro.Cell.text
+
+    def text(self, x, y, s, font=labels.SANS, size=8, align="left", **kw):
+        w = self.width(s, font, size)
+        left = x - w if align == "right" else x - w / 2 if align == "centre" else x
+        drawn.append((s, left, left + w, self.w))
+        return real(self, x, y, s, font, size, align, **kw)
+
+    monkeypatch.setattr(micro.Cell, "text", text)
+    micro.render_micro(tasmota_micro.micro_labels(_docs()), tmp_path / "t.pdf")
+    for s, left, right, w in drawn:
+        assert left >= micro.MICRO_PAD - 0.01, s
+        assert right <= w - micro.MICRO_PAD + 0.01, s
+
+
+def test_render_and_decode_every_qr(tmp_path):
+    ms = tasmota_micro.micro_labels(_docs())
+    out = tmp_path / "t.pdf"
+    micro.render_micro(ms, out, outline=True)
+    pdftoppm = shutil.which("pdftoppm")
+    if pdftoppm is None:
+        pytest.skip("pdftoppm not installed")
+    zxingcpp = pytest.importorskip("zxingcpp")
+    from PIL import Image
+
+    subprocess.run([pdftoppm, "-r", "600", "-png", str(out), str(tmp_path / "page")],
+                   check=True)
+    got = set()
+    for png in sorted(glob.glob(str(tmp_path / "page-*.png"))):
+        got |= {b.text for b in zxingcpp.read_barcodes(Image.open(png))}
+    assert got == {tasmota.normalise_mac(d["status"]["StatusNET"]["Mac"])
+                   for d in DEVICES.values()}
+
+
+def test_the_labels_command_prints_them(tmp_path, capsys):
+    from rpi_hwid.cli import main as cli_main
+
+    data = tmp_path / "data"
+    data.mkdir()
+    for host in DEVICES:
+        (data / f"{host}.json").write_text(_doc(host).to_json())
+    # a document goes through the file and back unchanged
+    back = ProbeDocument.from_json("au-plug-29", (data / "au-plug-29.json").read_text())
+    assert back.evidence == _doc("au-plug-29").evidence
+    assert cli_main(["labels", "--data", str(data), "--list", "--only", "tasmota"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert len(out) == 1
+    assert "micro" in out[0]
+    assert "Plug V3 7c:2c:67:d7:c0:e8" in out[0]
+    pdf = tmp_path / "l.pdf"
+    assert cli_main(["labels", "--data", str(data), "--out", str(pdf),
+                     "--only", "tasmota"]) == 0
+    assert "1 labels on 1 sheet" in capsys.readouterr().out

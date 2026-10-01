@@ -586,12 +586,45 @@ regenerates the image. What is not read is refused:
 Each error names the host and how to read the radio again. Reading it resets the
 node.
 
+## Tasmota devices
+
+`rpi_hwid.tasmota_micro` labels the smart plugs and bridges running Tasmota
+that [`rpi-hwid tasmota`](COLLECT.md#tasmota-devices) read, four to a
+sticker. The four devices below are the test fixtures, read on 2026-09-26:
+an Athom Plug V3 (ESP32-C3), a bare ESP32-C3 on Tasmota's generic module, an
+Athom IR remote and a Sonoff S31 (both ESP8266).
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/tasmota-4up.png" alt="One sticker of four Tasmota micro labels: an Athom Plug V3, a custom ESP32-C3 device, an Athom IR Remote and a Sonoff S31, each with its Wi-Fi MAC in a QR and along the foot" width="98%">
+</p>
+
+The maker's mark and the model make the title -- the model as the device
+itself reports it, its template's NAME or the module Tasmota ships for it, so
+the label never disagrees with the plug it is on. A device on one of
+Tasmota's generic modules is custom-made (an ESP32 someone wired up, such as
+a 433 MHz radio node): in the maker's mark's place it carries a "custom"
+wordmark in the style of athom's and the same size, with no model after
+it; its chip is in the subtitle and on the chip glyph.
+The glyphs are the Tasmota symbol, a mains plug where the device has a
+relay, the chip, and the ESP32 labels' Wi-Fi glyph for the chip's family:
+its band and standard, with the Bluetooth rune where the chip has
+Bluetooth. A chip that `rpi_hwid.espressif` places in no family is an
+error naming the device. The Wi-Fi MAC is the identifier, in the QR and along the
+foot. Beside the QR: the chip with its revision as the firmware writes it,
+the flash size, the ESP chip id (the number the web UI and the sheet's
+Device ID column show, which Tasmota derives from the MAC's low 24 bits) and
+the flash's JEDEC id. Under them, pale, in the white beside the QR's foot: the
+device's host name (Tim, 2026-09-30). No IP, Wi-Fi network or firmware version
+is printed. A document missing any of these is an error naming the device and
+the `rpi-hwid tasmota` command that reads it.
+
 ## Artwork
 
 The package ships the Raspberry Pi raspberry, the Orange Pi orange, the Alphamax,
-Digilent, SQRL, Great Scott Gadgets, SiFive, Tiny Tapeout and Espressif marks, the RISC-V logo and
-its "RV" mark alone, and the Tasmota symbol (each its owner's mark, drawn only where it applies: on its
-maker's own hardware, on a RISC-V part, on a device Tasmota runs on) and the public-domain USB trident; see
+Digilent, SQRL, Great Scott Gadgets, SiFive, Tiny Tapeout, Espressif, Athom and Sonoff marks, the RISC-V
+logo and its "RV" mark alone (each its owner's mark, drawn only where it applies: on its maker's own
+hardware, on a RISC-V part), the Tasmota symbol (GPL-3.0-only, from the Tasmota repository, drawn on a
+device Tasmota runs on) and the public-domain USB trident; see
 [`src/rpi_hwid/artwork/README.md`](../src/rpi_hwid/artwork/README.md) for the
 sources. A `--artwork DIR` overrides any of them and may add a `netv2.svg`. A
 board whose maker has no mark gets the name in type.

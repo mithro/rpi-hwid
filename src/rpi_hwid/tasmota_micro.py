@@ -1,0 +1,264 @@
+"""Tasmota micro labels, from the documents ``rpi_hwid.tasmota`` wrote.
+
+One quarter-sticker label per device (see ``rpi_hwid.micro``): a smart
+plug is too small for a whole sticker. The maker's mark and the model make
+the title -- the Athom wordmark and "Plug V3" -- with the Tasmota mark, a
+plug where the device switches mains through a relay, and the chip beside
+them. The Wi-Fi MAC is the identifier, in the QR and along the foot: it is
+what the sheet, the router's leases and Tasmota's own name for the device
+(``tasmota-D7C0E8-0232``) all key on. Beside the QR:
+
+  * the chip and its revision, and the flash size, in the subtitle;
+  * the ESP chip id, as the device's Information page gives it -- the
+    number in the sheet's Device ID column and in the web UI. Tasmota
+    derives it from the eFuse MAC's low 24 bits (checked on all 52 devices
+    read on 2026-09-26), so it is a second way to find the same device,
+    not a second identity;
+  * the flash chip's JEDEC id (manufacturer, type, capacity), read by the
+    firmware at boot.
+
+Nothing that can change is printed: not the IP, the Wi-Fi network or the
+firmware version. The one exception is the host name, pale in the white
+under the rows (Tim, 2026-09-30). The model is what the device says it is
+-- the NAME of its template, or the module Tasmota ships for it -- rather
+than what the sheet says, so a label never disagrees with the device it
+is stuck to. A device on one of Tasmota's generic modules is custom-made,
+an ESP32 someone wired up rather than a product, and carries a
+"custom" wordmark where a maker's mark would be.
+
+A label whose identifier or one of its facts was not read is not drawn:
+the error names the device and the command that reads it.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import TYPE_CHECKING, Any
+
+from reportlab.lib.colors import HexColor, black
+from reportlab.pdfbase import pdfmetrics
+
+from rpi_hwid import esp32_micro, espressif, labels, micro
+from rpi_hwid.micro import Icon, MicroLabel, MicroRow
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Mapping
+
+KIND = "tasmota"
+
+# A maker whose own mark is shipped (see artwork/README.md), by the first
+# word of the model name the device reports.
+MAKER_MARKS = {"athom": "athom.png", "sonoff": "sonoff.png"}
+
+# Models whose name does not start with their maker, as (maker, title).
+# "ZHA ZBBridge" is the template the Sonoff Zigbee Bridge is flashed with:
+# its BASE is ESP8266 module 75, SONOFF_ZB_BRIDGE in Tasmota's
+# tasmota/include/tasmota_template.h.
+KNOWN_MODELS = {"zha zbbridge": ("sonoff", "Zigbee Bridge")}
+
+# The mark of a custom-made device: one flashed with a generic module
+# (tasmota.GENERIC_MODULES), whose chip the subtitle and the chip glyph say.
+# A "custom" wordmark in the style of athom's and in the same space (Tim,
+# 2026-09-30), drawn by tools/make_custom_mark.py.
+CUSTOM_MARK = "custom.svg"
+
+# The host name the device is filed under, filling the white under the
+# rows in a pale colour, not a grey (Tim, 2026-09-30): lighter than any
+# caption, so it reads as a note beside what the device says about itself.
+HOST_COLOR = HexColor("#7aa6de")
+
+READ_WITH = ("rpi-hwid tasmota --sheet <gdoc2netcfg IoT sheet> --site <site>=<octet> "
+             "--out <dir> {host}")
+
+
+class TasmotaNotReadError(labels.IdentifierNotReadError):
+    """A Tasmota device reached the label generator without a fact its label
+    carries."""
+
+
+def _not_read(host: str, what: str, why: str | None) -> TasmotaNotReadError:
+    return TasmotaNotReadError(
+        f"{host}: the Tasmota label needs the {what}, which was not read"
+        + (f" ({why})" if why else "")
+        + f". Read it with `{READ_WITH.format(host=host)}` and collect again.")
+
+
+# --- the plug glyph -------------------------------------------------------------
+
+
+def glyph_plug(cell: micro.Cell, x: float, y: float, size: float, text: str) -> float:
+    """A mains plug seen from the side: two pins over a body, and the cord
+    leaving it -- a device that switches mains through a relay."""
+    c = cell.c
+    c.setStrokeColor(black)
+    c.setFillColor(black)
+    body_w, body_h = size * 0.62, size * 0.42
+    bx, by = x + (size - body_w) / 2, y + size * 0.26
+    px, py = cell.pt(bx, by + body_h)
+    c.roundRect(px, py, body_w, body_h, size * 0.08, stroke=0, fill=1)
+    pin_w, pin_h = size * 0.1, size * 0.26
+    for fx in (0.3, 0.7):
+        qx, qy = cell.pt(bx + body_w * fx - pin_w / 2, by)
+        c.rect(qx, qy, pin_w, pin_h, stroke=0, fill=1)
+    c.setLineWidth(size * 0.09)
+    c.setLineCap(1)
+    top = cell.pt(x + size / 2, by + body_h)
+    bottom = cell.pt(x + size / 2, y + size * 0.97)
+    c.line(top[0], top[1], bottom[0], bottom[1])
+    c.setLineCap(0)
+    c.setLineWidth(1)
+    return size
+
+
+def glyph_tasmota(cell: micro.Cell, x: float, y: float, size: float, text: str) -> float:
+    """Tasmota's own mark, the house with the power symbol in it."""
+    # rpi_hwid.labels is untyped; these are its signatures
+    artwork: Callable[[str], str | None] = labels.artwork
+    draw_svg: Callable[[str, float, float, float], float] = cell.svg
+    path = artwork("tasmota.svg")
+    if not path:
+        return 0.0
+    return float(draw_svg(path, x, y, size))
+
+
+micro.ICONS.setdefault("plug", glyph_plug)
+micro.ICONS.setdefault("tasmota", glyph_tasmota)
+
+
+# --- the label ----------------------------------------------------------------------
+
+
+# Where each letter a host name uses puts ink, top and bottom, in thousandths
+# of the type size above the baseline: the glyph bounding boxes of Helvetica
+# (labels.SANS) from Adobe's core-font metrics, Helvetica.afm version 002.000.
+INK = {
+    "-": (322, 232), ".": (106, 0), "_": (-75, -125),
+    "0": (703, -19), "1": (703, 0), "2": (703, 0), "3": (703, -19), "4": (703, 0),
+    "5": (688, -19), "6": (703, -19), "7": (688, 0), "8": (703, -19), "9": (703, -19),
+    "a": (538, -15), "b": (718, -15), "c": (538, -15), "d": (718, -15), "e": (538, -15),
+    "f": (728, 0), "g": (538, -220), "h": (718, 0), "i": (718, 0), "j": (718, -210),
+    "k": (718, 0), "l": (718, 0), "m": (538, 0), "n": (538, 0), "o": (538, -14),
+    "p": (538, -207), "q": (538, -207), "r": (538, 0), "s": (538, -15), "t": (669, -7),
+    "u": (523, -15), "v": (523, 0), "w": (523, 0), "x": (523, 0), "y": (523, -214),
+    "z": (523, 0),
+}
+
+
+def ink(text: str) -> tuple[float, float]:
+    """How far above the baseline `text`'s ink reaches, and its lowest
+    point (below the baseline, negative), per point of type. A letter
+    missing from INK counts as the font's whole ascent and descent."""
+    asc, desc = pdfmetrics.getAscentDescent(labels.SANS, 1000)
+    tops, bottoms = zip(*(INK.get(ch, (asc, desc)) for ch in text), strict=True)
+    return max(tops) / 1000, min(bottoms) / 1000
+
+
+def host_note(host: str, ident: str) -> micro.ExtraFn:
+    """The label's extra section: `host` in HOST_COLOR, filling the white
+    right of the QR from the rows down to the identifier (`ident`), which
+    runs past the section's own foot. Its ink is as large as that white
+    holds, less the rows' EXTRA_GAP above and below, by its width or its
+    height, and centred both ways (Tim, 2026-09-30)."""
+
+    def draw(cell: micro.Cell, box: tuple[float, float, float, float]) -> None:
+        x, y, w, _ = box
+        h = micro.ident_top(ident) - micro.EXTRA_GAP - y
+        top, bottom = ink(host)
+        size = min(w / pdfmetrics.stringWidth(host, labels.SANS, 1), h / (top - bottom))
+        # the ink's middle on the white's middle
+        baseline = y + h / 2 + (top + bottom) / 2 * size
+        cell.text(x + w / 2, baseline - size * 0.72, host, labels.SANS, size,
+                  align="centre", color=HOST_COLOR)
+
+    return draw
+
+
+def chip_glyph_text(chip: str) -> str:
+    """What the chip glyph says: ``C3`` for an ESP32-C3, ``32`` for an
+    original ESP32, ``8266`` for an ESP8266EX."""
+    m = re.fullmatch(r"ESP32-?([A-Z]\d+)", chip, re.I)
+    if m:
+        return m.group(1).upper()
+    if re.fullmatch(r"ESP32", chip, re.I):
+        return "32"
+    m = re.fullmatch(r"ESP(8266|8285)\w*", chip, re.I)
+    return m.group(1) if m else ""
+
+
+def maker_and_title(model: str) -> tuple[str | None, str]:
+    """(mark file or None, title) for a model name as the device gives it:
+    ``Athom Plug V3`` -> (athom.png, ``Plug V3``); ``Athom_IR_Remote`` ->
+    (athom.png, ``IR Remote``); a maker with no mark keeps its name."""
+    name = re.sub(r"[_\s]+", " ", model).strip()
+    known = KNOWN_MODELS.get(name.lower())
+    if known:
+        return MAKER_MARKS.get(known[0]), known[1]
+    first, _, rest = name.partition(" ")
+    mark = MAKER_MARKS.get(first.lower())
+    if mark and rest:
+        return mark, rest
+    return None, name
+
+
+def _size(kb: Any) -> str:
+    if not isinstance(kb, int) or kb <= 0:
+        return ""
+    return f"{kb // 1024} MB" if kb % 1024 == 0 else f"{kb} KB"
+
+
+def tasmota_label(host: str, t: Mapping[str, Any]) -> MicroLabel:
+    """The label for one device's ``verdict.tasmota``."""
+    errors = t.get("read_errors") or {}
+    if not t.get("model"):
+        raise _not_read(host, "model (its Module and Template)",
+                        errors.get("module") or errors.get("template"))
+    if not t.get("chip"):
+        raise _not_read(host, "chip (StatusFWR.Hardware of Status 0)", None)
+    if t.get("esp_chip_id") is None:
+        raise _not_read(host, "ESP chip id (the Information page, /in)", errors.get("info"))
+    jedec = t.get("flash_jedec")
+    if not jedec:
+        raise _not_read(host, "flash id (StatusMEM.FlashChipId of Status 0)", None)
+    size = _size(t.get("flash_size_kb"))
+    if not size:
+        raise _not_read(host, "flash size (StatusMEM.FlashSize of Status 0)", None)
+
+    mark: str | None
+    if t.get("generic"):
+        # a device on one of Tasmota's generic modules is one someone built:
+        # no maker, and no model the firmware knows (Tim, 2026-09-29)
+        mark, title = CUSTOM_MARK, ""
+    else:
+        mark, title = maker_and_title(t["model"])
+    icons = [Icon("tasmota")]
+    if t.get("relays"):
+        icons.append(Icon("plug"))
+    glyph = chip_glyph_text(t["chip"])
+    icons.append(Icon("chip", glyph) if glyph else Icon("chip"))
+    # the ESP32 labels' Wi-Fi glyph, from the chip's family (Tim, 2026-09-30)
+    try:
+        family = espressif.family_for(t["chip"])
+    except espressif.UnknownPartError as e:
+        raise espressif.UnknownPartError(f"{host}: {e}") from e
+    icons += esp32_micro.wifi_icons(family)
+    chip = " ".join(x for x in (t["chip"], t.get("chip_revision")) if x)
+    return MicroLabel(
+        host=host, title=title, mark=mark, icons=tuple(icons),
+        subtitle=f"{chip}  ·  {size} flash",
+        ident_caption="Wi-Fi MAC", ident=t["mac"],
+        rows=(MicroRow("chip id", str(t["esp_chip_id"]), mono=True),
+              MicroRow("flash id", " ".join(re.findall("..", jedec)), mono=True)),
+        read_with=READ_WITH.format(host=host),
+        extra=host_note(host, t["mac"]),
+    )
+
+
+def micro_labels(docs: Mapping[str, Any]) -> list[MicroLabel]:
+    """A label for every document the Tasmota collector wrote, by host;
+    every other document is not this module's."""
+    out = []
+    for host in sorted(docs):
+        t = (docs[host].evidence.get("verdict") or {}).get("tasmota")
+        if t is not None:
+            out.append(tasmota_label(host, t))
+    return out

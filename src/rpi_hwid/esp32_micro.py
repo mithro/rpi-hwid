@@ -332,6 +332,20 @@ def serial_rows(dev: Esp32Device) -> list[MicroRow]:
 USB_LETTER = {"otg": "O", "jtag": "J", "serial": "S"}
 
 
+def wifi_icons(fam: espressif.Family) -> tuple[Icon, ...]:
+    """The family's radios: the lettered Wi-Fi glyph with its bands and
+    newest standard, Bluetooth and Zigbee riding on it; a family without
+    Wi-Fi gets them full size. Shared with the Tasmota labels (Tim,
+    2026-09-30: the same style of Wi-Fi icon)."""
+    if not fam.wifi:
+        return ((Icon("bluetooth"),) if fam.bluetooth else ()) + (
+            (Icon("zigbee"),) if fam.ieee802154 else ())
+    text = "/".join(fam.wifi_band_ghz) + " " + str(fam.wifi_newest)
+    text += " " + micro.WIFI_BT if fam.bluetooth else ""
+    text += " " + micro.WIFI_ZB if fam.ieee802154 else ""
+    return (Icon("wifi", text),)
+
+
 def radio_icons(fam: espressif.Family) -> tuple[Icon, ...]:
     """The header's glyphs: the radios the part has and its own USB.
 
@@ -341,15 +355,7 @@ def radio_icons(fam: espressif.Family) -> tuple[Icon, ...]:
     without Wi-Fi (the H2) has them full size instead. Then the USB
     trident, upright, a letter over each prong for what the chip's own
     USB does (O OTG, J JTAG, S serial); none where the chip has no USB."""
-    icons = []
-    if fam.wifi:
-        text = "/".join(fam.wifi_band_ghz) + " " + str(fam.wifi_newest)
-        text += " " + micro.WIFI_BT if fam.bluetooth else ""
-        text += " " + micro.WIFI_ZB if fam.ieee802154 else ""
-        icons.append(Icon("wifi", text))
-    else:
-        icons += [Icon("bluetooth")] if fam.bluetooth else []
-        icons += [Icon("zigbee")] if fam.ieee802154 else []
+    icons = list(wifi_icons(fam))
     if fam.usb_functions:
         icons.append(Icon("usb", "".join(USB_LETTER[f] for f in fam.usb_functions)))
     return tuple(icons)
