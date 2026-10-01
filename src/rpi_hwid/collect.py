@@ -143,22 +143,47 @@ def esp32_reads(hosts: Sequence[str], pairs: Sequence[str],
     without its ``user@``; a HOST that is not being collected is an error,
     because a read that silently does nothing looks just like one that found
     nothing to read."""
-    def bare(h: str) -> str:
-        return h.split("@", 1)[-1]
-
     out: dict[str, list[str]] = {}
     for pair in pairs:
         h, sep, port = pair.partition("=")
         if not sep or not h or not port:
             raise ValueError(f"{flag} wants HOST=PORT, not {pair!r}")
-        matches = [x for x in hosts if x == h] or [x for x in hosts if bare(x) == bare(h)]
-        if len(matches) != 1:
-            raise ValueError(
-                f"{flag} {pair}: {h} is not one of the hosts being collected "
-                f"({', '.join(hosts)})" if not matches else
-                f"{flag} {pair}: {h} matches more than one host ({', '.join(matches)})")
-        out.setdefault(matches[0], []).append(port)
+        out.setdefault(resolve_host(hosts, h, f"{flag} {pair}"), []).append(port)
     return out
+
+
+def resolve_host(hosts: Sequence[str], h: str, what: str) -> str:
+    """The host in `hosts` that `h` names, with or without its ``user@``;
+    ValueError for one that is not being collected, or that matches more
+    than one, since an option that silently does nothing looks just like
+    one that found nothing."""
+    def bare(x: str) -> str:
+        return x.split("@", 1)[-1]
+
+    matches = [x for x in hosts if x == h] or [x for x in hosts if bare(x) == bare(h)]
+    if len(matches) != 1:
+        raise ValueError(
+            f"{what}: {h} is not one of the hosts being collected ({', '.join(hosts)})"
+            if not matches else
+            f"{what}: {h} matches more than one host ({', '.join(matches)})")
+    return matches[0]
+
+
+def offline_read_problem(doc: ProbeDocument) -> str | None:
+    """What went wrong with a --force-offline TraceID read, or None.
+
+    ``rpi-hwid fpga --force-offline`` says these on the terminal; a collect
+    has to say them too, above all a board left offline, its capture stopped
+    and its TARGET port perhaps unpowered until someone puts it back."""
+    read = (doc.evidence.get("fpga") or {}).get("cynthion_jtag")
+    if not read:
+        return "no Cynthion with a flash uid answered, so no TraceID was read"
+    if not read.get("restored"):
+        return ("THE ANALYZER DID NOT COME BACK. Recover with: "
+                "rpi-hwid fpga --recover-cynthion")
+    if read.get("error"):
+        return str(read["error"])
+    return None
 
 
 def collect(

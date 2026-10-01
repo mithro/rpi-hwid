@@ -128,12 +128,14 @@ def cmd_esp32(args: argparse.Namespace) -> int:
 
 
 def cmd_collect(args: argparse.Namespace) -> int:
-    from rpi_hwid.collect import collect, esp32_reads
+    from rpi_hwid.collect import collect, esp32_reads, offline_read_problem, resolve_host
 
     try:
         # checked before anything is probed, so a mistyped host costs nothing
         esp32_reads(args.hosts, args.esp32_read or ())
         esp32_reads(args.hosts, args.esp32_radio or (), "--esp32-radio")
+        offline = {resolve_host(args.hosts, h, "--force-offline")
+                   for h in args.force_offline or ()}
     except ValueError as exc:
         print(f"rpi-hwid collect: {exc}", file=sys.stderr)
         return 2
@@ -144,7 +146,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         take_port=not args.no_stop_service,
         esp32=args.esp32, esp32_read=tuple(args.esp32_read or ()),
         esp32_radio=tuple(args.esp32_radio or ()),
-        force_offline_hosts=tuple(args.force_offline or ()),
+        force_offline_hosts=tuple(sorted(offline)),
     )
     failed = 0
     for r in results:
@@ -158,6 +160,10 @@ def cmd_collect(args: argparse.Namespace) -> int:
                   f"power {s.power_class}" + (f"; fpga {boards}" if boards else "")
                   + (f"; tinytapeout {tts}" if tts else "")
                   + (f"; esp32 {esps}" if esps else ""))
+            problem = offline_read_problem(r.doc) if r.host in offline else None
+            if problem:
+                failed += 1
+                print(f"  {r.host}: FAILED --force-offline: {problem}")
         else:
             failed += 1
             print(f"  {r.host}: FAILED ({r.error})")
