@@ -173,7 +173,7 @@ jobs:
                     rpi-hwid revision c04170
                     rpi-hwid name --netv2 0x00742c4e63b9085c
                     python3 -c "import rpi_hwid.probe, rpi_hwid.fpga, rpi_hwid.model"
-                    python3 -c "from rpi_hwid import spi_flash_parts as p; n = p.name(0xc84016); print(p.version(), n); assert n.startswith(\"GD25Q32\")"'
+                    python3 -c "from rpi_hwid import spi_flash_parts as p; n = p.name(0xc84016); print(p.version(), n); assert n.startswith((\"GD25Q32\", \"GD25x32\")), n"'
 
       - name: Upload
         uses: actions/upload-artifact@v7

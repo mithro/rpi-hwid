@@ -123,9 +123,11 @@ disallow_untyped_calls = false
 warn_return_any = false
 
 # ...and so do the ESP32 micro labels, which also use its flash tables, and
-# the Tasmota ones, which print the host name with them.
+# the Tasmota ones, which print the host name with them, and the placement
+# of chosen labels in chosen slots, which draws with both.
 [[tool.mypy.overrides]]
-module = ["rpi_hwid.esp32_micro", "rpi_hwid.esp32_433_micro", "rpi_hwid.tasmota_micro"]
+module = ["rpi_hwid.esp32_micro", "rpi_hwid.esp32_433_micro", "rpi_hwid.tasmota_micro",
+          "rpi_hwid.placement"]
 disallow_untyped_calls = false
 warn_return_any = false
 
