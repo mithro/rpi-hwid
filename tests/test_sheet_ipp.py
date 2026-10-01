@@ -105,7 +105,11 @@ class FakePrinter:
                 body = self.rfile.read(int(self.headers["Content-Length"]))
                 msg = ipp.decode(body, request=True)
                 printer.requests.append(msg)
-                status, groups = answer(msg)
+                reply = answer(msg)
+                if reply is None:            # hang up: the request was taken, no answer
+                    self.close_connection = True
+                    return
+                status, groups = reply
                 out = ipp.encode_response(status, msg.request_id, groups)
                 self.send_response(200)
                 self.send_header("Content-Type", "application/ipp")

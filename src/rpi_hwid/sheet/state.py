@@ -13,6 +13,8 @@ as ``rpi-hwid labels --place`` takes them.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import os
@@ -20,7 +22,10 @@ import random
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 STOCK = "L7160"
 STICKERS = 21
@@ -143,7 +148,7 @@ class Sheet:
 
     def record_pass(self, placed: list[tuple[str, str, str, str]], guides: list[str], *,
                     at: str, host: str, user: str, job: int | None, job_state: str,
-                    data: str, marked: bool) -> None:
+                    data: str, marked: bool, plan: str = "") -> None:
         """Mark `placed` (label id, slot, host, title) used by a new pass."""
         n = len(self.passes) + 1
         for label, slot, lhost, title in placed:
@@ -154,7 +159,13 @@ class Sheet:
         self.passes.append({"pass": n, "at": at, "host": host, "user": user, "job": job,
                             "job_state": job_state, "data": data,
                             "labels": [label for label, *_ in placed],
-                            "guides": new_guides, "marked": marked})
+                            "guides": new_guides, "marked": marked, "plan": plan})
+
+    def pass_(self, n: int) -> dict[str, Any]:
+        for p in self.passes:
+            if p["pass"] == n:
+                return p
+        raise KeyError(f"sheet {self.id} has no pass {n}")
 
     def drop_pass(self, n: int) -> None:
         """Take back pass `n`, the last, whose job printed nothing: its
@@ -206,6 +217,18 @@ class Store:
         if not self.sheets.is_dir():
             return []
         return sorted(p.stem for p in self.sheets.glob("*.json"))
+
+    @contextlib.contextmanager
+    def lock(self, sheet_id: str) -> Iterator[None]:
+        """Hold the sheet's lock: one session at a time reads, changes and
+        writes it back."""
+        self.sheets.mkdir(parents=True, exist_ok=True)
+        with open(self.sheets / f".{sheet_id.upper()}.lock", "w") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(f, fcntl.LOCK_UN)
 
     def load(self, sheet_id: str) -> Sheet:
         p = self.path(sheet_id)

@@ -287,12 +287,13 @@ def cmd_status(args: argparse.Namespace, store: state.Store) -> int:
 
 
 def cmd_mark(args: argparse.Namespace, store: state.Store) -> int:
-    s = store.load(args.sheet)
-    try:
-        s.mark(args.slots, args.why, now().isoformat(timespec="seconds"))
-    except ValueError as exc:
-        raise ToolError(str(exc)) from exc
-    store.save(s)
+    with store.lock(args.sheet):
+        s = store.load(args.sheet)
+        try:
+            s.mark(args.slots, args.why, now().isoformat(timespec="seconds"))
+        except ValueError as exc:
+            raise ToolError(str(exc)) from exc
+        store.save(s)
     print(f"sheet {s.id}: {', '.join(args.slots)} marked used; {free_text(s)}")
     return 0
 
@@ -362,14 +363,23 @@ def cmd_commit(args: argparse.Namespace, store: state.Store) -> int:
     return commit(store, d, args.poll, args.wait)
 
 
+def write_meta(d: Path, meta: dict[str, Any]) -> None:
+    (d / "meta.json").write_text(json.dumps(meta, indent=1))
+
+
+def set_pass(store: state.Store, sheet_id: str, n: int, **fields: Any) -> state.Sheet:
+    """Update pass `n` of the sheet as it is on disk now, under its lock:
+    never a copy held while waiting, which would undo what another session
+    recorded meanwhile."""
+    with store.lock(sheet_id):
+        s = store.load(sheet_id)
+        s.pass_(n).update(fields)
+        store.save(s)
+    return s
+
+
 def commit(store: state.Store, d: Path, poll: float, wait: float) -> int:
     meta = json.loads((d / "meta.json").read_text())
-    if meta["committed"] is not None:
-        raise ToolError(f"plan {d.name} was already sent, as job {meta['committed']}")
-    sheet = store.load(meta["sheet"])
-    if sheet.revision() != meta["revision"]:
-        raise ToolError(f"sheet {sheet.id} has changed since plan {d.name} was made: "
-                        "print again to make a new plan")
     pr = ipp.Printer(meta["printer"])
     attrs = pr.attributes(["printer-state", "printer-state-reasons", "printer-make-and-model",
                            "media-source-supported"])
@@ -381,32 +391,63 @@ def commit(store: state.Store, d: Path, poll: float, wait: float) -> int:
         raise ToolError(f"printer {meta['printer']} has no manual feed slot (media sources: "
                         + ", ".join(map(str, attrs.get("media-source-supported", []))) + ")")
     host, user = who()
-    n = len(sheet.passes) + 1
-    job = pr.print_job((d / "pass.pdf").read_bytes(), f"rpi-hwid-sheet {sheet.id} pass {n}",
-                       user=user)
-    # Used from the moment the printer has it: a slot wrongly kept is a
-    # sticker wasted, one wrongly freed is a label printed over another.
-    sheet.record_pass([tuple(p) for p in meta["placed"]], meta["guides"],
-                      at=now().isoformat(timespec="seconds"), host=host, user=user,
-                      job=job.id, job_state="sent", data=meta["data"], marked=meta["marked"])
-    store.save(sheet)
+    sid = meta["sheet"]
+    # Used from before the printer has it: a slot wrongly kept is a sticker
+    # wasted, one wrongly freed is a label printed over another. Checked and
+    # recorded under the sheet's lock, so two sessions cannot both send.
+    with store.lock(sid):
+        meta = json.loads((d / "meta.json").read_text())
+        if meta["committed"] is not None:
+            raise ToolError(f"plan {d.name} was already sent, as job {meta['committed']}")
+        sheet = store.load(sid)
+        if sheet.revision() != meta["revision"]:
+            raise ToolError(f"sheet {sheet.id} has changed since plan {d.name} was made: "
+                            "print again to make a new plan")
+        n = len(sheet.passes) + 1
+        sheet.record_pass([tuple(p) for p in meta["placed"]], meta["guides"],
+                          at=now().isoformat(timespec="seconds"), host=host, user=user,
+                          job=None, job_state="sending", data=meta["data"],
+                          marked=meta["marked"], plan=d.name)
+        store.save(sheet)
+        meta["committed"] = "sending"
+        write_meta(d, meta)
+    slots = ", ".join(slot for _, slot, *_ in meta["placed"])
+    try:
+        job = pr.print_job((d / "pass.pdf").read_bytes(), f"rpi-hwid-sheet {sid} pass {n}",
+                           user=user)
+    except ipp.IppRefusedError as exc:
+        # the printer answered, and said no: nothing will print
+        with store.lock(sid):
+            s = store.load(sid)
+            if s.passes and s.passes[-1]["pass"] == n:
+                s.drop_pass(n)
+                store.save(s)
+                meta["committed"] = None
+                write_meta(d, meta)
+        raise ToolError(f"{exc}; nothing printed, slots {slots} are free again") from exc
+    except ipp.IppError as exc:
+        set_pass(store, sid, n, job_state="unknown")
+        raise ToolError(f"{exc}; the printer may have the job, so slots {slots} of sheet "
+                        f"{sid} stay used. Check the printer, then rpi-hwid-sheet status "
+                        f"{sid}") from exc
+    set_pass(store, sid, n, job=job.id, job_state="sent")
     meta["committed"] = job.id
-    (d / "meta.json").write_text(json.dumps(meta, indent=1))
+    write_meta(d, meta)
     print(f"job {job.id} sent to {attrs.get('printer-make-and-model', ['the printer'])[0]}.")
     if job.ignored:
         print(f"warning: the printer ignored {', '.join(job.ignored)}", file=sys.stderr)
-    sheet.passes[-1]["plan"] = d.name
-    store.save(sheet)
-    print(FEED.format(id=sheet.id))
-    return follow(store, sheet, d, meta, pr, job.id, n, poll, wait)
+    print(FEED.format(id=sid))
+    return follow(store, sid, d, pr, job.id, n, poll, wait)
 
 
 def cmd_follow(args: argparse.Namespace, store: state.Store) -> int:
-    """Wait again for a sheet's last job, one that outlasted --wait."""
+    """Wait again for a sheet's outstanding job, one that outlasted --wait."""
     sheet = store.load(args.sheet)
-    last = sheet.passes[-1] if sheet.passes else None
-    if last is None or last["job_state"] in ("completed", "canceled", "aborted"):
+    open_ = [p for p in sheet.passes if p["job_state"] not in ("completed", "canceled", "aborted")
+             and p.get("job") is not None]
+    if not open_:
         raise ToolError(f"sheet {sheet.id} has nothing outstanding to follow")
+    last = open_[-1]
     d = store.root / "plans" / last.get("plan", "")
     if not last.get("plan"):
         # a pass recorded before passes named their plan: the plan sent as its job
@@ -416,50 +457,63 @@ def cmd_follow(args: argparse.Namespace, store: state.Store) -> int:
     if not (d / "meta.json").exists():
         raise ToolError(f"no plan for sheet {sheet.id}'s job {last['job']}")
     meta = json.loads((d / "meta.json").read_text())
-    return follow(store, sheet, d, meta, ipp.Printer(meta["printer"]), last["job"],
+    return follow(store, sheet.id, d, ipp.Printer(meta["printer"]), last["job"],
                   last["pass"], args.poll, args.wait)
 
 
-def follow(store: state.Store, sheet: state.Sheet, d: Path, meta: dict[str, Any],
-           pr: ipp.Printer, job_id: int, n: int, poll: float, wait: float) -> int:
+def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, n: int,
+           poll: float, wait: float) -> int:
     """Wait for the job to end and record how it did."""
     deadline = time.monotonic() + wait
     js: int = ipp.JOB_PENDING
-    done = 0
+    done: int | None = None
     told = False
     while True:
         a = pr.job(job_id)
         js = (a.get("job-state") or [ipp.JOB_PENDING])[0]
-        done = (a.get("job-impressions-completed") or [0])[0] or 0
+        # how many sheets it printed, only if the printer says: unknown is not none
+        raw = a.get("job-impressions-completed") or [None]
+        done = raw[0] if isinstance(raw[0], int) and not isinstance(raw[0], bool) else None
         if js == ipp.JOB_STOPPED and not told:
             why = pr.attributes(["printer-state-reasons"]).get("printer-state-reasons", [])
             if any(str(r).startswith("media-needed") for r in why):
-                print(f"the printer is waiting for sheet {sheet.id} in its manual feed slot")
+                print(f"the printer is waiting for sheet {sid} in its manual feed slot")
                 told = True
         if js in ipp.JOB_DONE or time.monotonic() >= deadline:
             break
         time.sleep(poll)
     name = ipp.JOB_STATES.get(js, str(js))
-    sheet.passes[-1]["job_state"] = name
     if js == ipp.JOB_COMPLETED:
-        store.save(sheet)
-        print(f"sheet {sheet.id} pass {n} printed; {free_text(sheet)}")
+        s = set_pass(store, sid, n, job_state=name)
+        print(f"sheet {sid} pass {n} printed; {free_text(s)}")
         return 0
     if js in (ipp.JOB_CANCELED, ipp.JOB_ABORTED) and done == 0:
-        sheet.drop_pass(n)
-        store.save(sheet)
-        meta["committed"] = None
-        (d / "meta.json").write_text(json.dumps(meta, indent=1))
-        print(f"job {job_id} {name} before printing anything: the slots are free again and "
-              f"plan {d.name} can be sent again", file=sys.stderr)
+        with store.lock(sid):
+            s = store.load(sid)
+            s.pass_(n)["job_state"] = name
+            last = s.passes[-1]["pass"] == n
+            if last:
+                s.drop_pass(n)
+            store.save(s)
+        if last:
+            meta = json.loads((d / "meta.json").read_text())
+            meta["committed"] = None
+            write_meta(d, meta)
+            print(f"job {job_id} {name} before printing anything: the slots are free again "
+                  f"and plan {d.name} can be sent again", file=sys.stderr)
+        else:
+            print(f"job {job_id} {name} before printing anything, but sheet {sid} has passes "
+                  f"after pass {n}: its slots stay used (rpi-hwid-sheet status {sid})",
+                  file=sys.stderr)
         return 1
-    store.save(sheet)
+    set_pass(store, sid, n, job_state=name)
     if js in ipp.JOB_DONE:
-        print(f"job {job_id} {name} after {done} sheet(s): its slots stay used; check the "
-              f"sheet (rpi-hwid-sheet status {sheet.id})", file=sys.stderr)
+        what = "an unknown number of" if done is None else str(done)
+        print(f"job {job_id} {name} after {what} sheet(s): its slots stay used; check the "
+              f"sheet (rpi-hwid-sheet status {sid})", file=sys.stderr)
     else:
         print(f"job {job_id} is still {name} after {wait:g}s: its slots stay used; once "
-              f"it ends, rpi-hwid-sheet follow {sheet.id} records how", file=sys.stderr)
+              f"it ends, rpi-hwid-sheet follow {sid} records how", file=sys.stderr)
     return 1
 
 

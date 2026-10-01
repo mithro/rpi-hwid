@@ -57,6 +57,10 @@ class IppError(RuntimeError):
     with something that is not IPP."""
 
 
+class IppRefusedError(IppError):
+    """The printer answered and refused the request: it will not act on it."""
+
+
 class Value(NamedTuple):
     tag: int
     value: Any
@@ -330,10 +334,15 @@ class Printer:
                 raw = resp.read()
         except (urllib.error.URLError, OSError) as exc:
             raise IppError(f"printer {self.where}: {exc}") from exc
-        msg = decode(raw)
+        try:
+            msg = decode(raw)
+        except (struct.error, UnicodeDecodeError, IndexError, ValueError) as exc:
+            raise IppError(f"printer {self.where} answered with something that is not IPP: "
+                           f"{exc}") from exc
         if msg.code >= 0x0400:
             why = msg.attributes("operation").get("status-message", [""])[0]
-            raise IppError(f"printer {self.where} refused the request: status 0x{msg.code:04x}"
+            raise IppRefusedError(f"printer {self.where} refused the request: "
+                                  f"status 0x{msg.code:04x}"
                            + (f", {why}" if why else ""))
         return msg
 

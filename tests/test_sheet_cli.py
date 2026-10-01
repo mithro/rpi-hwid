@@ -48,9 +48,14 @@ def fake_rpi_hwid(tmp_path):
 class Printer:
     """A fake printer whose jobs finish as `end` says (job-state, sheets)."""
 
-    def __init__(self, end=(ipp.JOB_COMPLETED, 1), printer_state=3, sources=("auto", "manual")):
+    def __init__(self, end=(ipp.JOB_COMPLETED, 1), printer_state=3, sources=("auto", "manual"),
+                 print_reply="ok", on_job=None):
         self.end = end
         self.next_id = 400
+        # "ok", "hangup" (taken, never answered) or a refusal status
+        self.print_reply = print_reply
+        # called on each Get-Job-Attributes: another session acting meanwhile
+        self.on_job = on_job
         self.fake = FakePrinter(self.answer)
         self.printer_state = printer_state
         self.sources = sources
@@ -65,12 +70,21 @@ class Printer:
                 "printer-make-and-model": ipp.text("Fake MFC"),
                 "media-source-supported": [ipp.keyword(s) for s in self.sources]})]
         if msg.code == ipp.PRINT_JOB:
+            if self.print_reply == "hangup":
+                return None
+            if self.print_reply != "ok":
+                return self.print_reply, [(ipp.OPERATION_GROUP, {
+                    "status-message": ipp.text("client-error-document-format-error")})]
             self.next_id += 1
             return 0, [(ipp.JOB_GROUP, {"job-id": ipp.integer(self.next_id),
                                         "job-state": ipp.enum(ipp.JOB_PENDING)})]
+        if self.on_job:
+            self.on_job()
         state_, sheets = self.end
-        return 0, [(ipp.JOB_GROUP, {"job-state": ipp.enum(state_),
-                                    "job-impressions-completed": ipp.integer(sheets)})]
+        attrs = {"job-state": ipp.enum(state_)}
+        if sheets is not None:              # None: the printer does not say
+            attrs["job-impressions-completed"] = ipp.integer(sheets)
+        return 0, [(ipp.JOB_GROUP, attrs)]
 
     @property
     def jobs(self):
@@ -438,3 +452,81 @@ def test_follow_with_nothing_outstanding_says_so(run, printer):
     rc, _, err = run("follow", sid)
     assert rc == 2
     assert "nothing" in err
+
+
+# --- never printing twice in one slot ----------------------------------------------------
+
+
+def test_a_refused_job_frees_its_slots_and_its_plan(run, printer):
+    p = printer(print_reply=0x040A)
+    sid = new_sheet(run, p)
+    plan, _ = prepare(run, sid, "pi3")
+    rc, _, err = run("commit", plan)
+    assert rc == 2
+    assert "refused" in err
+    assert state.Store(run.root).load(sid).slots == {}
+    p.print_reply = "ok"
+    assert run("commit", plan)[0] == 0
+
+
+def test_a_job_sent_but_never_answered_keeps_its_slots(run, printer):
+    """The printer may have it: the slots stay used, and the plan cannot be
+    sent again to print over them."""
+    p = printer(print_reply="hangup")
+    sid = new_sheet(run, p)
+    plan, _ = prepare(run, sid, "pi3")
+    rc, _, err = run("commit", plan)
+    assert rc == 2
+    assert "may have" in err
+    s = state.Store(run.root).load(sid)
+    assert len(s.slots) == 2
+    assert s.passes[0]["job_state"] == "unknown"
+    p.print_reply = "ok"
+    rc, _, err = run("commit", plan)
+    assert rc == 2
+    assert "already" in err
+
+
+def test_a_cancelled_job_that_does_not_say_what_it_printed_keeps_its_slots(run, printer):
+    p = printer(end=(ipp.JOB_CANCELED, None))
+    sid = new_sheet(run, p)
+    rc, _, _ = run("commit", prepare(run, sid, "pi3")[0])
+    assert rc == 1
+    assert len(state.Store(run.root).load(sid).slots) == 2
+
+
+def test_waiting_does_not_undo_what_another_session_did_meanwhile(run, printer):
+    """Another session marks a slot while this one waits for its sheet: the
+    end of the wait records the job without losing the mark."""
+    store = {}
+
+    def meanwhile():
+        if "done" not in store:
+            store["done"] = True
+            s = state.Store(run.root).load(store["sid"])
+            s.mark(["20"], why="another session", at="x")
+            state.Store(run.root).save(s)
+
+    p = printer(on_job=meanwhile)
+    sid = store["sid"] = new_sheet(run, p)
+    assert run("commit", prepare(run, sid, "pi3")[0])[0] == 0
+    s = state.Store(run.root).load(sid)
+    assert s.slots["20"]["why"] == "another session"
+    assert s.passes[0]["job_state"] == "completed"
+
+
+def test_a_cancelled_job_with_a_later_pass_keeps_its_slots(run, printer):
+    p = printer(end=(ipp.JOB_STOPPED, 0))
+    sid = new_sheet(run, p)
+    run("commit", prepare(run, sid, "pi3")[0], "--wait", "0.05")
+    # a second pass goes on while the first still waits
+    p.end = (ipp.JOB_COMPLETED, 1)
+    s = state.Store(run.root).load(sid)
+    s.record_pass([("x", "9", "h", "t")], [], at="x", host="h", user="u", job=999,
+                  job_state="completed", data="d", marked=False)
+    state.Store(run.root).save(s)
+    p.end = (ipp.JOB_CANCELED, 0)
+    rc, _, err = run("follow", sid)
+    assert rc == 1
+    assert "pass 1" in err
+    assert len(state.Store(run.root).load(sid).slots) == 3
