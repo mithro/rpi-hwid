@@ -1440,6 +1440,17 @@ def read_flash(res, harness, board, part):
 # not know are left in the evidence. Without fpgas-verify installed nothing
 # here changes.
 FPGAS_VERIFY = "fpgas-verify"
+# Set by an outer `fpgas-verify --label` to the identity document it has
+# already read, before it runs rpi-hwid (contract 5). The inner `fpgas-verify
+# --identify` prints that file and touches no board; rpi-hwid, seeing it,
+# touches no FPGA at all -- the outer run is testing the board, and a JTAG
+# read, a BAR or a flash read now would land in the middle of that.
+IDENTITY_ENV = "FPGAS_VERIFY_IDENTITY"
+
+
+def nested():
+    """Whether this runs inside an outer fpgas-verify (IDENTITY_ENV set)."""
+    return bool(os.environ.get(IDENTITY_ENV))
 IDENTITY_SCHEMA = "fpgas-verify/identity"
 IDENTITY_VERSION = 1
 # The boards it describes that have an FPGA label here. A Tiny Tapeout
@@ -1488,7 +1499,10 @@ def identity_probe():
         return None
     argv = [FPGAS_VERIFY, "--identify"]
     if os.geteuid() != 0:
-        argv = ["sudo", "-n"] + argv
+        # sudo drops the environment: the marker has to be kept by name, or
+        # the inner fpgas-verify would read the board the outer one holds
+        keep = ["--preserve-env=" + IDENTITY_ENV] if nested() else []
+        argv = ["sudo", "-n"] + keep + argv
     out, err = sh_split(argv, timeout=120)
     read, why = identity_parse(out)
     if why and err.strip():
@@ -2358,6 +2372,10 @@ def fpga_summary(boards):
 
 
 def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=False):
+    # Inside an outer fpgas-verify, nothing is sent to any FPGA: what the
+    # boards are comes from the identity the outer run read, and sysfs.
+    if nested():
+        jtag = flash = force_offline = soc = False
     # A Cynthion is read from its descriptors alone, so it is collected
     # unconditionally: unlike every other board here, nothing is sent to it.
     f = {"pcie": pcie_devices(), "ftdi": ftdi_devices(), "cynthion": cynthion_devices()}
@@ -2390,7 +2408,7 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     endpoints = fpga_endpoints(f["pcie"])
     artys = [u for u in f["ftdi"] if u["id"] == "0403:6010"
              and (u["manufacturer"] or "").startswith("Digilent")]
-    f["fpgas_verify"] = identity_probe() if endpoints or artys or jtag else None
+    f["fpgas_verify"] = identity_probe() if endpoints or artys or jtag or nested() else None
     identified = (f["fpgas_verify"] or {}).get("read", [])
     by_slot = dict((b["bdf"], b) for b in identified if b.get("bdf"))
     unread = [s for s in endpoints if by_slot.get(s, {}).get("flash_uid_state") != "read"]
