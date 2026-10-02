@@ -312,6 +312,8 @@ def fake_root(tmp_path, monkeypatch):
     # nor any fpgas-acorn-verify, which runs under sudo: a stub that says it
     # was not run, so no test reaches the real thing whatever `which` answers
     monkeypatch.setattr(fpga, "sh_split", lambda args, timeout=15: ("", "stub: not run"))
+    monkeypatch.setattr(fpga, "sh_split_timed",
+                        lambda args, timeout=15: ("", "stub: not run", False))
     return tmp_path
 
 
@@ -850,9 +852,9 @@ def _acorn_collect(fake_root, monkeypatch, identify, chain="idcode 0x3636093"):
 
     def sh_split(args, timeout=15):
         ran.append(args)
-        return (json.dumps(identify), "")
+        return (json.dumps(identify), "", False)
     monkeypatch.setattr(fpga, "sh", sh)
-    monkeypatch.setattr(fpga, "sh_split", sh_split)
+    monkeypatch.setattr(fpga, "sh_split_timed", sh_split)
     monkeypatch.setattr(fpga, "digilent_cables", list)
     monkeypatch.setattr(fpga, "ch347_cables", list)
     monkeypatch.setattr(fpga, "gpiochips", list)
@@ -1011,7 +1013,7 @@ def _arty_collect(fake_root, monkeypatch, reading):
     monkeypatch.setattr(fpga, "ftdi_devices", lambda: [
         {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319B301DE",
          "path": "1-1"}])
-    monkeypatch.setattr(fpga, "identity_probe", lambda: {"read": [reading], "error": None})
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {"read": [reading], "error": None})
     monkeypatch.setattr(fpga, "jtag_probe", lambda want_flash=False, *a, **k: (
         wanted.append(want_flash), {"idcode": "0x362d093", "dna": "0x00628502251ea85c",
                                     "cable": "digilent"})[1])
@@ -1037,7 +1039,7 @@ def test_an_arty_whose_flash_fpgas_verify_did_not_give_is_read(fake_root, monkey
 def test_a_reading_nowhere_to_put_is_listed_in_the_evidence(fake_root, monkeypatch):
     monkeypatch.setattr(fpga, "fpga_verdict", lambda f: [
         {"kind": "netv2", "how": "a"}, {"kind": "netv2", "how": "b"}])
-    monkeypatch.setattr(fpga, "identity_probe", lambda: {
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {
         "read": [{"kind": "netv2", "dna": "0x1"}], "error": None})
     f = fpga.collect_fpga()
     assert f["fpgas_verify"]["unplaced"] == [{"kind": "netv2", "dna": "0x1"}]
@@ -1058,7 +1060,7 @@ def test_fpgas_verify_is_asked_about_an_arty_on_usb(fake_root, monkeypatch):
     monkeypatch.setattr(fpga, "ftdi_devices", lambda: [
         {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319B301DE",
          "path": "1-1"}])
-    monkeypatch.setattr(fpga, "identity_probe", lambda: asked.append(1) or {
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: asked.append(1) or {
         "read": [{"kind": "arty", "serial": "210319B301DE", "idcode": "0x0362d093"}],
         "error": None})
     f = fpga.collect_fpga()
@@ -1070,10 +1072,10 @@ def test_fpgas_verify_is_asked_about_an_arty_on_usb(fake_root, monkeypatch):
 def test_as_root_fpgas_verify_is_run_without_sudo(fake_root, monkeypatch):
     def run(args, timeout=15):
         ran.append(args)
-        return (IDENTITY_P48.read_text(), "")
+        return (IDENTITY_P48.read_text(), "", False)
     ran = []
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/fpgas-verify")
-    monkeypatch.setattr(fpga, "sh_split", run)
+    monkeypatch.setattr(fpga, "sh_split_timed", run)
     monkeypatch.setattr(fpga.os, "geteuid", lambda: 0)
     assert fpga.identity_probe()["read"]
     assert ran == [["fpgas-verify", "--identify"]]
@@ -1097,7 +1099,8 @@ def test_fpgas_verify_is_not_run_where_no_fpga_is_on_pcie(fake_root, monkeypatch
     ran = []
     # installed, so only the absence of an FPGA keeps it from running
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/" + args[-1])
-    monkeypatch.setattr(fpga, "sh_split", lambda args, timeout=15: (ran.append(args), ("", ""))[1])
+    monkeypatch.setattr(fpga, "sh_split_timed",
+                        lambda args, timeout=15: (ran.append(args), ("", "", False))[1])
     fpga.collect_fpga(flash=True)
     assert ran == []
 
@@ -2298,9 +2301,9 @@ def test_a_summary_saying_where_its_flash_was_read_loads():
     assert FpgaBoard(**entry).flash_source == "pcie"
 
 
-def _probe_with(monkeypatch, out, err):
+def _probe_with(monkeypatch, out, err, timed_out=False):
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/fpgas-verify")
-    monkeypatch.setattr(fpga, "sh_split", lambda args, timeout=15: (out, err))
+    monkeypatch.setattr(fpga, "sh_split_timed", lambda args, timeout=15: (out, err, timed_out))
     monkeypatch.setattr(fpga.os, "geteuid", lambda: 0)
     return fpga.identity_probe()
 
@@ -2313,8 +2316,84 @@ def test_nothing_printed_says_so_with_stderr(monkeypatch):
 
 
 def test_a_timeout_is_a_board_busy(monkeypatch):
-    res = _probe_with(monkeypatch, "", "Command '...' timed out after 60 seconds")
+    res = _probe_with(monkeypatch, "", "", timed_out=True)
     assert res["error"] == "fpgas-verify did not answer within 60 s (a board busy?)"
+
+
+def test_a_board_whose_stderr_says_timeout_is_not_a_timeout(monkeypatch):
+    """p47: a valid document, one board's flash read having timed out."""
+    res = _probe_with(monkeypatch, IDENTITY_P48.read_text(),
+                      "acorn: flash_uid: uartbone: timeout: no answer\n")
+    assert res["error"] is None
+    assert res["read"]
+
+
+def test_stderr_is_shown_in_whole_lines(monkeypatch):
+    err = ("usage: fpgas-verify [-h] [--list] [--board BOARD] [--no-probe] [--update]\n"
+           "                    [--variant VARIANT] [--port PORT] [--images DIR]\n"
+           "                    [--state FILE] [--report FILE] [--no-publish]\n"
+           "fpgas-verify: error: unrecognized arguments: --identify\n")
+    res = _probe_with(monkeypatch, "", err)
+    assert res["error"].startswith("fpgas-verify printed nothing (stderr: ")
+    shown = res["error"][len("fpgas-verify printed nothing (stderr: "):-1]
+    lines = [line.strip() for line in err.strip().splitlines()]
+    assert all(part in lines for part in shown.split(" | "))
+    assert shown.endswith("fpgas-verify: error: unrecognized arguments: --identify")
+
+
+@pytest.mark.parametrize(("boards", "seconds"), [(0, 60), (1, 60), (2, 90), (4, 150)])
+def test_identify_is_given_thirty_seconds_a_board(boards, seconds):
+    assert fpga.identity_timeout(boards) == seconds
+
+
+def test_out_of_time_it_is_asked_to_stop_before_it_is_killed(monkeypatch):
+    """SIGTERM first, so fpgas-verify's finally blocks put the pins back;
+    SIGKILL only after the grace."""
+    events = []
+
+    class Stubborn:
+        def __init__(self, args, **kw):
+            events.append(("start", args[0]))
+            self.calls = 0
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls < 3:
+                raise fpga.subprocess.TimeoutExpired("x", timeout)
+            return "", "killed"
+
+        def terminate(self):
+            events.append("TERM")
+
+        def kill(self):
+            events.append("KILL")
+    monkeypatch.setattr(fpga.subprocess, "Popen", Stubborn)
+    _, _, timed_out = fpga.sh_split_timed(["sudo", "-n", "fpgas-verify"], 1)
+    assert timed_out is True
+    assert events == [("start", "sudo"), "TERM", "KILL"]
+
+
+def test_one_that_stops_on_sigterm_is_not_killed(monkeypatch):
+    events = []
+
+    class Polite:
+        def __init__(self, args, **kw):
+            self.calls = 0
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise fpga.subprocess.TimeoutExpired("x", timeout)
+            return "{}", "stopped"
+
+        def terminate(self):
+            events.append("TERM")
+
+        def kill(self):
+            events.append("KILL")
+    monkeypatch.setattr(fpga.subprocess, "Popen", Polite)
+    assert fpga.sh_split_timed(["fpgas-verify"], 1) == ("{}", "stopped", True)
+    assert events == ["TERM"]
 
 
 def test_the_document_is_kept_whole_as_evidence(monkeypatch):
@@ -2326,8 +2405,9 @@ def test_the_document_is_kept_whole_as_evidence(monkeypatch):
 def test_identify_is_given_sixty_seconds(monkeypatch):
     seen = []
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/fpgas-verify")
-    monkeypatch.setattr(fpga, "sh_split",
-                        lambda args, timeout=15: (seen.append(timeout), ("", ""))[1])
+    monkeypatch.setattr(fpga, "sh_split_timed",
+                        lambda args, timeout=15: (seen.append(timeout), ("", "", False))[1])
     monkeypatch.setattr(fpga.os, "geteuid", lambda: 0)
     fpga.identity_probe()
-    assert seen == [60]
+    fpga.identity_probe(3)
+    assert seen == [60, 120]

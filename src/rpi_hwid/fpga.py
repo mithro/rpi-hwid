@@ -634,12 +634,36 @@ def sh_rc(args, timeout=15):
 def sh_split(args, timeout=15):
     """stdout and stderr kept apart: a tool whose stdout is a JSON document
     and whose stderr says why cannot have the two run together."""
+    out, err, _ = sh_split_timed(args, timeout)
+    return out, err
+
+
+# How long a tool asked to stop is given to stop before it is killed: its
+# own clean-up (fpgas-verify's finally blocks put the board's pins back) runs
+# on SIGTERM, and never on SIGKILL.
+TERM_GRACE_S = 5
+
+
+def sh_split_timed(args, timeout=15):
+    """(stdout, stderr, whether it ran out of time). Out of time, it is sent
+    SIGTERM, given TERM_GRACE_S to finish, and only then SIGKILL. Under sudo
+    the signal goes to sudo, which passes it on to the command."""
     try:
-        r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           universal_newlines=True, timeout=timeout)   # 3.5-safe
-        return r.stdout, r.stderr
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        return "", str(exc)
+        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             universal_newlines=True)
+    except OSError as exc:
+        return "", str(exc), False
+    try:
+        out, err = p.communicate(timeout=timeout)
+        return out, err, False
+    except subprocess.TimeoutExpired:
+        p.terminate()
+        try:
+            out, err = p.communicate(timeout=TERM_GRACE_S)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            out, err = p.communicate()
+        return out or "", err or "", True
 
 
 def sh_all(args, timeout=15):
@@ -1446,10 +1470,28 @@ IDENTITY_VERSION = 1
 # board is the Tiny Tapeout module's, and a Fomu has no label yet; both
 # stay in the evidence.
 IDENTITY_KINDS = ("acorn", "arty", "netv2", "pcileech", "unknown-fpga")
-# How long --identify may take. fpgas-verify waits at most 30 s for a board's
-# lock and leaves a board it could not get out, "board busy" (contract 23),
-# so twice that is time enough, and a probe never hangs on a held board.
+# How long --identify may take. fpgas-verify waits at most 30 s for each
+# board's lock and leaves a board it could not get out, "board busy"
+# (contract 23): so 30 s a board, and 30 s for the rest, never under 60 s.
+IDENTITY_LOCK_S = 30
 IDENTITY_TIMEOUT_S = 60
+
+
+def identity_timeout(boards):
+    """The time --identify is given on a host with `boards` boards found."""
+    return max(IDENTITY_TIMEOUT_S, IDENTITY_LOCK_S * boards + IDENTITY_LOCK_S)
+
+
+def last_lines(text, limit=300):
+    """The end of `text` in whole lines, as many as fit in `limit`
+    characters -- at least the last line, whole."""
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    out = []
+    for line in reversed(lines):
+        if out and len(" | ".join([line] + out)) > limit:
+            break
+        out.insert(0, line.strip())
+    return " | ".join(out)
 # The fields a board takes from the document: FpgaBoard's.
 IDENTITY_FIELDS = ("kind", "serial", "dna", "idcode", "flash", "flash_jedec",
                    "flash_extended_id", "flash_sfdp", "flash_uid", "flash_uid_bits",
@@ -1493,23 +1535,23 @@ def identity_parse(out):
     return read, "; ".join(why) or None
 
 
-def identity_probe():
+def identity_probe(boards=1):
     """What fpgas-verify read of each board, and why any were not, with the
     document it printed kept whole as evidence (its own fields, and boards
-    with no FPGA label here); None when it is not installed."""
+    with no FPGA label here); None when it is not installed. `boards` is
+    how many boards were found here, for the time it is given."""
     if not sh(["which", FPGAS_VERIFY]):
         return None
     argv = [FPGAS_VERIFY, "--identify"]
     if os.geteuid() != 0:
         argv = ["sudo", "-n"] + argv
-    out, err = sh_split(argv, timeout=IDENTITY_TIMEOUT_S)
+    timeout = identity_timeout(boards)
+    out, err, timed_out = sh_split_timed(argv, timeout)
     read, why = identity_parse(out)
-    err = err.strip()
-    if "timed out" in err.lower() or "timeout" in err.lower():
-        why = "%s did not answer within %d s (a board busy?)" % (
-            FPGAS_VERIFY, IDENTITY_TIMEOUT_S)
-    elif why and err:
-        why += " (stderr: %s)" % err[-200:]
+    if timed_out:
+        why = "%s did not answer within %d s (a board busy?)" % (FPGAS_VERIFY, timeout)
+    elif why and err.strip():
+        why += " (stderr: %s)" % last_lines(err)
     try:
         document = json.loads(out)
     except ValueError:
@@ -2473,7 +2515,8 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     endpoints = fpga_endpoints(f["pcie"])
     artys = [u for u in f["ftdi"] if u["id"] == "0403:6010"
              and (u["manufacturer"] or "").startswith("Digilent")]
-    f["fpgas_verify"] = identity_probe() if endpoints or artys or jtag else None
+    f["fpgas_verify"] = identity_probe(max(1, len(endpoints) + len(artys))) \
+        if endpoints or artys or jtag else None
     identified = (f["fpgas_verify"] or {}).get("read", [])
     # Which boards still want their flash read over JTAG, which loads a
     # bridge in place of the running design: those whose flash fpgas-verify
