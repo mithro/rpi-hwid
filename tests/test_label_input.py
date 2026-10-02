@@ -343,5 +343,6 @@ def test_a_header_nobody_read_is_refused_not_printed_as_none():
     assert _record(None).summary.header is None
     with pytest.raises(labels.HeaderNotReadError, match="nothing read the 40-pin header"):
         labels.board_record(_record(None))
-    with pytest.raises(labels.HeaderNotReadError):
+    # the label input says so first, in its own field names
+    with pytest.raises(labels.MissingFieldsError, match="board label needs header"):
         list(labels.all_labels({"pi-sw2-p48": _record(None)}, labels.KINDS))
