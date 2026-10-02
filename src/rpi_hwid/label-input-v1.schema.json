@@ -608,7 +608,8 @@
    "type": "object"
   },
   "version": {
-   "const": 1
+   "const": 1,
+   "type": "integer"
   }
  },
  "required": [
