@@ -55,6 +55,29 @@ PI_FIELDS = tuple(f.name for f in fields(Summary))
 FPGA_FIELDS = tuple(f.name for f in fields(FpgaBoard))
 TT_FIELDS = tuple(f.name for f in fields(TinyTapeoutBoard))
 
+# The free-form objects in a summary, by what the probe writes in them:
+# key -> the types its value may have (None: may be null), a nested object
+# as a dict of its own, a list as [item type]. A key not listed is refused,
+# as anywhere else; the label code reads these keys and no others.
+_STR, _INT, _BOOL = (str, None), (int, None), (bool, None)
+DMI_KEYS = ("sys_vendor", "product_name", "product_version", "product_serial",
+            "product_uuid", "board_vendor", "board_name", "board_version", "board_serial",
+            "chassis_serial", "bios_vendor", "bios_version", "bios_date")
+OBJECTS: dict[str, dict[str, Any]] = {
+    "dmi": dict(dict.fromkeys(DMI_KEYS, _STR), unread=[str]),
+    "riscv": {
+        "harts": _INT, "isa": _STR, "mmu": _STR, "uarch": _STR,
+        "mvendorid": _STR, "marchid": _STR, "mimpid": _STR, "eeprom_error": _STR,
+        "eeprom": ({
+            "format": _INT, "product_id": _STR, "product": _STR, "pcb_revision": _INT,
+            "bom_revision": _STR, "bom_variant": _INT, "serial": _STR,
+            "manuf_test_status": _STR, "mac": _STR, "crc": _STR, "crc_ok": _BOOL,
+        }, None),
+    },
+}
+# FpgaBoard.dna_conflict: method -> the DNA it read
+CONFLICT = "dna_conflict"
+
 # Summary fields for which an absent key is "not read" rather than the
 # default: an empty header is a reading ("HAT none"), so it cannot also be
 # what a builder that never read the header leaves out.
@@ -264,10 +287,45 @@ def _check_record(where: str, d: dict[str, Any], cls: type) -> list[str]:
     return problems
 
 
+_TYPE_WORDS = {str: "a string", int: "an integer", bool: "true or false"}
+
+
+def _check_object(where: str, value: Any, spec: Any) -> list[str]:
+    """What is wrong with `value` against a free-form object's spec
+    (OBJECTS): a tuple of the types allowed (None for null), a list of one
+    item type, or a dict of keys."""
+    if isinstance(spec, list):
+        if not isinstance(value, list):
+            return [f"{where}: a list is required"]
+        return [p for i, v in enumerate(value)
+                for p in _check_object(f"{where}[{i}]", v, (spec[0],))]
+    if isinstance(spec, dict):
+        if not isinstance(value, dict):
+            return [f"{where}: an object is required"]
+        out = [f"{where}.{k}: not a field here" for k in sorted(set(value) - set(spec))]
+        for key in sorted(set(value) & set(spec)):
+            out += _check_object(f"{where}.{key}", value[key], spec[key])
+        return out
+    if value is None:
+        return [] if None in spec else [f"{where}: null is not allowed here"]
+    for t in spec:
+        if isinstance(t, dict):
+            return _check_object(where, value, t)
+        if t is not None and isinstance(value, t) and not (t is int and isinstance(value, bool)):
+            return []
+    words = " or ".join(_TYPE_WORDS[t] for t in spec if t in _TYPE_WORDS)
+    return [f"{where}: {words} is required"]
+
+
 def _check_value(where: str, value: Any, hint: Any, name: str) -> list[str]:
     """What is wrong with `value` as JSON for a field annotated `hint`."""
     if value is None:
-        return []  # absent: the same as the key missing
+        return []  # not read
+    if name in OBJECTS:
+        return _check_object(where, value, OBJECTS[name])
+    if name == CONFLICT:
+        return _check_object(where, value, {}) if not isinstance(value, dict) else [
+            p for k, v in sorted(value.items()) for p in _check_object(f"{where}.{k}", v, (str,))]
     origin = typing.get_origin(hint)
     if origin in (typing.Union, types.UnionType):
         options = [h for h in typing.get_args(hint) if h is not type(None)]
@@ -280,7 +338,10 @@ def _check_value(where: str, value: Any, hint: Any, name: str) -> list[str]:
         item = typing.get_args(hint)[0]
         out = []
         for i, v in enumerate(value):
-            if name in ITEM_TYPES:
+            if v is None:
+                # a list holds what was read; nothing unread goes in one
+                out.append(f"{where}[{i}]: null is not allowed in a list")
+            elif name in ITEM_TYPES:
                 if not isinstance(v, dict):
                     out.append(f"{where}[{i}]: an object is required")
                 else:
@@ -314,15 +375,40 @@ def _json_type(hint: Any, name: str) -> dict[str, Any]:
         (inner,) = [h for h in typing.get_args(hint) if h is not type(None)]
         return _json_type(inner, name)
     if origin is tuple:
-        item = (_record_schema(ITEM_TYPES[name]) if name in ITEM_TYPES
-                else _json_type(typing.get_args(hint)[0], name))
+        if name in ITEM_TYPES:
+            item = _record_schema(ITEM_TYPES[name])
+        else:
+            item = _json_type(typing.get_args(hint)[0], name)
+            item["type"] = [t for t in item["type"] if t != "null"]   # no null items
         return {"type": ["array", "null"], "items": item}
+    if name in OBJECTS:
+        out = _object_schema(OBJECTS[name])
+        out["type"] = ["object", "null"]
+        return out
+    if name == CONFLICT:
+        return {"type": ["object", "null"], "additionalProperties": {"type": "string"}}
     if origin is dict or hint is dict:
         return {"type": ["object", "null"]}
     simple = {bool: "boolean", int: "integer", float: "number", str: "string"}
     if hint in simple:
         return {"type": [simple[hint], "null"]}
     raise TypeError(f"{name}: no schema for {hint}")
+
+
+def _object_schema(spec: Any) -> dict[str, Any]:
+    """The JSON Schema of a free-form object's spec (OBJECTS)."""
+    names = {str: "string", int: "integer", bool: "boolean", None: "null"}
+    if isinstance(spec, list):
+        return {"type": "array", "items": _object_schema((spec[0],))}
+    if isinstance(spec, dict):
+        return {"type": "object", "additionalProperties": False,
+                "properties": {k: _object_schema(v) for k, v in spec.items()}}
+    nested = [t for t in spec if isinstance(t, dict)]
+    if nested:
+        out = _object_schema(nested[0])
+        out["type"] = ["object"] + (["null"] if None in spec else [])
+        return out
+    return {"type": [names[t] for t in spec]}
 
 
 def _record_schema(cls: type) -> dict[str, Any]:
@@ -348,13 +434,16 @@ def json_schema() -> dict[str, Any]:
         "$id": "https://github.com/mithro/rpi-hwid/blob/main/src/rpi_hwid/" + SCHEMA_FILE,
         "title": "rpi-hwid label input, version 1",
         "description": "What rpi-hwid's labels need for one host (docs/LABEL-INPUT.md). "
-                       "A field that is null or absent was not read.",
+                       "A null field was not read; an absent one is its default "
+                       "([] for a list, \"\" for compatible), except header, "
+                       "which absent is not read. The version is the integer 1 "
+                       "(1.0 passes this schema and is refused by the reader).",
         "type": "object",
         "additionalProperties": False,
         "required": ["schema", "version", "host", "summary", "sources"],
         "properties": {
             "schema": {"const": SCHEMA},
-            "version": {"type": "integer", "const": VERSION},
+            "version": {"type": "integer", "const": VERSION, "multipleOf": 1},
             "host": {"type": "string", "minLength": 1},
             "summary": _record_schema(Summary),
             "sources": {"type": "object", "additionalProperties": False,
@@ -369,6 +458,10 @@ def json_schema() -> dict[str, Any]:
 
 # The FPGA boards keyed on a Xilinx Device DNA, whose die the IDCODE names.
 XILINX_KINDS = ("netv2", "arty", "acorn", "pcileech", "jtag", "unknown-fpga")
+# The FPGA boards that have a label (contract 10). A Fomu has none yet, and a
+# Tiny Tapeout board has its own; either is kept in the document, and makes
+# no fpga[i] label.
+FPGA_LABEL_KINDS = (*XILINX_KINDS, "cynthion")
 TT_NEEDS = ("usb_serial", "mcu", "chip", "demoboard")
 
 
@@ -394,7 +487,8 @@ def missing(doc: dict[str, Any] | str | bytes) -> dict[str, list[str]]:
     if board is not None:
         out["board"] = board
     for i, b in enumerate(s["fpga"] or ()):
-        out[f"fpga[{i}]"] = _fpga_needs(b)
+        if b["kind"] in FPGA_LABEL_KINDS:
+            out[f"fpga[{i}]"] = _fpga_needs(b)
     for i, t in enumerate(s["tinytapeout"] or ()):
         need = [k for k in TT_NEEDS if t[k] is None]
         if t["chip"] == "asic" and t["shuttle"] is None:

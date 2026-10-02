@@ -65,7 +65,12 @@ The rules:
   others) keeps only `label_input.PI_FIELDS`, `FPGA_FIELDS` and `TT_FIELDS`.
 * **Types are checked**: strings are strings, booleans are JSON booleans,
   integers are JSON numbers. A whole number in a float field (`ext5v_v`) is
-  written as a float, so `5` and `5.0` are one text.
+  written as a float, so `5` and `5.0` are one text. A list never holds a
+  null: it lists what was read. `dmi` (a PC's) and `riscv` (a RISC-V
+  board's) are checked against the keys and types the probe writes in them,
+  and `dna_conflict` maps each method to the DNA it read, as strings.
+* **The version** is checked by the reader. The schema says `integer`, but
+  JSON Schema counts `1.0` as an integer, so only the reader refuses it.
 * **Hex identifiers are lower case and `0x`-prefixed**, as the probe writes
   them.
 * **A record in a list needs the fields it is built from**: an FPGA board its
@@ -90,7 +95,12 @@ The keys are `board` (the host's own label) and `fpga[i]`, `tinytapeout[i]`
 and `usb_net[i]` by position in those lists. A list that is empty or null describes no
 labels, so a document of the Pi's facts alone (`--pi-only`) has no `fpga[i]`
 keys until the FPGA boards are added. A board this package has no label for
-has no `board` key.
+has no `board` key, and an FPGA board with no label (a `fomu`, or a `tt`,
+which has a Tiny Tapeout label of its own) has no `fpga[i]` key: the keys
+keep the board's own position, so the next board is still `fpga[1]`.
+
+Only the labels being made are refused: `--only fpga` does not stop on a Pi
+whose header was not read, and `--check` lists only what `--only` asks for.
 
 | label | needs | optional |
 |---|---|---|
