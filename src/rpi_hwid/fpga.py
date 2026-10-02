@@ -411,6 +411,23 @@ HARNESS_TCK, HARNESS_TMS, HARNESS_TDI, HARNESS_TDO = 4, 17, 27, 22
 # are the card's own JTAG header, so driving them is driving that card. This
 # is the same evidence that has always named a NeTV2 -- it was simply the only
 # harness there was. Measured on the fleet 2026-09-20/21.
+def default_pins(pcie, model=None):
+    """The GPIO harness to drive when none was named: an Acorn's own P1 where
+    an Acorn is on PCIe -- 10:9:11:8 on a Pi 5, 2:3:4:14 on a Compute Module
+    4 (the ps1 Compute Blades) -- and the NeTV2's otherwise. A Pi with an
+    Acorn on any other board names its pins with --pins."""
+    acorn = any(pc["id"] in ("1e24:021f", "1e24:0101", "10ee:7011")
+                or pc.get("subsystem") in ACORN_SUBSYSTEM for pc in pcie or ())
+    if not acorn:
+        return HARNESS_PINS
+    model = model if model is not None else (read(ROOT + "/proc/device-tree/model") or "")
+    if "Pi 5" in model:
+        return "10:9:11:8"
+    if "Compute Module 4" in model:
+        return "2:3:4:14"
+    return HARNESS_PINS
+
+
 HARNESS_BOARD = {
     "27:22:4:17": "netv2",      # the NeTV2's, off the Pi's 40-pin header
     "10:9:11:8": "acorn",       # an Acorn's P1 Pico-EZmate, on a Pi 5
@@ -511,10 +528,26 @@ finally:
 '''
 
 
+# The PCI command register's Memory Space enable. With no driver bound the
+# endpoint can be left with it off ("Mem-" in lspci), and every BAR read then
+# answers nothing; fpgas-verify sets it for its own read and puts it back.
+PCI_COMMAND_MEMORY = 0x2
+
+
 def soc_probe(slot):
-    """The SoC's ident and DNA over PCIe, or {"error": why}."""
-    out = sh_all(["sudo", sys.executable or "python3", "-c", SOC_READER, slot],
-                 timeout=30)
+    """The SoC's ident and DNA over PCIe, or {"error": why}. The endpoint's
+    memory decoding is turned on for the read where it is off, and the
+    command register put back as it was found afterwards."""
+    before = pcie_command(slot)
+    enable = before is not None and not before & PCI_COMMAND_MEMORY
+    if enable:
+        sh(["sudo", "setpci", "-s", slot, "COMMAND=%04x" % (before | PCI_COMMAND_MEMORY)])
+    try:
+        out = sh_all(["sudo", sys.executable or "python3", "-c", SOC_READER, slot],
+                     timeout=30)
+    finally:
+        if enable:
+            sh(["sudo", "setpci", "-s", slot, "COMMAND=%04x" % before])
     err = re.search(r"ERROR=(.*)", out)
     if err:
         return {"error": err.group(1).strip()}
@@ -1534,7 +1567,43 @@ def identity_probe():
     return {"read": read, "error": why, "document": document}
 
 
+def pin_states(pins):
+    """{gpio: the `pinctrl set` arguments that restore it} for the harness's
+    pins, as `pinctrl get` reports them ("10: op dh pd | hi // GPIO10 =
+    output"), or None where pinctrl cannot say."""
+    nums = [p for p in pins.split(":") if p.isdigit()]
+    out = sh(["sudo", "-n", "pinctrl", "get", ",".join(nums)])
+    states = {}
+    for m in re.finditer(r"^\s*(\d+):\s+(\S+)((?:\s+(?:dh|dl|pu|pd|pn))*)\s*\|", out, re.M):
+        states[m.group(1)] = [m.group(2)] + m.group(3).split()
+    return states if set(states) == set(nums) else None
+
+
+def restore_pins(states):
+    for gpio in sorted(states, key=int):
+        sh(["sudo", "-n", "pinctrl", "set", gpio] + states[gpio])
+
+
 def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
+    """jtag_probe_chain, with the GPIO harness's pins put back afterwards as
+    `pinctrl get` found them: openFPGALoader and openocd leave TCK, TMS and
+    TDI driven, and on an Acorn's 10:9:11:8 those are the Pi's SPI0 pins.
+    A Digilent or CH347 cable drives no Pi pin, so there is nothing to put
+    back."""
+    if digilent_cables() or ch347_cables():
+        return jtag_probe_chain(want_flash, pins, parts, detach)
+    states = pin_states(pins or HARNESS_PINS)
+    try:
+        res = jtag_probe_chain(want_flash, pins, parts, detach)
+    finally:
+        if states:
+            restore_pins(states)
+    if states and isinstance(res, dict):
+        res["pins_restored"] = sorted(states, key=int)
+    return res
+
+
+def jtag_probe_chain(want_flash=False, pins=None, parts=None, detach=None):
     """openFPGALoader over whichever cable this host has, else openocd.
     Returns the idcode line when a chain answers. `parts` is {die: part} from
     what the card's own gateware said, for a cable with no harness to go by;
@@ -2492,6 +2561,8 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     # own; only a board it could not read goes on to the bridge, which
     # replaces whatever design is running -- possibly someone's session.
     endpoints = fpga_endpoints(f["pcie"])
+    # the harness this board is wired to, where none was named
+    pins = pins or default_pins(f["pcie"])
     artys = [u for u in f["ftdi"] if u["id"] == "0403:6010"
              and (u["manufacturer"] or "").startswith("Digilent")]
     f["fpgas_verify"] = identity_probe() if endpoints or artys or jtag or nested() else None
