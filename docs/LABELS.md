@@ -163,8 +163,7 @@ the title, next to the fan and clock marks, one for each camera:
 |---|---|
 | the letters on the camera's body | which camera: `v1` (ov5647), `v2` (imx219), `v3` (imx708), `HQ` (imx477), `GS` (imx296, global shutter), `AI` (imx500). Any other sensor is called by its driver's name, `imx290` |
 | `AF`, upper line beside it | a lens driver chip was found: the camera focuses itself |
-| `fixed`, in the same place | one was looked for and is not there |
-| neither word | nobody could look. A missing word is not `fixed` |
+| no word there | fixed focus, which is what a camera is assumed to have and so is never printed: no lens driver was found, or nobody could look for one |
 | `wide`, `NoIR`, `wide NoIR`, lower line | what a Camera Module 3 says of its own lens and filter; no other camera can say |
 | `65°`, `120°`, `160°`, lower line | the lens's field of view, where a person supplied it. Nothing on a camera reports it, so the probe never does |
 
