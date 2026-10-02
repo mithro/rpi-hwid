@@ -257,7 +257,7 @@ TT_BOARD = {"board": "tt", "kind": "tt", "variant": "ttdbv3", "serial": "E6614C3
 def _with_boards(monkeypatch, *extra):
     doc = json.loads(GOLDEN.read_text())
     doc["boards"] += list(extra)
-    monkeypatch.setattr(fpga, "identity_probe", lambda: {
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {
         "read": fpga.identity_parse(json.dumps(doc))[0], "error": None, "document": doc})
 
 
@@ -288,3 +288,15 @@ def test_a_tiny_tapeout_board_without_a_usb_serial_is_not_taken(host, monkeypatc
     doc = this_host.label_input_document("pi-sw2-p48")
     assert doc["summary"]["tinytapeout"] == []
     assert "tinytapeout" not in doc["sources"]
+
+
+
+def test_a_tiny_tapeout_only_host_asks_fpgas_verify(host, monkeypatch):
+    """No FPGA on PCIe or USB, just a demo board: fpgas-verify is asked all
+    the same (contract 26), and the board comes from it."""
+    asked = _identity_only(monkeypatch, host, TT_BOARD)
+    doc = this_host.label_input_document("rpi4-tt")
+    assert asked
+    assert doc["summary"]["fpga"] == []
+    (tt,) = doc["summary"]["tinytapeout"]
+    assert tt["usb_serial"] == "E6614C311B7A7A37"

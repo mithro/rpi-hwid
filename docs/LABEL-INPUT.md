@@ -242,6 +242,11 @@ the USB tree in sysfs shows an RP2 (2e8a:0005) with that `usb_serial` (no tty
 is opened). One the USB tree does not show is left out, and its serial listed
 under `sources.tinytapeout_not_on_usb`.
 
+So a demo board that fpgas-verify identified at boot and that has since left
+the USB tree is in the site's document and not in this one. That difference is
+expected (contract 28): the site cannot see USB, and keeps what boot reported;
+this host can, and labels only what is there.
+
 ## From Python
 
 Everything takes and returns plain dicts, touches no hardware and starts no
