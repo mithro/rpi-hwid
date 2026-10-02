@@ -51,40 +51,46 @@ V3_WIDE_NOIR = cam("imx708", True, "wide_noir")
 # (caption, board, fan, rtc cell, cameras)
 SAMPLES = [
     ("no camera: looked, none found", PI5, False, False, []),
-    ("v1, fixed focus", PI5, False, False, [cam("ov5647", False)]),
+    ("v1, no lens driver: fixed focus is not printed", PI5, False, False,
+     [cam("ov5647", False)]),
     ("v1, autofocus", PI5, False, False, [cam("ov5647", True)]),
-    ("v1, autofocus not known", PI5, False, False, [cam("ov5647")]),
-    ("v1, fixed, 65° lens supplied", PI5, False, False, [cam("ov5647", False, fov=65)]),
-    ("v1, fixed, 120° lens supplied", PI5, False, False, [cam("ov5647", False, fov=120)]),
-    ("v1, fixed, 160° lens supplied", PI5, False, False, [cam("ov5647", False, fov=160)]),
-    ("v2, fixed focus", PI5, False, False, [cam("imx219", False)]),
+    ("v1, autofocus not known: same as fixed", PI5, False, False, [cam("ov5647")]),
+    ("v1, 65° lens supplied", PI5, False, False, [cam("ov5647", False, fov=65)]),
+    ("v1, 120° lens supplied", PI5, False, False, [cam("ov5647", False, fov=120)]),
+    ("v1, 160° lens supplied", PI5, False, False, [cam("ov5647", False, fov=160)]),
+    ("v1, autofocus, 160° lens supplied", PI5, False, False, [cam("ov5647", True, fov=160)]),
+    ("v2", PI5, False, False, [cam("imx219", False)]),
     ("v2, autofocus", PI5, False, False, [cam("imx219", True)]),
     ("v3 (always autofocus)", PI5, False, False, [cam("imx708", True)]),
     ("v3 wide", PI5, False, False, [cam("imx708", True, "wide")]),
     ("v3 NoIR", PI5, False, False, [cam("imx708", True, "noir")]),
     ("v3 wide NoIR", PI5, False, False, [V3_WIDE_NOIR]),
-    ("HQ, no lens driver found", PI5, False, False, [cam("imx477", False)]),
-    ("GS, autofocus not known", PI5, False, False, [cam("imx296")]),
-    ("AI, fixed focus", PI5, False, False, [cam("imx500", False)]),
+    ("HQ", PI5, False, False, [cam("imx477", False)]),
+    ("GS", PI5, False, False, [cam("imx296")]),
+    ("AI", PI5, False, False, [cam("imx500", False)]),
     ("unknown sensor: its driver's name", PI5, False, False, [cam("imx290", False)]),
     ("two cameras: v3 wide + v1 160°", PI5, False, False,
      [cam("imx708", True, "wide"), cam("ov5647", False, fov=160)]),
     ("long title, fan, clock, v3 wide NoIR", CM5, True, True, [V3_WIDE_NOIR]),
+    ("long title, fan, clock, v2", CM5, True, True, [cam("imx219", False)]),
     ("fan, clock, v2", PI5, True, True, [cam("imx219", False)]),
+    ("fan, clock, v3 wide NoIR", PI5, True, True, [V3_WIDE_NOIR]),
     ("worst case: fan, clock, two cameras", PI5, True, True,
      [V3_WIDE_NOIR, cam("imx477", False)]),
+    ("fan, clock, two plain cameras", PI5, True, True,
+     [cam("imx219", False), cam("ov5647", False)]),
     ("Pi 4 title, v3 wide NoIR", PI4, None, None, [V3_WIDE_NOIR]),
-    ("Zero W, v1 autofocus not known", ZERO_W, None, None, [cam("ov5647")]),
-    ("three cameras (a multiplexer): subtitle is cut", PI5, False, False,
+    ("Pi 4 title, v2", PI4, None, None, [cam("imx219", False)]),
+    ("Zero W, v1", ZERO_W, None, None, [cam("ov5647")]),
+    ("three cameras (a multiplexer)", PI5, False, False,
      [cam("imx219", False), cam("imx219", False), cam("ov5647", True)]),
 ]
 
 # The alternative design, on the cases where it differs most.
 ALTERNATIVE = [
-    ("ALT v1, fixed focus: solid lens", PI5, False, False, [cam("ov5647", False)]),
+    ("ALT v1: solid lens", PI5, False, False, [cam("ov5647", False)]),
     ("ALT v1, autofocus: double ring", PI5, False, False, [cam("ov5647", True)]),
-    ("ALT v1, autofocus not known: bare ring", PI5, False, False, [cam("ov5647")]),
-    ("ALT v1 fixed, 160° lens supplied", PI5, False, False, [cam("ov5647", False, fov=160)]),
+    ("ALT v1, 160° lens supplied", PI5, False, False, [cam("ov5647", False, fov=160)]),
     ("ALT v3 wide: a wedge", PI5, False, False, [cam("imx708", True, "wide")]),
     ("ALT v3 NoIR: dark body", PI5, False, False, [cam("imx708", True, "noir")]),
     ("ALT v3 wide NoIR", PI5, False, False, [V3_WIDE_NOIR]),
@@ -135,10 +141,10 @@ def alt_width(lab, cam_record, size):
 
 def alt_mark(lab, cam_record, x, y, size):
     """The same camera outline with everything but the generation said by
-    its shape: a double lens ring for autofocus, a solid lens for fixed
-    focus, a bare ring where nobody could look; a dark body for NoIR; a
-    wedge at the lens's angle for a wide or measured lens, with the degrees
-    beside it only where a person supplied them."""
+    its shape: a double lens ring for autofocus and a solid lens for every
+    other camera, fixed focus being assumed; a dark body for NoIR; a wedge
+    at the lens's angle for a wide or measured lens, with the degrees beside
+    it only where a person supplied them."""
     c = lab.c
     gen = labels.camera_generation(cam_record.sensor)
     gen_size, body_w, word_size, _w = labels.camera_layout(lab, cam_record, size)
@@ -154,12 +160,11 @@ def alt_mark(lab, cam_record, x, y, size):
     cx, cy = px + pad + lens, py + body_h / 2
     c.setStrokeColor(ink)
     c.setFillColor(ink)
-    if cam_record.autofocus is False:
-        c.circle(cx, cy, lens, stroke=0, fill=1)
-    else:
+    if cam_record.autofocus:
         c.circle(cx, cy, lens, stroke=1, fill=0)
-        if cam_record.autofocus:
-            c.circle(cx, cy, lens * 0.5, stroke=1, fill=0)
+        c.circle(cx, cy, lens * 0.5, stroke=1, fill=0)
+    else:
+        c.circle(cx, cy, lens, stroke=0, fill=1)
     lab.text(x + pad + 2 * lens + pad, y + size - body_h / 2 - gen_size * 0.36, gen,
              SANS_BOLD, gen_size, color=white if noir else black)
     angle = alt_wedge(cam_record)
@@ -245,10 +250,10 @@ def compose(sections, cols, scale):
 
 def main() -> None:
     main_heading = ["FAKE boards. Recommended design: the generation on the camera's body,",
-                    "focus and optics in words beside it"]
+                    "AF and the optics in words beside it; fixed focus is assumed and not printed"]
     alt_heading = ["FAKE boards. Alternative design (drawn by this script only): no words.",
-                   "Double ring = AF, solid lens = fixed, bare ring = not known;",
-                   "dark body = NoIR; wedge = lens angle"]
+                   "Double ring = AF, solid lens = every other camera; dark body = NoIR;",
+                   "wedge = lens angle"]
     real = labels.mark_camera, labels.camera_width
     with tempfile.TemporaryDirectory(dir=HERE) as tmp:
         for name, dpi, band, cols, scale in (("camera-icons", SHEET_DPI, False, 3, 1),
