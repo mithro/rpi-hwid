@@ -143,7 +143,9 @@ class Summary:
     model: str
     serial: str
     revision: str
-    power_class: str
+    # How the board is powered: a probe always says, but no label prints it,
+    # so a label input (rpi_hwid.label_input) may leave it out.
+    power_class: str | None = None
     compatible: str = ""           # the device tree's compatible list, space-joined
     memory: str | None = None      # the fitted RAM, "1 GB", from MemTotal
     header: tuple[str, ...] = ()
@@ -172,8 +174,10 @@ class Summary:
         if unknown:
             raise ValueError(f"summary has fields this model does not know: {sorted(unknown)}")
         return cls(
-            model=d["model"], serial=d["serial"] or "", revision=d["revision"] or "",
-            power_class=d["power_class"],
+            # A label input may leave any of these out; the label that needs
+            # one says so (label_input.missing), the record is still built.
+            model=d.get("model") or "", serial=d.get("serial") or "",
+            revision=d.get("revision") or "", power_class=d.get("power_class"),
             compatible=d.get("compatible") or "", memory=d.get("memory"),
             header=tuple(d.get("header", ())), hat_uuid=d.get("hat_uuid"),
             fpga=tuple(FpgaBoard(**dict(b, dna_sources=tuple(b.get("dna_sources", ()))))
