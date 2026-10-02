@@ -2356,8 +2356,9 @@ def merge_soc(boards, soc):
     return boards
 
 
-# More than one board a reading could be: it is put on none of them.
-AMBIGUOUS = "ambiguous"
+# Why a reading was put on no board, where boards of its kind were found.
+AMBIGUOUS = "more than one board of its kind could be it"
+OTHER_DIE = "the board of its kind found here has another die (IDCODE)"
 
 
 def same_die(board, reading):
@@ -2371,8 +2372,9 @@ def same_die(board, reading):
 
 
 def identity_board(boards, reading, taken):
-    """The board in `boards` that fpgas-verify's `reading` is of, None when
-    there is none, or AMBIGUOUS when more than one could be.
+    """The board in `boards` that fpgas-verify's `reading` is of; None when
+    there is no board of its kind; or why it is put on none (AMBIGUOUS,
+    OTHER_DIE) when there are boards of its kind and none is clearly it.
 
     A board on PCIe by its slot, not through the chain: the chain belongs to
     whatever board its harness names, and on a Pi 4's default pins that is
@@ -2387,13 +2389,16 @@ def identity_board(boards, reading, taken):
     if reading["kind"] == "arty" and reading.get("serial"):
         return next((b for b in free if b["kind"] == "arty"
                      and b.get("serial") == reading["serial"]), None)
+    found = False
     for kinds in ((reading["kind"],), ("jtag",) if reading["kind"] == "netv2" else ()):
-        same = [b for b in free if b["kind"] in kinds and same_die(b, reading)]
+        candidates = [b for b in free if b["kind"] in kinds]
+        same = [b for b in candidates if same_die(b, reading)]
         if len(same) == 1:
             return same[0]
         if same:
             return AMBIGUOUS
-    return None
+        found = found or bool(candidates)
+    return OTHER_DIE if found else None
 
 
 def merge_dna(board, dna):
@@ -2419,18 +2424,33 @@ def merge_dna(board, dna):
         board["dna_conflict"] = checked["conflict"]
 
 
+# The fields that are hex numbers, compared as numbers (0x0362d093 and
+# 0x362d093 are one IDCODE); every other field is compared as written.
+HEX_FIELDS = ("dna", "idcode", "flash_jedec", "flash_extended_id", "flash_uid")
+
+
+def same_value(field, a, b):
+    if field in HEX_FIELDS:
+        na, nb = normalise_id(a), normalise_id(b)
+        if na is not None and nb is not None:
+            return na == nb
+    return str(a) == str(b)
+
+
 def merge_report_fields(board, reading):
     """Fields fpgas-verify took from its boot report (`from_report`) are
-    recorded as such, and never win over what was read here, live, and
-    disagrees: that is recorded instead."""
+    recorded as such, and never win over a value read here, live: one that
+    disagrees is recorded instead."""
     report = reading.pop("from_report", None) or []
     if report:
         board["from_report"] = report
     for field in report:
         live, said = board.get(field), reading.get(field)
-        if live is not None and said is not None and normalise_id(live) != normalise_id(said):
+        if live is None or said is None:
+            continue
+        if not same_value(field, live, said):
             board.setdefault("report_conflict", {})[field] = {"live": live, "report": said}
-            del reading[field]
+        del reading[field]           # the live value stands either way
 
 
 def merge_identity(boards, read):
@@ -2441,8 +2461,8 @@ def merge_identity(boards, read):
     taken, unplaced = set(), []
     for reading in read:
         board = identity_board(boards, reading, taken)
-        if board == AMBIGUOUS:
-            unplaced.append(reading)
+        if board in (AMBIGUOUS, OTHER_DIE):
+            unplaced.append(dict(reading, unplaced_because=board))
             continue
         reading = dict((k, v) for k, v in reading.items() if k != "bdf")
         if board is None:

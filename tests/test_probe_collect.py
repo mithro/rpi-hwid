@@ -940,7 +940,7 @@ def test_two_boards_of_a_kind_with_nothing_to_tell_them_apart_are_not_guessed_at
     """Put on neither, and not added as a third: listed as unplaced."""
     boards = [{"kind": "netv2", "how": "a"}, {"kind": "netv2", "how": "b"}]
     reading = {"kind": "netv2", "dna": "0x00742c4e63b9085c"}
-    assert _merged(boards, reading) == [reading]
+    assert _merged(boards, reading) == [dict(reading, unplaced_because=fpga.AMBIGUOUS)]
     assert [b.get("dna") for b in boards] == [None, None]
 
 
@@ -953,10 +953,12 @@ def test_a_netv2_on_pcie_is_the_board_fpgas_verify_found_by_jtag():
     assert boards[0]["dna"] == "0x00742c4e63b9085c"
 
 
-def test_a_board_of_another_die_is_not_the_one():
+def test_a_board_of_another_die_is_not_the_one_nor_a_second_board():
+    """Put on none, and not added: it is listed with why."""
     boards = [{"kind": "netv2", "idcode": "0x3636093", "how": "a"}]
-    _merged(boards, {"kind": "netv2", "idcode": "0x13631093"})
-    assert len(boards) == 2
+    reading = {"kind": "netv2", "idcode": "0x13631093"}
+    assert _merged(boards, reading) == [dict(reading, unplaced_because=fpga.OTHER_DIE)]
+    assert boards == [{"kind": "netv2", "idcode": "0x3636093", "how": "a"}]
 
 
 def test_a_dna_the_board_has_is_checked_not_overwritten():
@@ -1001,6 +1003,26 @@ def test_a_field_from_the_boot_report_never_beats_a_live_read():
     assert b["flash_uid"] == "ab"                    # nothing live disagreed
 
 
+def test_a_report_never_beats_a_live_flash_read_whatever_its_type():
+    """p47: the chain read an S25FL128S over JTAG; the report said
+    S25FL127S over spioverjtag. None of that is hex, and all of it was
+    once compared as equal and overwritten."""
+    boards = [{"kind": "arty", "serial": "210319B301DE", "flash": "Spansion S25FL128S",
+               "flash_source": "jtag", "flash_uid_state": "read", "flash_jedec": "0x012018",
+               "how": "a"}]
+    _merged(boards, {"kind": "arty", "serial": "210319B301DE", "flash": "S25FL127S",
+                     "flash_source": "spioverjtag", "flash_uid_state": "read",
+                     "flash_jedec": "0x12018",
+                     "from_report": ["flash", "flash_source", "flash_uid_state",
+                                     "flash_jedec"]})
+    b = boards[0]
+    assert (b["flash"], b["flash_source"], b["flash_jedec"]) == (
+        "Spansion S25FL128S", "jtag", "0x012018")
+    assert b["report_conflict"] == {
+        "flash": {"live": "Spansion S25FL128S", "report": "S25FL127S"},
+        "flash_source": {"live": "jtag", "report": "spioverjtag"}}
+
+
 def test_from_report_survives_the_parse():
     doc = _identity(from_report=["flash_jedec", "flash_uid", "variant"])
     (read,), _ = fpga.identity_parse(json.dumps(doc))
@@ -1042,7 +1064,8 @@ def test_a_reading_nowhere_to_put_is_listed_in_the_evidence(fake_root, monkeypat
     monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {
         "read": [{"kind": "netv2", "dna": "0x1"}], "error": None})
     f = fpga.collect_fpga()
-    assert f["fpgas_verify"]["unplaced"] == [{"kind": "netv2", "dna": "0x1"}]
+    assert f["fpgas_verify"]["unplaced"] == [
+        {"kind": "netv2", "dna": "0x1", "unplaced_because": fpga.AMBIGUOUS}]
 
 
 def test_tiny_tapeout_and_fomu_boards_get_no_fpga_label():
