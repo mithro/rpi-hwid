@@ -2481,3 +2481,16 @@ def test_a_command_that_outlives_sudos_sigkill_is_let_go(monkeypatch):
     assert events == [("wait", 7), "TERM", ("wait", 5), "KILL", ("wait", 5),
                       "closed", "closed"]
 
+
+
+def test_from_report_lists_only_what_was_taken_from_the_report():
+    """A field whose live value stood was not taken from the report, and one
+    the report did not give was not either."""
+    boards = [{"kind": "arty", "serial": "210319B301DE", "flash_jedec": "0x012018",
+               "how": "a"}]
+    _merged(boards, {"kind": "arty", "serial": "210319B301DE", "flash_jedec": "0x012018",
+                     "flash_uid": "ab", "flash_uid_state": "read",
+                     "from_report": ["flash_jedec", "flash_uid", "flash_uid_state",
+                                     "flash_sfdp"]})
+    assert boards[0]["from_report"] == ["flash_uid", "flash_uid_state"]
+    assert boards[0]["flash_uid"] == "ab"

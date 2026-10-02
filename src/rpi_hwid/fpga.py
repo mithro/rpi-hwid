@@ -2458,15 +2458,19 @@ def merge_report_fields(board, reading):
     recorded as such, and never win over a value read here, live: one that
     disagrees is recorded instead."""
     report = reading.pop("from_report", None) or []
-    if report:
-        board["from_report"] = report
+    taken = []
     for field in report:
         live, said = board.get(field), reading.get(field)
-        if live is None or said is None:
+        if said is None:
+            continue                 # the report gave nothing for it
+        if live is None:
+            taken.append(field)
             continue
         if not same_value(field, live, said):
             board.setdefault("report_conflict", {})[field] = {"live": live, "report": said}
         del reading[field]           # the live value stands either way
+    if taken:
+        board["from_report"] = taken     # only what the board took from it
 
 
 def merge_identity(boards, read):
