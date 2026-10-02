@@ -999,7 +999,7 @@ def test_a_field_from_the_boot_report_never_beats_a_live_read():
     b = boards[0]
     assert b["flash_jedec"] == "0x20ba18"
     assert b["report_conflict"] == {"flash_jedec": {"live": "0x20ba18", "report": "0xc22017"}}
-    assert b["from_report"] == ["flash_jedec", "flash_uid_state", "flash_uid"]
+    assert b["from_report"] == ["flash_uid_state", "flash_uid"]   # the jedec stood
     assert b["flash_uid"] == "ab"                    # nothing live disagreed
 
 
@@ -2620,7 +2620,6 @@ def test_the_recovery_collect_names_is_a_command(monkeypatch, capsys, restored, 
     assert capsys.readouterr().out.strip() == said
 
 
-
 def test_the_cli_recovery_is_refused_inside_fpgas_verify(monkeypatch, capsys):
     from rpi_hwid import cli
     monkeypatch.setenv("FPGAS_VERIFY_IDENTITY", "/run/fpgas-online/identity-7.json")
@@ -2628,3 +2627,49 @@ def test_the_cli_recovery_is_refused_inside_fpgas_verify(monkeypatch, capsys):
                         lambda **k: pytest.fail("the analyzer was driven"))
     assert cli.main(["fpga", "--recover-cynthion"]) == 2
     assert "not recovered" in capsys.readouterr().out
+
+
+def test_a_command_that_outlives_sudos_sigkill_is_let_go(monkeypatch):
+    """SIGKILL to sudo leaves its child running, the pipes held open: a
+    plain communicate() would wait for the child's own exit (17 s on p47)."""
+    events = []
+
+    class Pipe:
+        def close(self):
+            events.append("closed")
+
+    class Clinging:
+        stdout, stderr = Pipe(), Pipe()
+
+        def __init__(self, args, **kw):
+            pass
+
+        def communicate(self, timeout=None):
+            events.append(("wait", timeout))
+            raise fpga.subprocess.TimeoutExpired("x", timeout)
+
+        def terminate(self):
+            events.append("TERM")
+
+        def kill(self):
+            events.append("KILL")
+    monkeypatch.setattr(fpga.subprocess, "Popen", Clinging)
+    out, err, timed_out = fpga.sh_split_timed(["sudo", "-n", "fpgas-verify", "--identify"], 7)
+    assert (out, err, timed_out) == (
+        "", "fpgas-verify did not exit after SIGKILL to sudo", True)
+    assert events == [("wait", 7), "TERM", ("wait", 5), "KILL", ("wait", 5),
+                      "closed", "closed"]
+
+
+
+def test_from_report_lists_only_what_was_taken_from_the_report():
+    """A field whose live value stood was not taken from the report, and one
+    the report did not give was not either."""
+    boards = [{"kind": "arty", "serial": "210319B301DE", "flash_jedec": "0x012018",
+               "how": "a"}]
+    _merged(boards, {"kind": "arty", "serial": "210319B301DE", "flash_jedec": "0x012018",
+                     "flash_uid": "ab", "flash_uid_state": "read",
+                     "from_report": ["flash_jedec", "flash_uid", "flash_uid_state",
+                                     "flash_sfdp"]})
+    assert boards[0]["from_report"] == ["flash_uid", "flash_uid_state"]
+    assert boards[0]["flash_uid"] == "ab"
