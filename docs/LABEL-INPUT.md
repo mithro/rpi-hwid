@@ -259,10 +259,22 @@ timeout, nothing printed: the FPGA and Tiny Tapeout boards are not known.
 `labels --this-host` refuses their labels with that reason on stderr and exits
 1. `--only rpi` still makes the Pi's.
 
-A Tiny Tapeout board is not in it yet: reading one here would mean taking its
-demo board's port from the service using it. Once fpgas-verify reports a Tiny
-Tapeout board's identity, which it reads while it owns the port at boot
-(contract 21), it will come from there.
+A Tiny Tapeout board is never read here: that would mean taking its demo
+board's port from the service using it. fpgas-verify reads it at boot, while
+it owns the port (contract 21), and reports it as kind `tt` with
+TinyTapeoutBoard's fields; it is taken from there into `tinytapeout`, once
+the USB tree in sysfs shows an RP2 (2e8a:0005) with that `usb_serial` (no tty
+is opened). One the USB tree does not show is left out, and its serial listed
+under `sources.tinytapeout_not_on_usb`.
+
+So a demo board that fpgas-verify identified at boot and that has since left
+the USB tree is in the site's document and not in this one. That difference is
+expected (contract 28): the site cannot see USB, and keeps what boot reported;
+this host can, and labels only what is there.
+
+A Tiny Tapeout board fpgas-verify reports without a `usb_serial` (what it
+sends before contract 21) is dropped: the label is keyed on that serial. The
+site drops it too (contract 31), with a note that it gets no label.
 
 ## From Python
 
