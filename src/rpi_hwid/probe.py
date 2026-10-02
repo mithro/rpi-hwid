@@ -960,7 +960,16 @@ def riscv_summary(rv):
 
 # --- collect ------------------------------------------------------------------
 
-def collect():
+def collect(user_bus=True):
+    """Everything the probe reads, as the evidence document.
+
+    `user_bus=False` leaves the header's user bus (pins 3/5, GPIO2/3 on a
+    Pi) entirely alone: no dtparam for it, no open, no scan. On an
+    fpgas.online rig those pins are wired to the board under test (an
+    Acorn's J5 is on GPIO3, a Pmod HAT's lines are on the header), so a
+    probe made while that board may be in use must not drive them. A HAT
+    known only by the devices it puts there then goes unseen, and the
+    evidence says that bus was not read."""
     d = {}
     d["model"] = read(ROOT + "/proc/device-tree/model") or ""
     compatible = dt_strings(ROOT + "/proc/device-tree/compatible")
@@ -1012,8 +1021,12 @@ def collect():
     header_buses = HEADER_BUSES.get(d["board"])
     if header_buses:
         d["hat_eeproms"], id_read = id_bus_scan(header_buses["id"], header_buses["enable"])
-        d["header_i2c"], user_read = user_bus_scan(header_buses["user"],
-                                                   header_buses["enable_user"])
+        if user_bus:
+            d["header_i2c"], user_read = user_bus_scan(header_buses["user"],
+                                                       header_buses["enable_user"])
+        else:
+            # Not opened, not scanned, not enabled: see collect()'s docstring.
+            d["header_i2c"], user_read = None, False
         d["header_buses_read"] = {"id": id_read, "user": user_read}
     else:
         d["hat_eeproms"], d["header_i2c"] = {}, None
