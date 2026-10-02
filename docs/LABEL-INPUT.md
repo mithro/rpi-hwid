@@ -92,9 +92,11 @@ with this list, rather than printed with a gap or a placeholder.
 ```
 
 The keys are `board` (the host's own label) and `fpga[i]`, `tinytapeout[i]`
-and `usb_net[i]` by position in those lists. A list that is empty or null describes no
+and `usb_net[i]` by position in those lists. A list that is empty describes no
 labels, so a document of the Pi's facts alone (`--pi-only`) has no `fpga[i]`
-keys until the FPGA boards are added. A board this package has no label for
+keys until the FPGA boards are added. An `fpga` or `tinytapeout` list that is
+null was not read, and is named under its own key (`{"fpga": ["fpga"]}`):
+which labels it would make is not known, so none of them is made. A board this package has no label for
 has no `board` key, and an FPGA board with no label (a `fomu`, or a `tt`,
 which has a Tiny Tapeout label of its own) has no `fpga[i]` key: the keys
 keep the board's own position, so the next board is still `fpga[1]`.
@@ -239,6 +241,24 @@ the `pi-identified` and `fpga-board-identified` events. A label it is short of
 a field for is refused with the list (`labels --check` says the same for a
 directory).
 
+**What fpgas-verify read at boot** (contract 29). Its boot scan reads the
+header's user bus, which this never does, so it knows the HAT a header read on
+demand leaves null -- and the power class such a HAT settles. Where its
+`--identify` document carries a `pi` object (the boot `pi-identified` facts,
+under Summary's field names, with `read_at`), each of its fields fills one
+this read left null, and a power class this read could not settle
+(`undetermined`, `ambiguous`); a value read here is never replaced. The fields
+taken are listed, with `read_at`, under `sources.pi_from_boot`. The site has
+the same boot event, so the two documents agree. With no `pi` object, nothing
+changes.
+
+**fpgas-verify installed, and failing** (contract 30) -- `sudo -n` refused, a
+timeout, nothing printed: the FPGA and Tiny Tapeout boards are not known.
+`fpga` and `tinytapeout` are null, `sources.fpgas_verify_error` says why (and
+`sources.fpga_sysfs` what sysfs alone saw, never passed off as the list), and
+`labels --this-host` refuses their labels with that reason on stderr and exits
+1. `--only rpi` still makes the Pi's.
+
 A Tiny Tapeout board is never read here: that would mean taking its demo
 board's port from the service using it. fpgas-verify reads it at boot, while
 it owns the port (contract 21), and reports it as kind `tt` with
@@ -251,6 +271,10 @@ So a demo board that fpgas-verify identified at boot and that has since left
 the USB tree is in the site's document and not in this one. That difference is
 expected (contract 28): the site cannot see USB, and keeps what boot reported;
 this host can, and labels only what is there.
+
+A Tiny Tapeout board fpgas-verify reports without a `usb_serial` (what it
+sends before contract 21) is dropped: the label is keyed on that serial. The
+site drops it too (contract 31), with a note that it gets no label.
 
 ## From Python
 

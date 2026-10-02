@@ -64,6 +64,36 @@ def identity_tinytapeout(found: dict[str, Any]) -> tuple[list[dict[str, Any]], l
     return boards, absent
 
 
+# The power classes a read without the user bus leaves unsettled: a HAT
+# known only by its chips there (a Waveshare PoE HAT (B)) is what names the
+# supply, and the boot scan reads it.
+UNSETTLED_POWER = ("undetermined", "ambiguous")
+
+
+def boot_pi_facts(summary: dict[str, Any], sources: dict[str, Any],
+                  found: dict[str, Any]) -> None:
+    """Fill what this on-demand read left unread from the Pi facts
+    fpgas-verify read at boot (its --identify document's "pi", contract 29):
+    the boot scan reads the header's user bus, which this never does, so
+    the HAT is known there. A value read here is never replaced; a power
+    class this read could not settle (UNSETTLED_POWER) counts as unread.
+    What was taken is recorded in sources.pi_from_boot."""
+    doc = (found.get("fpgas_verify") or {}).get("document")
+    boot = doc.get("pi") if isinstance(doc, dict) else None
+    if not isinstance(boot, dict):
+        return
+    taken = []
+    for key in label_input.PI_FIELDS:
+        if key in ("fpga", "tinytapeout") or boot.get(key) is None:
+            continue
+        mine = summary.get(key)
+        if mine is None or (key == "power_class" and mine in UNSETTLED_POWER):
+            summary[key] = boot[key]
+            taken.append(key)
+    if taken:
+        sources["pi_from_boot"] = {"fields": taken, "read_at": boot.get("read_at")}
+
+
 def label_input_document(host: str) -> dict[str, Any]:
     """The label input for this host."""
     pi = cli.pi_only_label_input(host)
@@ -74,6 +104,7 @@ def label_input_document(host: str) -> dict[str, Any]:
     sources = dict(pi["sources"])
     boards = identity_boards(found)
     if boards is not None:
+        boot_pi_facts(summary, sources, found)
         # fpgas-verify's boards alone: a board only sysfs sees here (a
         # Cynthion) is one the site cannot see, and the two documents must
         # agree
@@ -85,6 +116,14 @@ def label_input_document(host: str) -> dict[str, Any]:
             sources["tinytapeout"] = "fpgas-verify"
         if absent:
             sources["tinytapeout_not_on_usb"] = absent
+    elif found.get("fpgas_verify") is not None:
+        # installed, and no document this reads (sudo refused, a timeout,
+        # nothing printed): what boards there are is not known, and sysfs's
+        # partial list is not passed off as it (contract 30)
+        summary["fpga"] = summary["tinytapeout"] = None
+        sources["fpgas_verify_error"] = (found["fpgas_verify"].get("error")
+                                         or "no identity document")
+        sources["fpga_sysfs"] = [b["kind"] for b in found["summary"]]
     else:
         summary["fpga"] = [{k: v for k, v in b.items() if k in label_input.FPGA_FIELDS}
                            for b in found["summary"]]

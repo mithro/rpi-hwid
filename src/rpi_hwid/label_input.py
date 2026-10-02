@@ -284,18 +284,26 @@ def check(doc: Any) -> list[str]:
     return problems
 
 
-def _check_json(where: str, value: Any) -> list[str]:
+# How deep `sources` may nest: provenance is a few levels at most, and a
+# recursion without a bound is a RecursionError on a hostile document.
+MAX_DEPTH = 64
+
+
+def _check_json(where: str, value: Any, depth: int = 0) -> list[str]:
     """What keeps `value` from being JSON that dumps() writes: a key that is
     not a string (JSON's keys are, and sort_keys cannot order mixed ones), a
-    NaN or infinity, a value no JSON type holds."""
+    NaN or infinity, a value no JSON type holds, nesting past MAX_DEPTH."""
+    if depth > MAX_DEPTH:
+        return [f"{where}: nested more than {MAX_DEPTH} deep"]
     if isinstance(value, dict):
         out = [f"{where}: key {k!r} is not a string" for k in value if not isinstance(k, str)]
         for k, v in value.items():
             if isinstance(k, str):
-                out += _check_json(f"{where}.{k}", v)
+                out += _check_json(f"{where}.{k}", v, depth + 1)
         return out
     if isinstance(value, (list, tuple)):
-        return [p for i, v in enumerate(value) for p in _check_json(f"{where}[{i}]", v)]
+        return [p for i, v in enumerate(value)
+                for p in _check_json(f"{where}[{i}]", v, depth + 1)]
     if isinstance(value, float) and not math.isfinite(value):
         return [f"{where}: not writable as JSON: {value!r}"]
     if value is None or isinstance(value, (str, int, float, bool)):
@@ -511,9 +519,11 @@ def missing(doc: dict[str, Any] | str | bytes) -> dict[str, list[str]]:
     The keys are ``board`` (the Pi's, or the Orange Pi's, RISC-V board's or
     PC's own label), and ``fpga[i]``, ``tinytapeout[i]`` and ``usb_net[i]``
     by position in those lists; field names are the record's own. A label
-    whose list is empty can be made. A list that is empty or null describes no
-    labels at all, so a document of the Pi's facts alone has no ``fpga[i]``
-    keys until the FPGA's are added. A summary that names no board this
+    whose list is empty can be made. A list that is empty describes no
+    labels, so a document of the Pi's facts alone has no ``fpga[i]`` keys
+    until the FPGA's are added; an ``fpga`` or ``tinytapeout`` list that is
+    null was not read, and is named under its own key (``{"fpga": ["fpga"]}``):
+    which labels it would make is not known. A summary that names no board this
     package labels has no ``board`` key.
 
     The labels refuse what this reports (``rpi-hwid labels``, and the
@@ -525,6 +535,12 @@ def missing(doc: dict[str, Any] | str | bytes) -> dict[str, list[str]]:
     board = _board_needs(s, to_probe_document(d).summary)
     if board is not None:
         out["board"] = board
+    # A list that is null was not read (contract 17 and 30: fpgas-verify
+    # installed and failing): what boards it holds is not known, so its
+    # labels cannot be listed, let alone made. [] is a list read empty.
+    for key in ("fpga", "tinytapeout"):
+        if s[key] is None:
+            out[key] = [key]
     for i, b in enumerate(s["fpga"] or ()):
         if b["kind"] in FPGA_LABEL_KINDS:
             out[f"fpga[{i}]"] = _fpga_needs(b)
