@@ -784,27 +784,27 @@ def _identity(**changes):
 def test_the_golden_identity_document_is_read():
     read, why = fpga.identity_parse(IDENTITY_P48.read_text())
     assert why is None
-    assert read == {"0001:01:00.0": {
+    assert read == [{
+        "bdf": "0001:01:00.0",
         "kind": "acorn", "dna": "0x0054b48664b04854", "idcode": "0x13636093",
         "soc_model": "cle-215+", "flash": "S25FL256S", "flash_source": "pcie",
         "flash_jedec": "0x010219", "flash_extended_id": "0x4d0180",
         "flash_uid": "edcbeececb2b2a88b04f914d2e46af90", "flash_uid_bits": 128,
-        "flash_uid_state": "read"}}
+        "flash_uid_state": "read"}]
 
 
 def test_fpgas_verifys_own_fields_stay_in_the_evidence():
     """variant, build, flash_quad and the rest are fpgas-verify's: a board
     takes only FpgaBoard's fields, so the summary never meets a field the
     model refuses."""
-    read, _ = fpga.identity_parse(IDENTITY_P48.read_text())
-    assert set(read["0001:01:00.0"]) <= set(fpga.IDENTITY_FIELDS)
+    (read,), _ = fpga.identity_parse(IDENTITY_P48.read_text())
+    assert set(read) - {"bdf"} <= set(fpga.IDENTITY_FIELDS)
     assert set(fpga.IDENTITY_FIELDS) <= {f.name for f in dataclasses.fields(FpgaBoard)}
 
 
 @pytest.mark.parametrize(("doc", "because"), [
     (_identity(dna=None, dna_error="BAR0 could not be read"),
      "acorn: dna_error: BAR0 could not be read"),
-    (_identity(bdf=None), "acorn: not on PCIe"),
     (dict(_identity(), boards=[]), "no board found"),
     (dict(_identity(), identity_version=2), "identity_version 2, and this reads 1"),
     (dict(_identity(), schema="fpgas-verify/report"), "something other than"),
@@ -816,12 +816,12 @@ def test_what_fpgas_verify_could_not_read_says_why(doc, because):
 
 def test_a_document_of_another_version_is_not_read():
     read, _ = fpga.identity_parse(json.dumps(dict(_identity(), identity_version=2)))
-    assert read == {}
+    assert read == []
 
 
 def test_output_that_is_not_the_tools_document_is_not_read():
     read, why = fpga.identity_parse("sudo: fpgas-verify: command not found")
-    assert read == {}
+    assert read == []
     assert "command not found" in why
 
 
@@ -888,6 +888,79 @@ def test_an_acorns_flash_is_asked_of_fpgas_verify_before_any_bridge_is_loaded(fa
     assert f["fpgas_verify"]["error"] is None
 
 
+def test_a_board_fpgas_verify_read_whole_is_not_read_over_jtag(fake_root, monkeypatch):
+    """Its DNA, IDCODE and flash came from fpgas-verify, so even --jtag
+    --flash leaves the chain alone."""
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, _identity())
+    assert f["jtag"] is None
+    assert not [a for a in ran if "openFPGALoader" in a]
+    assert board["dna"] == "0x0054b48664b04854"
+
+
+def test_a_dna_fpgas_verify_did_not_read_sends_it_to_the_chain(fake_root, monkeypatch):
+    f, board, _ = _acorn_collect(fake_root, monkeypatch, _identity(dna=None))
+    assert f["jtag"]["idcode"] == "0x3636093"
+    assert board["dna"] == "0x0054b48664b04854"         # the chain's
+    assert board["flash_source"] == "pcie"              # and fpgas-verify's flash
+
+
+def _merged(boards, *readings):
+    return fpga.merge_identity(boards, list(readings))
+
+
+def test_an_arty_is_matched_by_its_ft2232_serial():
+    artys = [{"kind": "arty", "serial": "210319A8B4C1", "how": "a"},
+             {"kind": "arty", "serial": "210319B301DE", "how": "b"}]
+    _merged(artys, {"kind": "arty", "serial": "210319B301DE", "idcode": "0x0362d093"})
+    assert "idcode" not in artys[0]
+    assert artys[1]["idcode"] == "0x0362d093"
+    assert artys[1]["how"] == "b; fpgas-verify --identify"
+
+
+def test_a_netv2_on_its_harness_is_the_one_chain_there():
+    boards = [{"kind": "jtag", "idcode": "0x3631093", "how": "GPIO JTAG"}]
+    _merged(boards, {"kind": "netv2", "idcode": "0x13631093", "dna": "0x00742c4e63b9085c"})
+    assert boards == [{"kind": "netv2", "idcode": "0x13631093", "dna": "0x00742c4e63b9085c",
+                       "how": "GPIO JTAG; fpgas-verify --identify"}]
+
+
+def test_a_board_nothing_here_found_is_added_as_fpgas_verify_described_it():
+    boards = []
+    _merged(boards, {"kind": "netv2", "idcode": "0x13631093"})
+    assert boards == [{"kind": "netv2", "idcode": "0x13631093",
+                       "how": "fpgas-verify --identify"}]
+
+
+def test_two_boards_of_a_kind_with_nothing_to_tell_them_apart_are_not_guessed_at():
+    boards = [{"kind": "netv2", "how": "a"}, {"kind": "netv2", "how": "b"}]
+    _merged(boards, {"kind": "netv2", "dna": "0x00742c4e63b9085c"})
+    assert [b.get("dna") for b in boards] == [None, None, "0x00742c4e63b9085c"]
+
+
+def test_tiny_tapeout_and_fomu_boards_get_no_fpga_label():
+    doc = dict(_identity(), boards=[
+        {"board": "tt", "kind": "tt", "serial": "E6614C311B7A7A37"},
+        {"board": "fomu", "kind": "fomu", "serial": "fomu-1"}])
+    read, why = fpga.identity_parse(json.dumps(doc))
+    assert read == []
+    assert why is None
+
+
+def test_fpgas_verify_is_asked_about_an_arty_on_usb(fake_root, monkeypatch):
+    shutil.rmtree(fake_root / "sys/bus/pci/devices/0001:01:00.0")
+    asked = []
+    monkeypatch.setattr(fpga, "ftdi_devices", lambda: [
+        {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319B301DE",
+         "path": "1-1"}])
+    monkeypatch.setattr(fpga, "identity_probe", lambda: asked.append(1) or {
+        "read": [{"kind": "arty", "serial": "210319B301DE", "idcode": "0x0362d093"}],
+        "error": None})
+    f = fpga.collect_fpga()
+    assert asked
+    (arty,) = [b for b in f["boards"] if b["kind"] == "arty"]
+    assert arty["idcode"] == "0x0362d093"
+
+
 def test_as_root_fpgas_verify_is_run_without_sudo(fake_root, monkeypatch):
     def run(args, timeout=15):
         ran.append(args)
@@ -905,7 +978,7 @@ def test_an_acorns_flash_is_read_by_fpgas_verify_when_its_chain_does_not_answer(
     """pi-sw2-p48, 2026-09-25: its SoC read the flash while its harness gave
     "TDO is stuck at 0". The PCIe read needs no chain, and it is not skipped
     when there is none."""
-    f, board, ran = _acorn_collect(fake_root, monkeypatch, _identity(),
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, _identity(dna=None),
                                    chain="JTAG init failed with: TDO is stuck at 0")
     assert f["jtag"]["idcode"] is None
     assert not [a for a in ran if "--flash-info-json" in a or a.endswith("/remove")]
