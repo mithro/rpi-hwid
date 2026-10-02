@@ -143,10 +143,14 @@ class Summary:
     model: str
     serial: str
     revision: str
-    power_class: str
+    # How the board is powered: a probe always says, but no label prints it,
+    # so a label input (rpi_hwid.label_input) may leave it out.
+    power_class: str | None = None
     compatible: str = ""           # the device tree's compatible list, space-joined
     memory: str | None = None      # the fitted RAM, "1 GB", from MemTotal
-    header: tuple[str, ...] = ()
+    # None only from a label input whose header was not read: a probe always
+    # reads it, and () is a header read and found bare
+    header: tuple[str, ...] | None = ()
     hat_uuid: str | None = None
     fpga: tuple[FpgaBoard, ...] = ()
     tinytapeout: tuple[TinyTapeoutBoard, ...] = ()
@@ -166,16 +170,26 @@ class Summary:
     cpu: str | None = None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> Summary:
+    def from_dict(cls, d: dict[str, Any], partial: bool = False) -> Summary:
+        """From a probe document's summary, which always carries `model`,
+        `serial`, `revision` and `power_class` -- or, with `partial`, from a
+        label input's (rpi_hwid.label_input), which may leave any of them
+        out, and whose header may be None: not read."""
         known = {f.name for f in fields(cls)}
         unknown = set(d) - known
         if unknown:
             raise ValueError(f"summary has fields this model does not know: {sorted(unknown)}")
+        if not partial:
+            absent = [k for k in ("model", "serial", "revision", "power_class") if k not in d]
+            if absent:
+                raise ValueError(f"summary is missing {absent}")
+        header = d.get("header", ())
         return cls(
-            model=d["model"], serial=d["serial"] or "", revision=d["revision"] or "",
-            power_class=d["power_class"],
+            model=d.get("model") or "", serial=d.get("serial") or "",
+            revision=d.get("revision") or "", power_class=d.get("power_class"),
             compatible=d.get("compatible") or "", memory=d.get("memory"),
-            header=tuple(d.get("header", ())), hat_uuid=d.get("hat_uuid"),
+            header=None if header is None and partial else tuple(header or ()),
+            hat_uuid=d.get("hat_uuid"),
             fpga=tuple(FpgaBoard(**dict(b, dna_sources=tuple(b.get("dna_sources", ()))))
                        for b in d.get("fpga", ())),
             tinytapeout=tuple(TinyTapeoutBoard(**b) for b in d.get("tinytapeout", ())),
@@ -190,7 +204,7 @@ class Summary:
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
         for key in ("header", "fpga", "tinytapeout", "macs", "usb_net"):
-            d[key] = list(d[key])
+            d[key] = None if d[key] is None else list(d[key])
         # nested tuples too, or the document does not round-trip through JSON
         for board in d["fpga"]:
             board["dna_sources"] = list(board["dna_sources"])

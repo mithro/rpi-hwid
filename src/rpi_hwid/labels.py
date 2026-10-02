@@ -1329,6 +1329,12 @@ def flash_uid_note_text(note):
     return (note or "").split(":", 1)[0].strip() or None
 
 
+class HeaderNotReadError(Exception):
+    """A board label whose HAT row nothing read: printing "HAT none" would
+    state a fact nobody established. The same rule as
+    IdentifierNotReadError."""
+
+
 class FlashNotReadError(Exception):
     """A board reached the label generator without its flash facts.
 
@@ -1556,6 +1562,14 @@ def board_record(doc):
                 "so the label would carry no serial. Read it with `sudo cat "
                 "/sys/class/dmi/id/%s` on that host, or give the probe passwordless "
                 "sudo, and collect again." % (doc.host, field, field))
+    if s.header is None and ident.kind in ("rpi", "opi"):
+        # Only a label input carries this (a probe always reads the header).
+        # The label's HAT row would have to say "none", and nobody looked.
+        raise HeaderNotReadError(
+            "%s: nothing read the 40-pin header, so the label cannot say what "
+            "HAT the board wears, or that it wears none. Read it with "
+            "`rpi-hwid probe` on that host (a label input's `header` is null: "
+            "not read)." % doc.host)
     macs = [(m.kind, m.mac) for m in s.macs if m.kind in ("eth", "wlan")]
     rv = None
     if ident.kind == "riscv":
@@ -1597,7 +1611,7 @@ def board_record(doc):
     return BoardLabel(
         kind=ident.kind, short=ident.short, title=ident.title, subtitle=ident.subtitle,
         mark=ident.mark, serial=s.serial, memory=ident.memory, macs=tuple(macs),
-        header=tuple(s.header), hat_uuid=s.hat_uuid,
+        header=tuple(s.header or ()), hat_uuid=s.hat_uuid,
         eth_note="no wired port" if ident.wired is False
         else "none found" if ident.kind == "x86" else None,
         wlan_note=wlan_note,

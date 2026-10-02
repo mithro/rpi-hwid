@@ -13,6 +13,8 @@
     rpi-hwid tasmota --sheet CSV --site NAME=OCTET --out DIR
                                                           over HTTP, read-only: Tasmota plugs
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
+    rpi-hwid label-input --from PROBE_JSON | --pi-only [--host NAME]
+                                                          the labels' versioned input document
     rpi-hwid name --netv2 DNA… | --arty SERIAL… | --cynthion UID…
                                                           the derived board names
     rpi-hwid revision CODE…                               decode Pi revision codes
@@ -22,8 +24,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import socket
 import sys
 from pathlib import Path
+from typing import Any
 
 from rpi_hwid import names, revision
 from rpi_hwid.collect import DEFAULT_USERS
@@ -156,8 +160,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
             tts = ", ".join(b.shuttle or b.chip or "?" for b in s.tinytapeout)
             esps = ", ".join(d.get("mac") or "?" for d in
                              r.doc.evidence.get("verdict", {}).get("esp32") or ())
-            print(f"  {r.host}: {s.model}; header {list(s.header) or 'bare'}; "
-                  f"power {s.power_class}" + (f"; fpga {boards}" if boards else "")
+            header = "not read" if s.header is None else list(s.header) or "bare"
+            print(f"  {r.host}: {s.model}; header {header}; "
+                  f"power {s.power_class or 'not read'}" + (f"; fpga {boards}" if boards else "")
                   + (f"; tinytapeout {tts}" if tts else "")
                   + (f"; esp32 {esps}" if esps else ""))
             problem = offline_read_problem(r.doc) if r.host in offline else None
@@ -183,6 +188,44 @@ def cmd_name(args: argparse.Namespace) -> int:
         for serial, name in names.arty_names(args.arty, pinned).items():
             if serial in args.arty:
                 print(f"{name}  {serial}")
+    return 0
+
+
+def pi_only_label_input(host: str) -> dict[str, Any]:
+    """This host's label input from the Pi alone: no FPGA, no Tiny Tapeout,
+    and the header's user bus (GPIO2/3) left untouched (docs/LABEL-INPUT.md
+    lists what it does do, and undoes)."""
+    from rpi_hwid import label_input, probe
+
+    d = probe.collect(user_bus=False)
+    d["verdict"] = probe.verdict(d)
+    summary = dict(d["verdict"]["summary"])
+    # With the user bus unread, an empty header is not a header read as
+    # empty: a HAT known only by what answers there (a Waveshare PoE HAT
+    # (B)) would be missed, and "HAT none" printed on its Pi. Unread, then.
+    if not summary.get("header") and (d.get("header_buses_read") or {}).get("user") is False:
+        summary["header"] = None
+    return label_input.build(host, summary, dict.fromkeys(summary, "rpi-hwid"))
+
+
+def cmd_label_input(args: argparse.Namespace) -> int:
+    from rpi_hwid import label_input
+    from rpi_hwid.model import ProbeDocument
+
+    if args.pi_only:
+        doc = pi_only_label_input(args.host or socket.gethostname())
+        sys.stdout.write(label_input.dumps(doc))
+        return 0
+    path = Path(args.from_probe)
+    try:
+        # a probe document as `probe --json` or `collect` wrote it: from_json
+        # skips a login banner before it, as load_collected does
+        raw = ProbeDocument.from_json(path.stem, path.read_text()).evidence
+        doc = label_input.from_probe(args.host or path.stem, raw)
+    except ValueError as exc:  # InputError is one
+        print(f"{path}: {exc}", file=sys.stderr)
+        return 1
+    sys.stdout.write(label_input.dumps(doc))
     return 0
 
 
@@ -278,6 +321,18 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("labels", help="print-ready labels from collected data (rpi-hwid labels -h)",
                    add_help=False)
+
+    p = sub.add_parser("label-input",
+                       help="the labels' versioned input document (docs/LABEL-INPUT.md)")
+    what = p.add_mutually_exclusive_group(required=True)
+    what.add_argument("--from", dest="from_probe", metavar="PROBE_JSON",
+                      help="a probe document (probe --json, or a file collect wrote)")
+    what.add_argument("--pi-only", action="store_true",
+                      help="probe this host's Pi facts only, never touching the FPGA, a "
+                           "Tiny Tapeout board or the header's user bus (run on the Pi)")
+    p.add_argument("--host", help="the host it describes (default: the file's name, or "
+                                  "this host's name with --pi-only)")
+    p.set_defaults(func=cmd_label_input)
 
     p = sub.add_parser("name", help="derived board names")
     p.add_argument("--netv2", nargs="*", metavar="DNA")

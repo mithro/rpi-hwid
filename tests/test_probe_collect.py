@@ -1236,33 +1236,61 @@ def test_hat_firmware_dir_and_id_bus(fake_root, monkeypatch):
     assert v["summary"]["hat_uuid"] == "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a"
 
 
+class Dtparam:
+    """The runtime dtparam list as raspberrypi/utils' dtparam keeps it
+    (dtmerge/dtoverlay_main.c): `-l` lists "<i>:  <name> <params>", `-r <i>`
+    removes entry i alone, and a bare `-r` removes the last entry, whoever
+    applied it. `makes` is the /dev node each parameter brings up."""
+
+    def __init__(self, root, makes=None, entries=()):
+        self.root, self.makes = root, makes or {}
+        self.entries, self.calls = list(entries), []
+
+    def __call__(self, args, timeout=15):
+        args = list(args)
+        self.calls.append(args)
+        if args[:2] != ["sudo", "dtparam"]:
+            return "throttled=0x0" if args == ["vcgencmd", "get_throttled"] else ""
+        if args[2] == "-l":
+            if not self.entries:
+                return "No overlays loaded"
+            return "Overlays (in load order):\n" + "\n".join(
+                f"{i}:  {text}" for i, text in enumerate(self.entries))
+        if args[2] == "-r":
+            text = self.entries.pop(int(args[3]) if len(args) > 3 else -1)
+            bus = self.makes.get(text.split()[-1])
+            if bus is not None and (self.root / f"dev/i2c-{bus}").exists():
+                (self.root / f"dev/i2c-{bus}").unlink()
+            return ""
+        self.entries.append("dtparam " + args[2])
+        if args[2] in self.makes:
+            _w(self.root, f"/dev/i2c-{self.makes[args[2]]}", "")
+        return ""
+
+    def removals(self):
+        return [c for c in self.calls if c[:3] == ["sudo", "dtparam", "-r"]]
+
+
 def test_a_user_bus_that_is_off_is_brought_up_for_the_scan_and_put_back(fake_root, monkeypatch):
     """Most of the fleet leaves the header's user bus disabled, and a HAT
     known only by the devices it puts there is invisible without it. So the
     bus gets the same on-demand enable the ID bus has -- and the same
     tidying up, because the host is not ours to reconfigure."""
     _w(fake_root, "/dev/i2c-0", "")                  # the ID bus is already up
-    calls = []
-
-    def fake_sh(args, timeout=15):
-        calls.append(args)
-        if args == ["sudo", "dtparam", "i2c_arm=on"]:
-            _w(fake_root, "/dev/i2c-1", "")          # the overlay creates it
-        elif args == ["sudo", "dtparam", "-r"]:
-            (fake_root / "dev/i2c-1").unlink()       # and removing it takes it away
-        return ""
-    monkeypatch.setattr(probe, "sh", fake_sh)
+    dt = Dtparam(fake_root, {"i2c_arm=on": 1})
+    monkeypatch.setattr(probe, "sh", dt)
     monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: ["20", "3c"] if bus == 1 else [])
     monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
 
     d = probe.collect()
     assert d["header_i2c"] == ["20", "3c"], "the HAT's two chips, on a bus that was off"
     assert d["header_buses_read"] == {"id": True, "user": True}
-    assert ["sudo", "dtparam", "i2c_arm=on"] in calls
-    assert ["sudo", "dtparam", "-r"] in calls, "brought up here, so put back here"
+    assert ["sudo", "dtparam", "i2c_arm=on"] in dt.calls
+    # brought up here, so put back here -- and only that: the ID bus was
+    # already up, so it is not taken down with it
+    assert dt.removals() == [["sudo", "dtparam", "-r", "0"]]
+    assert dt.entries == []
     assert not (fake_root / "dev/i2c-1").exists(), "left as it was found"
-    # The ID bus was already up, so it is not taken down with it.
-    assert calls.count(["sudo", "dtparam", "-r"]) == 1
     assert "Waveshare PoE HAT (B)" in probe.verdict(d)["summary"]["header"]
 
 
@@ -1316,7 +1344,7 @@ class SlowUdev:
             return "Overlays (in load order):\n" + "\n".join(
                 f"{i}:  dtparam  {o}" for i, o in enumerate(self.overlays))
         if param == "-r":
-            gone = self.overlays.pop()
+            gone = self.overlays.pop(int(args[3]) if len(args) > 3 else -1)
             bus = {**self.LATE, **self.PROMPT}[gone]
             self.pending = [b for b in self.pending if b != bus]
             if self.node(bus).exists():
@@ -1366,19 +1394,69 @@ def test_an_overlay_whose_bus_never_appears_is_still_removed(fake_root, monkeypa
     """The overlay was applied whether or not its node turned up, so taking
     it back out is this probe's job either way."""
     _w(fake_root, "/dev/i2c-1", "")
-    calls = []
-
-    def fake_sh(args, timeout=15):
-        calls.append(args)
-        return ""
-    monkeypatch.setattr(probe, "sh", fake_sh)
+    dt = Dtparam(fake_root)                           # applies, but no node turns up
+    monkeypatch.setattr(probe, "sh", dt)
     monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
     monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
 
     d = probe.collect()
     assert d["header_buses_read"] == {"id": False, "user": True}
-    assert ["sudo", "dtparam", "i2c_vc=on"] in calls
-    assert calls.count(["sudo", "dtparam", "-r"]) == 1
+    assert ["sudo", "dtparam", "i2c_vc=on"] in dt.calls
+    assert dt.removals() == [["sudo", "dtparam", "-r", "0"]]
+    assert dt.entries == []
+
+
+def test_only_the_probes_own_dtparam_is_removed(fake_root, monkeypatch):
+    """A bare `dtparam -r` takes out the LAST runtime entry, whoever applied
+    it. Something else's, applied before the probe or while it read, stays."""
+    _w(fake_root, "/dev/i2c-1", "")
+    dt = Dtparam(fake_root, {"i2c_vc=on": 0}, entries=["dtparam audio=on"])
+
+    def scan(bus, addr, length=256):
+        if not any(e.endswith("spi=on") for e in dt.entries):
+            dt.entries.append("dtparam spi=on")       # someone else, meanwhile
+    monkeypatch.setattr(probe, "sh", dt)
+    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
+    monkeypatch.setattr(probe, "eeprom_read", scan)
+
+    probe.collect()
+    assert dt.removals() == [["sudo", "dtparam", "-r", "1"]]
+    assert dt.entries == ["dtparam audio=on", "dtparam spi=on"]
+
+
+def test_an_apply_that_added_nothing_is_not_undone(fake_root, monkeypatch):
+    """No entry of its own, nothing to take out: removing the last entry
+    then would remove someone else's."""
+    _w(fake_root, "/dev/i2c-1", "")
+    dt = Dtparam(fake_root, entries=["dtoverlay vc4-kms-v3d"])
+    real = dt.__call__
+
+    def failing(args, timeout=15):
+        if args == ["sudo", "dtparam", "i2c_vc=on"]:
+            dt.calls.append(list(args))
+            return ""                                  # the apply failed
+        return real(args, timeout)
+    monkeypatch.setattr(probe, "sh", failing)
+    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
+    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
+
+    probe.collect()
+    assert dt.removals() == []
+    assert dt.entries == ["dtoverlay vc4-kms-v3d"]
+
+
+def test_what_was_brought_up_is_put_back_when_the_read_fails(fake_root, monkeypatch):
+    _w(fake_root, "/dev/i2c-1", "")
+    dt = Dtparam(fake_root, {"i2c_vc=on": 0})
+
+    def boom(bus, addr, length=256):
+        raise OSError("the bus hung")
+    monkeypatch.setattr(probe, "sh", dt)
+    monkeypatch.setattr(probe, "eeprom_read", boom)
+    with pytest.raises(OSError, match="the bus hung"):
+        probe.id_bus_scan(0, ["sudo", "dtparam", "i2c_vc=on"])
+    assert dt.entries == []
+    assert not (fake_root / "dev/i2c-0").exists()
 
 
 # --- i2c-dev before dtparam --------------------------------------------------
@@ -1431,8 +1509,12 @@ class Host:
         elif args == UNLOAD:
             self.loaded = False
         elif args[:2] == ["sudo", "dtparam"]:
+            if args[2] == "-l":
+                by_bus = {b: p for p, b in self.overlay_makes.items()}
+                return "\n".join(f"{i}:  dtparam {by_bus[b]}"
+                                 for i, b in enumerate(self.overlays))
             if args[2] == "-r":
-                self.adapters.discard(self.overlays.pop())
+                self.adapters.discard(self.overlays.pop(int(args[3]) if len(args) > 3 else -1))
             else:
                 bus = self.overlay_makes[args[2]]
                 self.overlays.append(bus)
@@ -1476,7 +1558,7 @@ def test_dtparam_is_the_fallback_when_the_module_brings_nothing_up(pi):
     assert host.calls.index(MODPROBE) < host.calls.index(["sudo", "dtparam", "i2c_arm=on"])
     # undone in reverse: the overlay out before the module is unloaded
     last_unload = len(host.calls) - 1 - host.calls[::-1].index(UNLOAD)
-    assert host.calls.index(["sudo", "dtparam", "-r"]) < last_unload
+    assert host.calls.index(["sudo", "dtparam", "-r", "0"]) < last_unload
     assert host.overlays == []
     assert not host.loaded
     assert 1 not in host.adapters
