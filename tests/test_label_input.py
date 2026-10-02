@@ -276,12 +276,59 @@ def test_the_documented_example_is_a_label_input():
     assert record.summary.fpga[0].flash_extended_id == "0x4d0180"
 
 
-def test_a_nan_in_a_free_form_object_is_refused_when_written():
-    doc = label_input.build("h", {"dmi": {"x": float("nan")}})
+def test_a_nan_is_never_written():
+    """check() refuses every NaN a field could carry; the writer refuses one
+    all the same, so no future field can slip one into the text."""
     with pytest.raises(label_input.InputError, match="not writable as JSON"):
-        label_input.dumps(doc)
-    with pytest.raises(label_input.InputError, match="not writable as JSON"):
-        label_input.comparable(doc)
+        label_input._text({"x": float("nan")})
+
+
+@pytest.mark.parametrize(("summary", "problem"), [
+    ({"header": [None]}, r"summary.header\[0\]: null is not allowed in a list"),
+    ({"fpga": [{"kind": "acorn", "dna_sources": [None]}]},
+     r"summary.fpga\[0\].dna_sources\[0\]: null is not allowed in a list"),
+    ({"macs": [None]}, r"summary.macs\[0\]: null is not allowed in a list"),
+    ({"dmi": {"unread": 5}}, "summary.dmi.unread: a list is required"),
+    ({"dmi": {"sys_vendor": 3}}, "summary.dmi.sys_vendor: a string is required"),
+    ({"dmi": {"unread": [None]}}, r"summary.dmi.unread\[0\]: null is not allowed here"),
+    ({"dmi": {"colour": "red"}}, "summary.dmi.colour: not a field here"),
+    ({"riscv": {"harts": "4"}}, "summary.riscv.harts: an integer is required"),
+    ({"riscv": {"eeprom": {"crc_ok": "yes"}}},
+     "summary.riscv.eeprom.crc_ok: true or false is required"),
+    ({"riscv": {"eeprom": 7}}, "summary.riscv.eeprom: an object is required"),
+    ({"fpga": [{"kind": "acorn", "dna_conflict": {"jtag": 1}}]},
+     r"summary.fpga\[0\].dna_conflict.jtag: a string is required"),
+])
+def test_what_would_crash_the_labels_is_refused(summary, problem):
+    with pytest.raises(label_input.InputError, match=problem):
+        label_input.build("h", summary)
+
+
+@pytest.mark.parametrize("bad", [
+    {"header": [None]}, {"dmi": {"unread": 5, "sys_vendor": 3}},
+    {"riscv": {"harts": "4"}}, {"fpga": [{"kind": "acorn", "dna_sources": [None]}]},
+])
+def test_the_schema_refuses_them_too(bad):
+    schema = json.loads(label_input.schema_path().read_text())
+    doc = json.loads(label_input.dumps(pi_doc()))
+    doc["summary"].update(bad)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(doc, schema)
+
+
+def test_the_real_dmi_and_riscv_records_pass():
+    for host in ("minnow-turbot-1", "hifive-unmatched-1"):
+        jsonschema.validate(json.loads(label_input.dumps(pi_doc(host))),
+                            json.loads(label_input.schema_path().read_text()))
+
+
+def test_a_null_header_in_a_probe_document_is_not_read_either():
+    raw = copy.deepcopy(RAW["pi-sw2-p48"])
+    raw["verdict"]["summary"]["header"] = None
+    record = ProbeDocument.from_dict("pi-sw2-p48", raw)
+    assert record.summary.header is None
+    with pytest.raises(labels.HeaderNotReadError):
+        labels.board_record(record)
 
 
 def test_the_schema_refuses_what_check_refuses():

@@ -2,7 +2,7 @@
  "$id": "https://github.com/mithro/rpi-hwid/blob/main/src/rpi_hwid/label-input-v1.schema.json",
  "$schema": "https://json-schema.org/draft/2020-12/schema",
  "additionalProperties": false,
- "description": "What rpi-hwid's labels need for one host (docs/LABEL-INPUT.md). A field that is null or absent was not read.",
+ "description": "What rpi-hwid's labels need for one host (docs/LABEL-INPUT.md). A null field was not read; an absent one is its default ([] for a list, \"\" for compatible), except header, which absent is not read. The version is the integer 1 (1.0 passes this schema and is refused by the reader).",
  "properties": {
   "host": {
    "minLength": 1,
@@ -185,6 +185,95 @@
      ]
     },
     "dmi": {
+     "additionalProperties": false,
+     "properties": {
+      "bios_date": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "bios_vendor": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "bios_version": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "board_name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "board_serial": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "board_vendor": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "board_version": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "chassis_serial": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "product_name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "product_serial": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "product_uuid": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "product_version": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "sys_vendor": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "unread": {
+       "items": {
+        "type": [
+         "string"
+        ]
+       },
+       "type": "array"
+      }
+     },
      "type": [
       "object",
       "null"
@@ -219,6 +308,9 @@
         ]
        },
        "dna_conflict": {
+        "additionalProperties": {
+         "type": "string"
+        },
         "type": [
          "object",
          "null"
@@ -227,8 +319,7 @@
        "dna_sources": {
         "items": {
          "type": [
-          "string",
-          "null"
+          "string"
          ]
         },
         "type": [
@@ -369,8 +460,7 @@
     "header": {
      "items": {
       "type": [
-       "string",
-       "null"
+       "string"
       ]
      },
      "type": [
@@ -441,6 +531,132 @@
      ]
     },
     "riscv": {
+     "additionalProperties": false,
+     "properties": {
+      "eeprom": {
+       "additionalProperties": false,
+       "properties": {
+        "bom_revision": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "bom_variant": {
+         "type": [
+          "integer",
+          "null"
+         ]
+        },
+        "crc": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "crc_ok": {
+         "type": [
+          "boolean",
+          "null"
+         ]
+        },
+        "format": {
+         "type": [
+          "integer",
+          "null"
+         ]
+        },
+        "mac": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "manuf_test_status": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "pcb_revision": {
+         "type": [
+          "integer",
+          "null"
+         ]
+        },
+        "product": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "product_id": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "serial": {
+         "type": [
+          "string",
+          "null"
+         ]
+        }
+       },
+       "type": [
+        "object",
+        "null"
+       ]
+      },
+      "eeprom_error": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "harts": {
+       "type": [
+        "integer",
+        "null"
+       ]
+      },
+      "isa": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "marchid": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "mimpid": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "mmu": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "mvendorid": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "uarch": {
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     },
      "type": [
       "object",
       "null"
@@ -609,6 +825,7 @@
   },
   "version": {
    "const": 1,
+   "multipleOf": 1,
    "type": "integer"
   }
  },

@@ -174,7 +174,7 @@ class Summary:
         """From a probe document's summary, which always carries `model`,
         `serial`, `revision` and `power_class` -- or, with `partial`, from a
         label input's (rpi_hwid.label_input), which may leave any of them
-        out, and whose header may be None: not read."""
+        out. A header of None is not read, from either."""
         known = {f.name for f in fields(cls)}
         unknown = set(d) - known
         if unknown:
@@ -188,7 +188,8 @@ class Summary:
             model=d.get("model") or "", serial=d.get("serial") or "",
             revision=d.get("revision") or "", power_class=d.get("power_class"),
             compatible=d.get("compatible") or "", memory=d.get("memory"),
-            header=None if header is None and partial else tuple(header or ()),
+            # None is not read, on either path, and is never drawn as "none"
+            header=None if header is None else tuple(header),
             hat_uuid=d.get("hat_uuid"),
             fpga=tuple(FpgaBoard(**dict(b, dna_sources=tuple(b.get("dna_sources", ()))))
                        for b in d.get("fpga", ())),
