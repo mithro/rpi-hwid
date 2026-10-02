@@ -102,18 +102,37 @@ $ sudo rpi-hwid label-input --pi-only [--host NAME]
 
 The Pi's facts (model, serial, revision, memory, MACs, the HAT, the power
 class, and on a Pi 5 the fan, the RTC battery and the PMIC's readings) as a
-label input on stdout, with `fpga` and `tinytapeout` null. fpgas-verify runs
-it once at boot, before it takes any board's lock, and sends the summary to
-the fpgas.online site, so it is made to be safe while a board under test is
-wired to the header. `--host` defaults to this host's name.
+label input on stdout, with `fpga` and `tinytapeout` empty: nothing probed
+them. fpgas-verify runs it once at boot, before it takes any board's lock,
+and sends the summary to the fpgas.online site in its `pi-identified` event,
+so it is made to be safe while a board under test is wired to the header.
+`--host` defaults to this host's name.
+
+**What the site's documents are compared with.** The site builds a host's
+label input from that event and fpgas-verify's board identities. The
+document on the Pi it must match, under `label_input.comparable`, is these
+Pi facts plus fpgas-verify's identity of each board -- what `rpi-hwid labels
+--this-host` builds -- and not `label-input --from` a full probe, which can
+also read the user bus and so can differ by design.
+
+In the event, a field that was not read (null here) is left out, never sent
+as `-`; the site leaves it out of what it builds too, and an absent `header`
+is read back as not read.
 
 What it does, and puts back:
 
 * **The HAT ID bus** (pins 27/28, GPIO0/1, i2c-0 on a Pi): where it is not
   already up, `modprobe i2c-dev` and `dtparam i2c_vc=on`; then a read of the
-  HAT EEPROM addresses 0x50-0x57; then `dtparam -r` and `modprobe -r i2c-dev`,
-  so the host is left as it was found. The firmware's own reading of the HAT
-  comes from `/proc/device-tree/hat`.
+  HAT EEPROM addresses 0x50-0x57; then the dtparam is taken out and
+  `modprobe -r i2c-dev`, so the host is left as it was found, even when the
+  read fails. Only the probe's own dtparam is removed: `dtparam -l` before
+  and after the apply finds its entry, and `dtparam -r <index>` removes that
+  entry alone (a bare `dtparam -r` removes the last runtime entry, whoever
+  applied it: `dtoverlay_remove()` in raspberrypi/utils
+  `dtmerge/dtoverlay_main.c`). When the list shows no new entry of its own --
+  the apply failed, or something else changed the list meanwhile -- it
+  removes nothing. The firmware's own reading of the HAT comes from
+  `/proc/device-tree/hat`.
 * `vcgencmd get_throttled`, and on a Pi 5 `sudo vcgencmd pmic_read_adc`: reads.
 * sysfs, procfs and the device tree: reads. On a PC (no device tree), the
   root-only DMI serials through `sudo -n cat`.
