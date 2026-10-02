@@ -1,0 +1,687 @@
+{
+ "$id": "https://github.com/mithro/rpi-hwid/blob/main/src/rpi_hwid/label-input-v1.schema.json",
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "additionalProperties": false,
+ "description": "What rpi-hwid's labels need for one host (docs/LABEL-INPUT.md). A null field was not read; an absent one is its default ([] for a list, \"\" for compatible), except header, which absent is not read. The version is the integer 1 (1.0 passes this schema and is refused by the reader).",
+ "properties": {
+  "host": {
+   "minLength": 1,
+   "type": "string"
+  },
+  "schema": {
+   "const": "rpi-hwid/label-input"
+  },
+  "sources": {
+   "description": "Provenance, free-form: any keys, any JSON values.",
+   "type": "object"
+  },
+  "summary": {
+   "additionalProperties": false,
+   "properties": {
+    "compatible": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "cpu": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "dmi": {
+     "additionalProperties": false,
+     "properties": {
+      "bios_date": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "bios_vendor": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "bios_version": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "board_name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "board_serial": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "board_vendor": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "board_version": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "chassis_serial": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "product_name": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "product_serial": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "product_uuid": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "product_version": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "sys_vendor": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "unread": {
+       "items": {
+        "type": [
+         "string"
+        ]
+       },
+       "type": "array"
+      }
+     },
+     "type": [
+      "object",
+      "null"
+     ]
+    },
+    "ext5v_v": {
+     "type": [
+      "number",
+      "null"
+     ]
+    },
+    "fan": {
+     "type": [
+      "boolean",
+      "null"
+     ]
+    },
+    "fpga": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "dna": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "dna_agree": {
+        "type": [
+         "boolean",
+         "null"
+        ]
+       },
+       "dna_conflict": {
+        "additionalProperties": {
+         "type": "string"
+        },
+        "type": [
+         "object",
+         "null"
+        ]
+       },
+       "dna_sources": {
+        "items": {
+         "type": [
+          "string"
+         ]
+        },
+        "type": [
+         "array",
+         "null"
+        ]
+       },
+       "flash": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_error": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_extended_id": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_jedec": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_sfdp": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_source": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_uid": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_uid_bits": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "flash_uid_note": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_uid_state": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "gateware": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "gateware_id": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "hw_rev": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "idcode": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "kind": {
+        "type": [
+         "string"
+        ]
+       },
+       "mode": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "serial": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "soc_model": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "trace_id": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      },
+      "required": [
+       "kind"
+      ],
+      "type": "object"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
+    "hat_uuid": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "header": {
+     "items": {
+      "type": [
+       "string"
+      ]
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
+    "macs": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "kind": {
+        "type": [
+         "string"
+        ]
+       },
+       "mac": {
+        "type": [
+         "string"
+        ]
+       },
+       "signal": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      },
+      "required": [
+       "kind",
+       "mac"
+      ],
+      "type": "object"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
+    "max_current_ma": {
+     "type": [
+      "integer",
+      "null"
+     ]
+    },
+    "memory": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "model": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "power_class": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "revision": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "riscv": {
+     "additionalProperties": false,
+     "properties": {
+      "eeprom": {
+       "additionalProperties": false,
+       "properties": {
+        "bom_revision": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "bom_variant": {
+         "type": [
+          "integer",
+          "null"
+         ]
+        },
+        "crc": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "crc_ok": {
+         "type": [
+          "boolean",
+          "null"
+         ]
+        },
+        "format": {
+         "type": [
+          "integer",
+          "null"
+         ]
+        },
+        "mac": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "manuf_test_status": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "pcb_revision": {
+         "type": [
+          "integer",
+          "null"
+         ]
+        },
+        "product": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "product_id": {
+         "type": [
+          "string",
+          "null"
+         ]
+        },
+        "serial": {
+         "type": [
+          "string",
+          "null"
+         ]
+        }
+       },
+       "type": [
+        "object",
+        "null"
+       ]
+      },
+      "eeprom_error": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "harts": {
+       "type": [
+        "integer",
+        "null"
+       ]
+      },
+      "isa": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "marchid": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "mimpid": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "mmu": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "mvendorid": {
+       "type": [
+        "string",
+        "null"
+       ]
+      },
+      "uarch": {
+       "type": [
+        "string",
+        "null"
+       ]
+      }
+     },
+     "type": [
+      "object",
+      "null"
+     ]
+    },
+    "rtc_battery": {
+     "type": [
+      "boolean",
+      "null"
+     ]
+    },
+    "serial": {
+     "type": [
+      "string",
+      "null"
+     ]
+    },
+    "tinytapeout": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "chip": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "commit": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "demoboard": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "demoboard_version": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "mcu": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "repo": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "sdk": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "shuttle": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "usb_serial": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      },
+      "type": "object"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
+    "usb_net": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "bcd_usb": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "driver": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "iface": {
+        "type": [
+         "string"
+        ]
+       },
+       "kind": {
+        "type": [
+         "string"
+        ]
+       },
+       "mac": {
+        "type": [
+         "string"
+        ]
+       },
+       "manufacturer": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "product": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "signal": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "usb_serial": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "usb_speed": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "vidpid": {
+        "type": [
+         "string"
+        ]
+       }
+      },
+      "required": [
+       "iface",
+       "mac",
+       "vidpid",
+       "kind"
+      ],
+      "type": "object"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    }
+   },
+   "type": "object"
+  },
+  "version": {
+   "const": 1,
+   "multipleOf": 1,
+   "type": "integer"
+  }
+ },
+ "required": [
+  "schema",
+  "version",
+  "host",
+  "summary",
+  "sources"
+ ],
+ "title": "rpi-hwid label input, version 1",
+ "type": "object"
+}

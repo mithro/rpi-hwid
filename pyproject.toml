@@ -42,7 +42,9 @@ rpi-hwid-sheet = "rpi_hwid.sheet.cli:main"
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.6", "mypy>=1.11", "pytest-cov>=5.0",
        "reportlab>=4", "segno>=1.6", "svglib>=1.5", "pillow>=10", "spiflash>=0.0.post11",
-       "zxing-cpp>=2"]
+       "zxing-cpp>=2",
+       # tests check the label input's shipped JSON Schema against real documents
+       "jsonschema>=4"]
 
 # Rolling release: the version is derived from git (`git describe`), never
 # hand-edited. vX.Y tags are the only human input (v0.0 on the root commit per

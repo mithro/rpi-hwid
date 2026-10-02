@@ -17,6 +17,7 @@ The output files are the input to ``rpi-hwid labels``.
 from __future__ import annotations
 
 import getpass
+import json
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
     from pathlib import Path
 
+from rpi_hwid import label_input
 from rpi_hwid.model import ProbeDocument
 
 DEFAULT_USERS = (getpass.getuser(), "pi")
@@ -246,10 +248,23 @@ def collect(
 
 
 def load_collected(data_dir: Path) -> dict[str, ProbeDocument]:
-    """Every ``*.json`` under `data_dir` as host -> document."""
+    """Every ``*.json`` under `data_dir` as host -> document: a probe
+    document, or a label input (``rpi_hwid.label_input``), keyed on the
+    file's name either way."""
     docs: dict[str, ProbeDocument] = {}
     for path in sorted(data_dir.glob("*.json")):
-        docs[path.stem] = ProbeDocument.from_json(path.stem, path.read_text())
+        text = path.read_text()
+        try:
+            raw = json.loads(text)
+        except ValueError:
+            raw = None  # a login banner before a probe document, say
+        if label_input.is_label_input(raw):
+            try:
+                docs[path.stem] = label_input.to_probe_document(raw)
+            except label_input.InputError as exc:
+                raise ValueError(f"{path}: {exc}") from exc
+        else:
+            docs[path.stem] = ProbeDocument.from_json(path.stem, text)
     if not docs:
         raise ValueError(f"no probe documents (*.json) in {data_dir}")
     return docs

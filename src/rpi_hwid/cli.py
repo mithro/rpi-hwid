@@ -13,6 +13,7 @@
     rpi-hwid tasmota --sheet CSV --site NAME=OCTET --out DIR
                                                           over HTTP, read-only: Tasmota plugs
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
+    rpi-hwid label-input --from PROBE_JSON [--host NAME]  the labels' versioned input document
     rpi-hwid name --netv2 DNA… | --arty SERIAL… | --cynthion UID…
                                                           the derived board names
     rpi-hwid revision CODE…                               decode Pi revision codes
@@ -156,8 +157,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
             tts = ", ".join(b.shuttle or b.chip or "?" for b in s.tinytapeout)
             esps = ", ".join(d.get("mac") or "?" for d in
                              r.doc.evidence.get("verdict", {}).get("esp32") or ())
-            print(f"  {r.host}: {s.model}; header {list(s.header) or 'bare'}; "
-                  f"power {s.power_class}" + (f"; fpga {boards}" if boards else "")
+            header = "not read" if s.header is None else list(s.header) or "bare"
+            print(f"  {r.host}: {s.model}; header {header}; "
+                  f"power {s.power_class or 'not read'}" + (f"; fpga {boards}" if boards else "")
                   + (f"; tinytapeout {tts}" if tts else "")
                   + (f"; esp32 {esps}" if esps else ""))
             problem = offline_read_problem(r.doc) if r.host in offline else None
@@ -183,6 +185,24 @@ def cmd_name(args: argparse.Namespace) -> int:
         for serial, name in names.arty_names(args.arty, pinned).items():
             if serial in args.arty:
                 print(f"{name}  {serial}")
+    return 0
+
+
+def cmd_label_input(args: argparse.Namespace) -> int:
+    from rpi_hwid import label_input
+    from rpi_hwid.model import ProbeDocument
+
+    path = Path(args.from_probe)
+    try:
+        # a probe document as `probe --json` or `collect` wrote it: from_json
+        # skips a login banner before it, as load_collected does
+        raw = ProbeDocument.from_json(path.stem, path.read_text()).evidence
+        doc = label_input.from_probe(args.host or path.stem, raw)
+        text = label_input.dumps(doc)
+    except (OSError, ValueError, OverflowError) as exc:  # InputError is a ValueError
+        print(f"{path}: {exc}", file=sys.stderr)
+        return 1
+    sys.stdout.write(text)
     return 0
 
 
@@ -278,6 +298,13 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("labels", help="print-ready labels from collected data (rpi-hwid labels -h)",
                    add_help=False)
+
+    p = sub.add_parser("label-input",
+                       help="the labels' versioned input document (docs/LABEL-INPUT.md)")
+    p.add_argument("--from", dest="from_probe", required=True, metavar="PROBE_JSON",
+                   help="a probe document (probe --json, or a file collect wrote)")
+    p.add_argument("--host", help="the host it describes (default: the file's name)")
+    p.set_defaults(func=cmd_label_input)
 
     p = sub.add_parser("name", help="derived board names")
     p.add_argument("--netv2", nargs="*", metavar="DNA")

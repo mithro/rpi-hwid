@@ -222,6 +222,8 @@ rpi-hwid revision CODE…                               decode Pi revision codes
   document the rest of the package consumes, and reading it from Python.
 - [docs/LABELS.md](docs/LABELS.md) — the derived names, the five label layouts,
   the label options and the artwork.
+- [docs/LABEL-INPUT.md](docs/LABEL-INPUT.md) — the labels' versioned input
+  document, for something other than the probe to write (the fpgas.online site).
 - [docs/SHEETS.md](docs/SHEETS.md) — `rpi-hwid-sheet`: labels printed a few at a
   time into a sheet's free slots, read afresh, checked, and fed by hand.
 - [docs/ESPRESSIF.md](docs/ESPRESSIF.md) — the Espressif parts the ESP32 labels
