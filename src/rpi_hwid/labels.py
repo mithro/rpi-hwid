@@ -1649,7 +1649,9 @@ def board_record(doc):
 
 def fpga_records(docs, pinned_names=None):
     """One record per FPGA board across all documents, named."""
-    boards = [(host, b) for host in sorted(docs) for b in docs[host].summary.fpga]
+    # a Fomu or a Tiny Tapeout board fpgas-verify reported has no FPGA label
+    boards = [(host, b) for host in sorted(docs) for b in docs[host].summary.fpga
+              if b.kind in FPGA_KINDS]
     arty_serials = sorted(b.serial for _h, b in boards if b.kind == "arty" and b.serial)
     arty_names = naming.arty_names(arty_serials, pinned_names)
     out = []
@@ -1804,6 +1806,29 @@ KINDS = ("fpga", "tt", "rpi", "opi", "riscv", "x86", "usb")
 # Cynthion -- so "fpga" is not fine enough to print one sticker. Naming a kind
 # selects that board alone; "fpga" still means all of them.
 FPGA_KINDS = ("netv2", "arty", "acorn", "pcileech", "cynthion", "jtag", "unknown-fpga")
+assert set(FPGA_KINDS) == set(label_input.FPGA_LABEL_KINDS)
+BOARD_KINDS = ("rpi", "opi", "riscv", "x86")
+
+
+def board_label_wanted(doc, only):
+    """Whether `only` asks for this document's own board label: its kind is
+    named, or it cannot be told (no model) and some board kind is."""
+    if not only & set(BOARD_KINDS):
+        return False
+    kind = boards.board_kind(doc.summary)
+    return kind in only or (kind == "other" and not doc.summary.model)
+
+
+def key_wanted(key, kind, only):
+    """Whether `only` asks for the label at label input key `key`, a board
+    of `kind` where it is an FPGA."""
+    if key.startswith("fpga["):
+        return "fpga" in only or kind in only
+    if key.startswith("tinytapeout["):
+        return "tt" in only
+    if key.startswith("usb_net["):
+        return "usb" in only
+    return True
 ONLY_CHOICES = KINDS + FPGA_KINDS
 
 
@@ -1848,6 +1873,10 @@ def whole_labels(docs, only, pinned_names=None, order=None):
     # each record kind comes out host by host in its list's own order, so
     # its position there is the label input's key for it
     position = {}
+    # where each labelled board sits in its host's fpga list, the label
+    # input's key for it, past any board that has no label
+    fpga_at = {host: [i for i, b in enumerate(docs[host].summary.fpga)
+                      if b.kind in FPGA_KINDS] for host in docs}
     for record_kind, records in (
             ("fpga", fpga_records(docs, pinned_names) if any_fpga else ()),
             ("tt", tinytapeout_records(docs) if "tt" in only else ()),
@@ -1857,7 +1886,8 @@ def whole_labels(docs, only, pinned_names=None, order=None):
             position[(record_kind, r.host)] = n + 1
             if record_kind == "fpga" and wanted_fpga and r.kind not in wanted_fpga:
                 continue
-            refuse_missing(r.host, "%s[%d]" % (LIST_OF[record_kind], n), needs[r.host])
+            at = fpga_at[r.host][n] if record_kind == "fpga" else n
+            refuse_missing(r.host, "%s[%d]" % (LIST_OF[record_kind], at), needs[r.host])
             if record_kind == "fpga":
                 if not r.ident:
                     raise IdentifierNotReadError(
@@ -1895,8 +1925,12 @@ def whole_labels(docs, only, pinned_names=None, order=None):
 
     rank = {host: i for i, host in enumerate(order or ())}
     for host in sorted(sorted(docs), key=lambda h: rank.get(h, len(rank))):
-        if only & {"rpi", "opi", "riscv", "x86"}:
-            refuse_missing(host, "board", needs[host])
+        # Only a label being made is checked or built: --only x86 makes no
+        # Pi's, so a Pi's unread header or revision is no reason to stop.
+        kind = boards.board_kind(docs[host].summary)
+        if only & set(BOARD_KINDS) and (kind not in BOARD_KINDS or kind in only):
+            if board_label_wanted(docs[host], only):
+                refuse_missing(host, "board", needs[host])
             # A board that cannot be named is one label lost, not the sheet:
             # every board is asked for at once, so an unreadable revision
             # code used to take the whole print run with it. What is attached
@@ -1948,16 +1982,23 @@ def render(docs, out, only=KINDS, start=0, outline=False,
     return len(labels), sheets
 
 
-def check_main(docs):
-    """`labels --check`: every label each document describes, and the
-    fields it still needs (label_input.missing), probe documents included;
-    0 when every label can be made."""
+def check_main(docs, only=None):
+    """`labels --check`: every label each document describes that `only`
+    asks for, and the fields it still needs (label_input.missing), probe
+    documents included; 0 when every one can be made."""
+    only = set(only or KINDS)
     short = 0
     for host in sorted(docs):
         evidence = docs[host].evidence
         doc = (evidence if label_input.is_label_input(evidence)
                else label_input.from_probe(host, evidence))
+        fpga = docs[host].summary.fpga
         for key, fields in label_input.missing(doc).items():
+            if key == "board" and not board_label_wanted(docs[host], only):
+                continue
+            kind = fpga[int(key[5:-1])].kind if key.startswith("fpga[") else None
+            if not key_wanted(key, kind, only):
+                continue
             print("%s  %-14s %s" % (host, key, "needs " + ", ".join(fields) if fields
                                     else "complete"))
             short += bool(fields)
@@ -2000,7 +2041,7 @@ def main(argv=None):
     if args.place and (args.list or args.start):
         ap.error("--place gives every label its slot: it takes no --list or --start")
     if args.check:
-        return check_main(docs)
+        return check_main(docs, only)
     from rpi_hwid import placement
     if args.list and args.json:
         print(placement.list_json(docs, set(only), pinned))

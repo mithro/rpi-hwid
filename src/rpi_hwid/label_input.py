@@ -458,6 +458,10 @@ def json_schema() -> dict[str, Any]:
 
 # The FPGA boards keyed on a Xilinx Device DNA, whose die the IDCODE names.
 XILINX_KINDS = ("netv2", "arty", "acorn", "pcileech", "jtag", "unknown-fpga")
+# The FPGA boards that have a label (contract 10). A Fomu has none yet, and a
+# Tiny Tapeout board has its own; either is kept in the document, and makes
+# no fpga[i] label.
+FPGA_LABEL_KINDS = (*XILINX_KINDS, "cynthion")
 TT_NEEDS = ("usb_serial", "mcu", "chip", "demoboard")
 
 
@@ -483,7 +487,8 @@ def missing(doc: dict[str, Any] | str | bytes) -> dict[str, list[str]]:
     if board is not None:
         out["board"] = board
     for i, b in enumerate(s["fpga"] or ()):
-        out[f"fpga[{i}]"] = _fpga_needs(b)
+        if b["kind"] in FPGA_LABEL_KINDS:
+            out[f"fpga[{i}]"] = _fpga_needs(b)
     for i, t in enumerate(s["tinytapeout"] or ()):
         need = [k for k in TT_NEEDS if t[k] is None]
         if t["chip"] == "asic" and t["shuttle"] is None:
