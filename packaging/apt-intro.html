@@ -7,6 +7,7 @@ the <code>rpi-hwid</code> command. The package is architecture
 machine; Raspberry Pi OS follows Debian's codenames.</p>
 <p><code>python3-spiflash</code>, the SPI flash part database the label
 generator names flash chips from, is here too: it is not in Debian, so each
-build copies it from <a href="https://mith.ro/spiflash/">spiflash's own
-repository</a>, verified against that repository's signing key, and
-<code>python3-rpi-hwid</code> installs from this repository alone.</p>
+publish copies it from <a href="https://mith.ro/spiflash/">spiflash's own
+repository</a>, verified against that repository's signature and signed with
+this repository's key, and <code>python3-rpi-hwid</code> installs from this
+repository alone.</p>
