@@ -183,6 +183,28 @@ What it never does:
   HAT that was never looked for.
 * Probe an FPGA board, a Tiny Tapeout board or an ESP32, or stop a service.
 
+## This host's labels: `labels --this-host`
+
+```
+$ sudo rpi-hwid labels --this-host [--out labels.pdf] [--list] [--input FILE] [--host NAME]
+$ sudo fpgas-verify --label                     # the same, started from fpgas-verify
+```
+
+Builds this host's label input on the host and makes its labels from it: the
+Pi's facts from the Pi-only probe above, and the FPGA boards from the FPGA
+module with fpgas-verify's identity (see [PROBE.md](PROBE.md#fpga-boards)),
+with no `--jtag`, `--flash`, `--soc` or `--force-offline` of its own. Started
+by `fpgas-verify --label`, which sets `FPGAS_VERIFY_IDENTITY`, it sends nothing
+to any FPGA at all. `--input` also writes the label input it built:
+`rpi_hwid.this_host.label_input_document(host)` from Python.
+
+That document is what the fpgas.online site's must match under
+`label_input.comparable`, the site building it from the `pi-identified` and
+`fpga-board-identified` events. A label it is short of a field for is refused
+with the list (`labels --check` says the same for a directory). A Tiny Tapeout
+board is not in it: reading one means taking its demo board's port from the
+service using it, which this does not do.
+
 ## From Python
 
 Everything takes and returns plain dicts, touches no hardware and starts no
