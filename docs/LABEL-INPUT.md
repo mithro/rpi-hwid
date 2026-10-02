@@ -102,6 +102,76 @@ $ rpi-hwid probe --json > pi-sw2-p48.json
 $ rpi-hwid label-input --from pi-sw2-p48.json > labels/pi-sw2-p48.json
 ```
 
+## The Pi alone: `--pi-only`
+
+```
+$ sudo rpi-hwid label-input --pi-only [--user-bus] [--host NAME]
+```
+
+The Pi's facts (model, serial, revision, memory, MACs, the HAT, the power
+class, and on a Pi 5 the fan, the RTC battery and the PMIC's readings) as a
+label input on stdout, with `fpga` and `tinytapeout` empty: nothing probed
+them. fpgas-verify runs it once at boot, before it takes any board's lock,
+and sends the summary to the fpgas.online site in its `pi-identified` event,
+so it is made to be safe while a board under test is wired to the header.
+`--host` defaults to this host's name.
+
+**What the site's documents are compared with.** The site builds a host's
+label input from that event and fpgas-verify's board identities. The
+document on the Pi it must match, under `label_input.comparable`, is these
+Pi facts plus fpgas-verify's identity of each board -- what `rpi-hwid labels
+--this-host` builds -- and not `label-input --from` a full probe, which can
+also read the user bus and so can differ by design.
+
+In the event (contract 13 and 17), a field that was not read is left out --
+here that is `header`, when nothing the probe may look at named a HAT -- and
+the site leaves it out of what it builds, an absent `header` reading back as
+not read. A scalar that was read and is none (a Pi 4's `fan` and
+`rtc_battery`, a HAT with no `hat_uuid`) is sent as `-`, and a list read
+empty as `[]`.
+
+What it does, and puts back:
+
+* **The HAT ID bus** (pins 27/28, GPIO0/1, i2c-0 on a Pi): where it is not
+  already up, `modprobe i2c-dev` and `dtparam i2c_vc=on`; then a read of the
+  HAT EEPROM addresses 0x50-0x57; then the dtparam is taken out and
+  `modprobe -r i2c-dev`, so the host is left as it was found, even when the
+  read fails. Only the probe's own dtparam is removed: `dtparam -l` before
+  and after the apply finds its entry, and `dtparam -r <index>` removes that
+  entry alone (a bare `dtparam -r` removes the last runtime entry, whoever
+  applied it: `dtoverlay_remove()` in raspberrypi/utils
+  `dtmerge/dtoverlay_main.c`). When the list shows no new entry of its own --
+  the apply failed, or something else changed the list meanwhile -- it
+  removes nothing. The firmware's own reading of the HAT comes from
+  `/proc/device-tree/hat`.
+* `vcgencmd get_throttled`, and on a Pi 5 `sudo vcgencmd pmic_read_adc`: reads.
+* sysfs, procfs and the device tree: reads. On a PC (no device tree), the
+  root-only DMI serials through `sudo -n cat`.
+
+What it never does:
+
+* **Touch the header's user bus** (pins 3/5, GPIO2/3), unless `--user-bus`
+  asks: no enable, no open, no scan. An Acorn's J5 is on GPIO3, and a Pmod
+  HAT's lines are on the header. A HAT known only by the devices it puts
+  there (a Waveshare PoE HAT (B)) therefore goes unseen, and when nothing at
+  all is found on the header, `header` is null (not read) rather than `[]`:
+  no label says "HAT none" of a HAT that was never looked for.
+* Probe an FPGA board, a Tiny Tapeout board or an ESP32, or stop a service.
+
+`--user-bus` (contract 18) scans the user bus too, the same way the ID bus is
+read: where it is not already up, `modprobe i2c-dev` and `dtparam
+i2c_arm=on`, a quick-write scan of the addresses, then its own dtparam
+removed and the module unloaded, so the host is left as it was found. With
+both buses read, a header with nothing on it is `[]`, and the Pi label can be
+made. A header bus that should have been read and was not -- the ID bus
+whose `dtparam` brought no `/dev/i2c-0` up, or the user bus under
+`--user-bus` -- leaves the header null (not read), whatever the other bus
+found, unless the firmware's own reading (`/proc/device-tree/hat`) names the
+HAT.
+It drives GPIO2/3, so it is for when nothing else may be using them:
+fpgas-verify passes it only at boot, before any test, and only where the
+setup's wiring says those pins are safe for I2C then.
+
 ## From Python
 
 Everything takes and returns plain dicts, touches no hardware and starts no

@@ -559,6 +559,53 @@ BUS_SETTLE_S = 5.0
 
 I2C_DEV_LOAD = ["sudo", "modprobe", "i2c-dev"]
 I2C_DEV_UNLOAD = ["sudo", "modprobe", "-r", "i2c-dev"]
+DTPARAM_LIST = ["sudo", "dtparam", "-l"]
+# An undo step that takes out the one runtime dtparam this probe applied,
+# rather than a command: see remove_own_dtparam.
+DTPARAM_UNDO = "dtparam-undo"
+
+
+def dtparams_loaded():
+    """The runtime overlays and dtparams, in load order, as `dtparam -l`
+    prints them: [(index, "dtparam i2c_vc=on"), ...], whitespace folded.
+    The format is dtoverlay_list() in raspberrypi/utils
+    dtmerge/dtoverlay_main.c: "%d:  %s %s" per entry, after a header line,
+    or "No overlays loaded"."""
+    out = sh(DTPARAM_LIST)
+    return [(int(m.group(1)), " ".join(m.group(2).split()))
+            for m in re.finditer(r"^\s*(\d+):\s+(\S.*)$", out, re.M)]
+
+
+def apply_dtparam(enable):
+    """Run `enable` (["sudo", "dtparam", "<param>"]) and return the undo
+    step for exactly what it added, or None when it added nothing that can
+    be told apart as its own.
+
+    A bare `dtparam -r` removes the LAST runtime overlay, whoever applied
+    it (dtoverlay_remove() in raspberrypi/utils dtmerge/dtoverlay_main.c:
+    with no argument, rmpos = count - 1). So the probe looks at the list
+    before and after, takes its own entry to be the one new entry, at the
+    end, naming its parameter -- and when that is not what it finds (the
+    apply failed, or something else changed the list meanwhile), removes
+    nothing at all rather than guess."""
+    before = dtparams_loaded()
+    sh(enable)
+    after = dtparams_loaded()
+    mine = "dtparam " + enable[-1]
+    if len(after) == len(before) + 1 and after[:-1] == before and after[-1][1] == mine:
+        return [DTPARAM_UNDO, mine]
+    return None
+
+
+def remove_own_dtparam(mine):
+    """Take out the most recent runtime entry that is `mine` ("dtparam
+    i2c_vc=on"), by its index. `dtparam -r <index>` removes that entry
+    alone and reapplies the ones after it, renumbered (and_later is 0 for
+    -r in dtoverlay_remove()), so an overlay something else applied since
+    stays."""
+    entries = [i for i, text in dtparams_loaded() if text == mine]
+    if entries:
+        sh(["sudo", "dtparam", "-r", str(entries[-1])])
 
 
 def wait_for(path, seconds):
@@ -599,14 +646,18 @@ def open_bus(bus, enable=None):
         # udev only if this bus has one
         if wait_for(path, BUS_SETTLE_S if adapter else 0):
             return True, undo
-    sh(enable)
-    undo.insert(0, ["sudo", "dtparam", "-r"])
+    own = apply_dtparam(enable)
+    if own:
+        undo.insert(0, own)
     return wait_for(path, BUS_SETTLE_S), undo
 
 
 def close_bus(undo):
     for cmd in undo:
-        sh(cmd)
+        if cmd[0] == DTPARAM_UNDO:
+            remove_own_dtparam(cmd[1])
+        else:
+            sh(cmd)
 
 
 def id_bus_scan(bus, enable=None):
@@ -617,16 +668,18 @@ def id_bus_scan(bus, enable=None):
     yields nothing rather than eight HATs -- and nothing found is reported
     apart from no bus to look at, because only the first rules a HAT out."""
     present, undo = open_bus(bus, enable)
-    if not present:
+    try:
+        if not present:
+            return {}, False
+        found = {}
+        for addr in range(0x50, 0x58):
+            info = eeprom_decode(eeprom_read(bus, addr))
+            if info:
+                found["0x%02x" % addr] = info
+        return found, True
+    finally:
+        # put back whatever was brought up, whatever the read did
         close_bus(undo)
-        return {}, False
-    found = {}
-    for addr in range(0x50, 0x58):
-        info = eeprom_decode(eeprom_read(bus, addr))
-        if info:
-            found["0x%02x" % addr] = info
-    close_bus(undo)
-    return found, True
 
 
 def user_bus_scan(bus, enable=None):
@@ -635,12 +688,12 @@ def user_bus_scan(bus, enable=None):
     The same distinction the ID bus makes: a HAT that carries devices
     rather than an EEPROM is invisible on a bus that was never opened."""
     present, undo = open_bus(bus, enable)
-    if not present:
+    try:
+        if not present:
+            return None, False
+        return i2c_scan(bus), True
+    finally:
         close_bus(undo)
-        return None, False
-    devices = i2c_scan(bus)
-    close_bus(undo)
-    return devices, True
 
 
 # Soldered-down wired ports: the Pi's own controllers (macb on a Pi 5,
@@ -960,7 +1013,16 @@ def riscv_summary(rv):
 
 # --- collect ------------------------------------------------------------------
 
-def collect():
+def collect(user_bus=True):
+    """Everything the probe reads, as the evidence document.
+
+    `user_bus=False` leaves the header's user bus (pins 3/5, GPIO2/3 on a
+    Pi) entirely alone: no dtparam for it, no open, no scan. On an
+    fpgas.online rig those pins are wired to the board under test (an
+    Acorn's J5 is on GPIO3, a Pmod HAT's lines are on the header), so a
+    probe made while that board may be in use must not drive them. A HAT
+    known only by the devices it puts there then goes unseen, and the
+    evidence says that bus was not read."""
     d = {}
     d["model"] = read(ROOT + "/proc/device-tree/model") or ""
     compatible = dt_strings(ROOT + "/proc/device-tree/compatible")
@@ -1012,8 +1074,12 @@ def collect():
     header_buses = HEADER_BUSES.get(d["board"])
     if header_buses:
         d["hat_eeproms"], id_read = id_bus_scan(header_buses["id"], header_buses["enable"])
-        d["header_i2c"], user_read = user_bus_scan(header_buses["user"],
-                                                   header_buses["enable_user"])
+        if user_bus:
+            d["header_i2c"], user_read = user_bus_scan(header_buses["user"],
+                                                       header_buses["enable_user"])
+        else:
+            # Not opened, not scanned, not enabled: see collect()'s docstring.
+            d["header_i2c"], user_read = None, False
         d["header_buses_read"] = {"id": id_read, "user": user_read}
     else:
         d["hat_eeproms"], d["header_i2c"] = {}, None
