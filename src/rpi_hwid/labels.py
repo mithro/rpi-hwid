@@ -38,11 +38,14 @@ type (or, on a board label, leaves the mark's box empty).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import math
 import os
 import re
 import sys
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -61,7 +64,10 @@ from rpi_hwid.collect import load_collected
 from rpi_hwid.revision import derived_wlan_mac
 
 PACKAGE_ARTWORK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artwork")
-ARTWORK_DIR = None
+# The caller's artwork directory, for the context this render runs in: a
+# context variable rather than a global, so two renders in one process --
+# the fpgas.online site's web workers -- cannot see each other's.
+ARTWORK_DIR: ContextVar[str | None] = ContextVar("rpi_hwid_labels_artwork", default=None)
 
 # --- the sheet ----------------------------------------------------------------
 
@@ -275,7 +281,8 @@ class Label:
 def artwork(name):
     """A mark's file: the caller's artwork directory first, then the
     package's own. Returns None when neither has it."""
-    for d in ([ARTWORK_DIR] if ARTWORK_DIR else []) + [PACKAGE_ARTWORK]:
+    own = ARTWORK_DIR.get()
+    for d in ([own] if own else []) + [PACKAGE_ARTWORK]:
         path = os.path.join(d, name)
         if os.path.exists(path):
             return path
@@ -1926,11 +1933,14 @@ def label_origin(index):
 
 
 def render(docs, out, only=KINDS, start=0, outline=False,
-           pinned_names=None, order=None):
-    """Write the PDF; returns (label count, sheet count)."""
+           pinned_names=None, order=None, invariant=False):
+    """Write the PDF to `out` (a path or a binary file); returns (label
+    count, sheet count). `invariant` leaves the creation date and document
+    id out, so the same labels make the same bytes."""
     register_fonts()
     labels = list(all_labels(docs, set(only), pinned_names, order))
-    c = canvas.Canvas(str(out), pagesize=A4)
+    c = canvas.Canvas(out if hasattr(out, "write") else str(out), pagesize=A4,
+                      invariant=1 if invariant else 0)
     c.setTitle("Hardware identity labels")
     c.setAuthor("rpi-hwid labels")
     per_sheet = COLS * ROWS
@@ -1965,8 +1975,95 @@ def check_main(docs):
     return 1 if short else 0
 
 
+# --- rendering as a library call ----------------------------------------------
+#
+# For a caller with the facts and no host -- the fpgas.online site, which
+# builds each host's label input from what it sends (docs/LABEL-INPUT.md).
+# Label inputs in, PDF bytes out: nothing here reads hardware, starts a
+# process or writes a file, and nothing it sets outlives the call.
+
+ALL_KINDS = None   # every kind of label, the default for `only`
+
+
+def _only(only):
+    from rpi_hwid import micro
+    return set(only) if only else set(KINDS) | set(micro.kinds())
+
+
+def documents(inputs):
+    """{host: record} from label inputs (dicts, or their JSON text), each
+    checked; InputError when one is not a label input, or two name one host."""
+    out = {}
+    for doc in inputs:
+        d = label_input.load(doc)
+        if d["host"] in out:
+            raise label_input.InputError(["%s: two documents for one host" % d["host"]])
+        out[d["host"]] = label_input.to_probe_document(d)
+    return out
+
+
+@contextlib.contextmanager
+def _artwork(directory):
+    token = ARTWORK_DIR.set(str(directory) if directory else None)
+    try:
+        yield
+    finally:
+        ARTWORK_DIR.reset(token)
+
+
+def list_labels(inputs, only=ALL_KINDS, pinned_names=None):
+    """Every label the label inputs make, in sheet order, as dicts with the
+    `id` render_label takes: [{"id", "host", "kind", "title", "size"}, ...].
+    A label short of a field raises MissingFieldsError (or the label code's
+    own refusal) naming it, as rendering would."""
+    from rpi_hwid import placement
+    return [e.listing() for e in placement.entries(documents(inputs), _only(only),
+                                                   pinned_names)]
+
+
+def render_sheet(inputs, only=ALL_KINDS, start=0, outline=False, pinned_names=None,
+                 artwork=None):
+    """The label inputs' labels on A4 L7160 sheets, as PDF bytes: the same
+    PDF `rpi-hwid labels` writes, its first `start` positions left blank."""
+    buf = io.BytesIO()
+    with _artwork(artwork):
+        render(documents(inputs), buf, _only(only), start, outline, pinned_names,
+               invariant=True)
+    return buf.getvalue()
+
+
+def render_label(inputs, label_id, outline=False, pinned_names=None, artwork=None):
+    """One label, by the id list_labels gave it, as a one-page PDF the size
+    of the label: 63.5 x 38.1 mm, or a quarter of that for a micro label."""
+    from rpi_hwid import micro, placement
+    docs = documents(inputs)
+    by_id = dict((e.id, e) for e in placement.entries(docs, _only(None), pinned_names))
+    if label_id not in by_id:
+        raise KeyError("%s: no such label in these documents" % label_id)
+    e = by_id[label_id]
+    buf = io.BytesIO()
+    with _artwork(artwork):
+        register_fonts()
+        size = (LABEL_W, LABEL_H) if e.draw else (micro.MICRO_W, micro.MICRO_H)
+        c = canvas.Canvas(buf, pagesize=size, invariant=1)
+        c.setTitle(e.title)
+        c.setAuthor("rpi-hwid labels")
+        if e.draw:
+            lab = Label(c, 0, 0)
+            if outline:
+                lab.outline()
+            e.draw(lab, e.record)
+        else:
+            cell = micro.Cell(c, 0, 0)
+            if outline:
+                cell.outline()
+            micro.draw_micro(cell, e.record)
+        c.showPage()
+        c.save()
+    return buf.getvalue()
+
+
 def main(argv=None):
-    global ARTWORK_DIR
     ap = argparse.ArgumentParser(prog="rpi-hwid labels", description=__doc__.split("\n")[0])
     ap.add_argument("--data", required=True, type=Path, help="directory of probe JSON documents")
     ap.add_argument("--out", default="hardware-labels.pdf", type=Path)
@@ -1991,7 +2088,7 @@ def main(argv=None):
                     help="say which fields each label still needs, and exit 1 if any does")
     args = ap.parse_args(argv)
 
-    ARTWORK_DIR = str(args.artwork) if args.artwork else None
+    ARTWORK_DIR.set(str(args.artwork) if args.artwork else None)
     docs = load_collected(args.data)
     pinned = json.loads(args.names.read_text()) if args.names else None
     only = args.only or list(KINDS) + micro_kinds
