@@ -284,18 +284,26 @@ def check(doc: Any) -> list[str]:
     return problems
 
 
-def _check_json(where: str, value: Any) -> list[str]:
+# How deep `sources` may nest: provenance is a few levels at most, and a
+# recursion without a bound is a RecursionError on a hostile document.
+MAX_DEPTH = 64
+
+
+def _check_json(where: str, value: Any, depth: int = 0) -> list[str]:
     """What keeps `value` from being JSON that dumps() writes: a key that is
     not a string (JSON's keys are, and sort_keys cannot order mixed ones), a
-    NaN or infinity, a value no JSON type holds."""
+    NaN or infinity, a value no JSON type holds, nesting past MAX_DEPTH."""
+    if depth > MAX_DEPTH:
+        return [f"{where}: nested more than {MAX_DEPTH} deep"]
     if isinstance(value, dict):
         out = [f"{where}: key {k!r} is not a string" for k in value if not isinstance(k, str)]
         for k, v in value.items():
             if isinstance(k, str):
-                out += _check_json(f"{where}.{k}", v)
+                out += _check_json(f"{where}.{k}", v, depth + 1)
         return out
     if isinstance(value, (list, tuple)):
-        return [p for i, v in enumerate(value) for p in _check_json(f"{where}[{i}]", v)]
+        return [p for i, v in enumerate(value)
+                for p in _check_json(f"{where}[{i}]", v, depth + 1)]
     if isinstance(value, float) and not math.isfinite(value):
         return [f"{where}: not writable as JSON: {value!r}"]
     if value is None or isinstance(value, (str, int, float, bool)):

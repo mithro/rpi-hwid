@@ -455,3 +455,28 @@ def test_the_cli_says_so_too(tmp_path, capsys):
     path.write_text(json.dumps(raw))
     assert cli.main(["label-input", "--from", str(path)]) == 1
     assert "a finite number is required" in capsys.readouterr().err
+
+
+
+def test_sources_nested_past_the_limit_are_refused_not_a_recursion_error():
+    deep = "leaf"
+    for _ in range(5000):
+        deep = {"a": deep}
+    with pytest.raises(label_input.InputError, match="nested more than 64 deep"):
+        label_input.build("h", {"model": "m"}, {"x": deep})
+    listy = "leaf"
+    for _ in range(100):
+        listy = [listy]
+    with pytest.raises(label_input.InputError, match="nested more than 64 deep"):
+        label_input.build("h", {"model": "m"}, {"x": listy})
+
+
+@pytest.mark.parametrize("make", ["missing", "directory"])
+def test_the_cli_reports_a_file_it_cannot_read(tmp_path, capsys, make):
+    path = tmp_path / "p48.json"
+    if make == "directory":
+        path.mkdir()
+    assert cli.main(["label-input", "--from", str(path)]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith(str(path) + ": ")
+    assert "Traceback" not in err
