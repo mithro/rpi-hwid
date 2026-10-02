@@ -15,10 +15,17 @@ publishes a new package** automatically:
   suite: `X.Y.postN~deb12` (bookworm), `~deb13` (trixie), `~deb14` (forky),
   nothing for sid; a pull request's preview build adds `~pr<P>`. Each suite
   also carries `python3-spiflash`, which `python3-rpi-hwid` Depends on and
-  Debian lacks: every build fetches the newest one from
-  https://mith.ro/spiflash/<suite>/ (the `[[depends]]` in
-  `.github/apt-packaging.toml`), verified against spiflash's key, whose
-  fingerprint `deb.yml` pins, and publishes it unchanged beside ours.
+  Debian lacks: spiflash's repository is bundled (the `[[depends]]` with
+  `bundle = true` in `.github/apt-packaging.toml`), so every publish copies
+  the newest one from https://mith.ro/spiflash/<suite>/, verified against
+  spiflash's signed index, and serves it beside ours, signed with this
+  repository's key and marked `Bundled-From: mithro/spiflash`.
+- `.github/workflows/refresh-bundled.yml` ("Refresh bundled packages") —
+  daily, checks whether spiflash has published a `python3-spiflash` newer
+  than the one the live site bundles, and only then starts "Debian packages"
+  on `main`, so a spiflash release reaches rpi-hwid's users without a commit
+  here. (Such a run rebuilds a commit already released, so PyPI gets nothing
+  new from it: `publish-pypi.yml` uploads with `skip-existing`.)
 - `.github/workflows/publish-pypi.yml` — builds and uploads the wheel + sdist to
   PyPI when "Debian packages" **succeeds** on `main` (`workflow_run`; a failed
   or cancelled run publishes nothing, and the checkout is pinned to the SHA it
