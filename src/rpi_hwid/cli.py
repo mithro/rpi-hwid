@@ -13,6 +13,7 @@
     rpi-hwid tasmota --sheet CSV --site NAME=OCTET --out DIR
                                                           over HTTP, read-only: Tasmota plugs
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
+    rpi-hwid label-input --from PROBE_JSON [--host NAME]  the labels' versioned input document
     rpi-hwid name --netv2 DNA… | --arty SERIAL… | --cynthion UID…
                                                           the derived board names
     rpi-hwid revision CODE…                               decode Pi revision codes
@@ -186,6 +187,23 @@ def cmd_name(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_label_input(args: argparse.Namespace) -> int:
+    from rpi_hwid import label_input
+    from rpi_hwid.model import ProbeDocument
+
+    path = Path(args.from_probe)
+    try:
+        # a probe document as `probe --json` or `collect` wrote it: from_json
+        # skips a login banner before it, as load_collected does
+        raw = ProbeDocument.from_json(path.stem, path.read_text()).evidence
+        doc = label_input.from_probe(args.host or path.stem, raw)
+    except ValueError as exc:  # InputError is one
+        print(f"{path}: {exc}", file=sys.stderr)
+        return 1
+    sys.stdout.write(label_input.dumps(doc))
+    return 0
+
+
 def cmd_revision(args: argparse.Namespace) -> int:
     for code in args.codes:
         r = revision.decode_revision(code)
@@ -278,6 +296,13 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("labels", help="print-ready labels from collected data (rpi-hwid labels -h)",
                    add_help=False)
+
+    p = sub.add_parser("label-input",
+                       help="the labels' versioned input document (docs/LABEL-INPUT.md)")
+    p.add_argument("--from", dest="from_probe", required=True, metavar="PROBE_JSON",
+                   help="a probe document (probe --json, or a file collect wrote)")
+    p.add_argument("--host", help="the host it describes (default: the file's name)")
+    p.set_defaults(func=cmd_label_input)
 
     p = sub.add_parser("name", help="derived board names")
     p.add_argument("--netv2", nargs="*", metavar="DNA")
