@@ -9,10 +9,12 @@ from pathlib import Path
 
 import pytest
 
-from rpi_hwid import fpga, label_input, labels, probe, this_host, tinytapeout
+from rpi_hwid import cli, fpga, label_input, labels, probe, this_host, tinytapeout
 from test_probe_collect import _pi5_tree, _w
 
 GOLDEN = Path(__file__).parent / "data" / "identity-v1-acorn-p48.json"
+# what the PMIC's ADC reads: a measurement, so not the same twice
+PMIC = {"ext5v": "5.33990000"}
 
 
 @pytest.fixture
@@ -29,14 +31,14 @@ def host(tmp_path, monkeypatch):
 
     def sh(args, timeout=15):
         if args[:2] == ["sudo", "vcgencmd"]:
-            return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
+            return f"EXT5V_V volt(24)={PMIC['ext5v']}V\nBATT_V volt(25)=3.26000000V\n"
         if args == ["vcgencmd", "get_throttled"]:
             return "throttled=0x0"
         return ""
     monkeypatch.setattr(probe, "sh", sh)
     monkeypatch.setattr(probe, "i2c_open", lambda bus, addr: None)
     monkeypatch.setattr(fpga, "sh", sh)
-    monkeypatch.setattr(fpga, "identity_probe", lambda: {
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {
         "read": fpga.identity_parse(GOLDEN.read_text())[0], "error": None,
         "document": json.loads(GOLDEN.read_text())})
     for name in ("jtag_probe", "soc_probe", "pcileech_probe", "cynthion_offline_probe"):
@@ -73,17 +75,19 @@ def test_the_document_is_the_pis_facts_and_fpgas_verifys_boards(host):
 # and nothing else; a header nothing sent is null.
 
 REGISTRATION = ("model", "serial", "revision", "memory", "macs")
-SITE_PI_FIELDS_42 = {
+# site #42's PI_FIELDS (fleet/src/fleet/hwid.py at d1272a6, branch
+# hwid-label-input): keep in step with it.
+SITE_PI_FIELDS = {
     "compatible": str, "power_class": str, "hat_uuid": str,
     "fan": bool, "rtc_battery": bool, "max_current_ma": int, "ext5v_v": float,
-    "header": list, "macs": list,
+    "header": list, "macs": list, "usb_net": list,
 }
-# contract 19: pi-identified carries usb_net too
-SITE_PI_FIELDS = dict(SITE_PI_FIELDS_42, usb_net=list)
+# ...and as it was before contract 19 gave it usb_net
+SITE_PI_FIELDS_BEFORE_19 = {k: v for k, v in SITE_PI_FIELDS.items() if k != "usb_net"}
 
 
 def _event(summary, fields):
-    """What fpgas-verify sends in pi-identified, from the Pi's summary."""
+    """What fpgas-verify sends in pi-identified, from its boot-time reading."""
     out = {}
     for key in fields:
         value = summary.get(key)
@@ -109,12 +113,25 @@ def _typed(text, kind):
     return kind(text)
 
 
-def _site(pi_doc, fields):
-    s = pi_doc["summary"]
-    summary = {k: s[k] for k in REGISTRATION if s.get(k)}
+def _boot_reading(host):
+    """The Pi-only reading fpgas-verify takes at boot: independent of the
+    label-time one -- another PMIC sample, and the MACs' evidence as that
+    boot's probe named it."""
+    PMIC["ext5v"] = "5.21870000"
+    try:
+        boot = cli.pi_only_label_input("pi-sw2-p48")
+    finally:
+        PMIC["ext5v"] = "5.33990000"
+    boot["summary"]["macs"] = [dict(m, signal="boot-time evidence")
+                               for m in boot["summary"]["macs"]]
+    return boot["summary"]
+
+
+def _site(boot, fields):
+    summary = {k: boot[k] for k in REGISTRATION if boot.get(k)}
     summary["macs"] = [{"kind": m["kind"], "mac": m["mac"], "signal": None}
-                       for m in s["macs"]]
-    details = _event(s, fields)
+                       for m in boot["macs"]]
+    details = _event(boot, fields)
     summary.update({k: _typed(v, fields[k]) for k, v in details.items()})
     summary.setdefault("header", None)
     summary["fpga"] = [{k: v for k, v in b.items() if k in label_input.FPGA_FIELDS}
@@ -122,22 +139,53 @@ def _site(pi_doc, fields):
                        if b["kind"] != "tt"]
     sources = {"collected_by": "fpgas.online-site", "registration": "fp",
                "pi-identified": "boot 2026-10-02T00:00:00Z", "fpga-board-identified": "boot"}
-    return label_input.build(pi_doc["host"], summary, sources)
+    return label_input.build("pi-sw2-p48", summary, sources)
 
 
 def test_the_site_rebuilds_the_same_document_byte_for_byte(host):
+    boot = _boot_reading(host)
     pi_doc = this_host.label_input_document("pi-sw2-p48")
-    assert label_input.comparable(_site(pi_doc, SITE_PI_FIELDS)) == \
-        label_input.comparable(pi_doc)
+    site = _site(boot, SITE_PI_FIELDS)
+    # two readings: they differ on what is measured...
+    assert site["summary"]["ext5v_v"] != pi_doc["summary"]["ext5v_v"]
+    assert site["summary"]["macs"][0]["signal"] != pi_doc["summary"]["macs"][0]["signal"]
+    # ...and agree on every fact (contract 25)
+    assert label_input.comparable(site) == label_input.comparable(pi_doc)
 
 
 def test_without_usb_net_in_the_event_the_documents_differ(host):
     """What contract 19 fixed: the Pi's own r8152 dongle is in its usb_net,
     and the site had no way to know it."""
+    boot = _boot_reading(host)
     pi_doc = this_host.label_input_document("pi-sw2-p48")
     assert pi_doc["summary"]["usb_net"]
-    assert label_input.comparable(_site(pi_doc, SITE_PI_FIELDS_42)) != \
+    assert label_input.comparable(_site(boot, SITE_PI_FIELDS_BEFORE_19)) != \
         label_input.comparable(pi_doc)
+
+
+def _identity_only(monkeypatch, tmp, *boards):
+    """A host where sysfs shows no FPGA: nothing on PCIe, no Digilent cable;
+    fpgas-verify knows `boards`."""
+    import shutil
+    for slot in ("0001:01:00.0",):
+        shutil.rmtree(tmp / "sys/bus/pci/devices" / slot, ignore_errors=True)
+    doc = dict(json.loads(GOLDEN.read_text()), boards=list(boards))
+    asked = []
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: asked.append(1) or {
+        "read": fpga.identity_parse(json.dumps(doc))[0], "error": None, "document": doc})
+    return asked
+
+
+def test_a_netv2_only_host_asks_fpgas_verify(host, monkeypatch):
+    """A NeTV2 on its harness alone: nothing in sysfs, and fpgas-verify asked
+    all the same (contract 26)."""
+    netv2 = {"board": "netv2", "kind": "netv2", "variant": "a7-100",
+             "idcode": "0x13631093", "dna": "0x00742c4e63b9085c"}
+    asked = _identity_only(monkeypatch, host, netv2)
+    doc = this_host.label_input_document("rpi5-netv2")
+    assert asked
+    assert [b["kind"] for b in doc["summary"]["fpga"]] == ["netv2"]
+    assert doc["summary"]["fpga"][0]["dna"] == "0x00742c4e63b9085c"
 
 
 def test_fpgas_verifys_boards_alone_and_as_it_gave_them(host, monkeypatch):
@@ -154,7 +202,7 @@ def test_fpgas_verifys_boards_alone_and_as_it_gave_them(host, monkeypatch):
 
 
 def test_without_fpgas_verify_the_fpga_module_says_what_is_there(host, monkeypatch):
-    monkeypatch.setattr(fpga, "identity_probe", lambda: None)
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: None)
     doc = this_host.label_input_document("pi-sw2-p48")
     assert [b["kind"] for b in doc["summary"]["fpga"]] == ["acorn"]
     assert doc["sources"]["fpga"] == "rpi-hwid"

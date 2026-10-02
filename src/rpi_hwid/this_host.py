@@ -42,7 +42,9 @@ def identity_boards(found: dict[str, Any]) -> list[dict[str, Any]] | None:
 def label_input_document(host: str) -> dict[str, Any]:
     """The label input for this host."""
     pi = cli.pi_only_label_input(host)
-    found = fpga.collect_fpga()
+    # fpgas-verify is asked whenever it is installed (contract 26): a NeTV2
+    # on its harness alone, or a Tiny Tapeout board, shows nothing in sysfs
+    found = fpga.collect_fpga(identify=True)
     summary = dict(pi["summary"])
     sources = dict(pi["sources"])
     boards = identity_boards(found)

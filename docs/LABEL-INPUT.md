@@ -218,8 +218,10 @@ $ sudo fpgas-verify --label                     # the same, started from fpgas-v
 Builds this host's label input on the host and makes its labels from it.
 The Pi's facts come from the Pi-only probe above (never `--user-bus`: this
 runs on demand, while others may be using the board). The FPGA boards come
-from fpgas-verify's identity where it is installed and answers -- its boards
-alone, with the fields it gave, which is what the site gets -- and otherwise
+from fpgas-verify's identity where it is installed and answers -- asked
+whenever it is installed, whatever sysfs shows, since a NeTV2 on its harness
+or a Tiny Tapeout board shows nothing there; its boards alone, with the fields
+it gave, which is what the site gets -- and otherwise
 from the FPGA module's passive reads (see [PROBE.md](PROBE.md#fpga-boards)),
 with no `--jtag`, `--flash`, `--soc` or `--force-offline` of its own. Started
 by `fpgas-verify --label`, which sets `FPGAS_VERIFY_IDENTITY`, it sends nothing
