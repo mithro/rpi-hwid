@@ -999,7 +999,7 @@ def test_a_field_from_the_boot_report_never_beats_a_live_read():
     b = boards[0]
     assert b["flash_jedec"] == "0x20ba18"
     assert b["report_conflict"] == {"flash_jedec": {"live": "0x20ba18", "report": "0xc22017"}}
-    assert b["from_report"] == ["flash_jedec", "flash_uid_state", "flash_uid"]
+    assert b["from_report"] == ["flash_uid_state", "flash_uid"]   # the jedec stood
     assert b["flash_uid"] == "ab"                    # nothing live disagreed
 
 
@@ -2448,3 +2448,36 @@ def test_the_recovery_collect_names_is_a_command(monkeypatch, capsys, restored, 
     monkeypatch.setattr(fpga, "collect_fpga", lambda *a, **k: pytest.fail("collected"))
     assert cli.main(["fpga", "--recover-cynthion"]) == rc
     assert capsys.readouterr().out.strip() == said
+
+
+def test_a_command_that_outlives_sudos_sigkill_is_let_go(monkeypatch):
+    """SIGKILL to sudo leaves its child running, the pipes held open: a
+    plain communicate() would wait for the child's own exit (17 s on p47)."""
+    events = []
+
+    class Pipe:
+        def close(self):
+            events.append("closed")
+
+    class Clinging:
+        stdout, stderr = Pipe(), Pipe()
+
+        def __init__(self, args, **kw):
+            pass
+
+        def communicate(self, timeout=None):
+            events.append(("wait", timeout))
+            raise fpga.subprocess.TimeoutExpired("x", timeout)
+
+        def terminate(self):
+            events.append("TERM")
+
+        def kill(self):
+            events.append("KILL")
+    monkeypatch.setattr(fpga.subprocess, "Popen", Clinging)
+    out, err, timed_out = fpga.sh_split_timed(["sudo", "-n", "fpgas-verify", "--identify"], 7)
+    assert (out, err, timed_out) == (
+        "", "fpgas-verify did not exit after SIGKILL to sudo", True)
+    assert events == [("wait", 7), "TERM", ("wait", 5), "KILL", ("wait", 5),
+                      "closed", "closed"]
+
