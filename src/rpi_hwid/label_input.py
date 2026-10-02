@@ -209,12 +209,28 @@ def dumps(doc: dict[str, Any]) -> str:
     return _text(load(doc))
 
 
+# What two reads of one host legitimately differ on (contract 25): the 5 V
+# input as the PMIC's ADC measured it, the USB-C current the firmware last
+# negotiated, and which evidence settled each MAC. They stay in the document
+# and on the labels as read; they are left out of the comparison.
+MEASURED = ("ext5v_v", "max_current_ma")
+MEASURED_MAC = ("signal",)
+
+
 def comparable(doc: dict[str, Any]) -> str:
-    """``dumps`` without ``sources``: what two builders of one host's label
-    input must agree on byte for byte. Who read a field is provenance, not
-    data, and a Pi and the site legitimately differ on it."""
+    """``dumps`` without ``sources`` and without what is measured afresh on
+    each read (MEASURED, each MAC's ``signal``): what two builders of one
+    host's label input must agree on byte for byte. Who read a field is
+    provenance, not data, and a reading taken at boot and one taken at
+    label time differ on a voltage without either being wrong."""
     out = load(doc)
     del out["sources"]
+    summary = out["summary"]
+    for key in MEASURED:
+        del summary[key]
+    if summary.get("macs"):
+        summary["macs"] = [{k: v for k, v in m.items() if k not in MEASURED_MAC}
+                           for m in summary["macs"]]
     return _text(out)
 
 
