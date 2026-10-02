@@ -2434,3 +2434,17 @@ def test_identify_is_given_sixty_seconds(monkeypatch):
     fpga.identity_probe()
     fpga.identity_probe(3)
     assert seen == [60, 120]
+
+
+@pytest.mark.parametrize(("restored", "rc", "said"), [
+    (True, 0, "cynthion: back in gateware mode"),
+    (False, 1, "cynthion: did not come back")])
+def test_the_recovery_collect_names_is_a_command(monkeypatch, capsys, restored, rc, said):
+    """collect and the module tell people to run `rpi-hwid fpga
+    --recover-cynthion`; it was an unrecognised argument."""
+    from rpi_hwid import cli
+    monkeypatch.setattr(fpga, "cynthion_offline_probe",
+                        lambda recover=False: {"restored": restored} if recover else {})
+    monkeypatch.setattr(fpga, "collect_fpga", lambda *a, **k: pytest.fail("collected"))
+    assert cli.main(["fpga", "--recover-cynthion"]) == rc
+    assert capsys.readouterr().out.strip() == said

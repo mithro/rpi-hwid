@@ -2,7 +2,7 @@
 
     rpi-hwid probe [--json] [--fpga] [--jtag] [--flash] [--tinytapeout] [--no-stop-service]
                                                           on a Pi: what is this?
-    rpi-hwid fpga [--json] [--jtag] [--flash] [--force-offline]
+    rpi-hwid fpga [--json] [--jtag] [--flash] [--force-offline] [--recover-cynthion]
                                                           on a Pi: which FPGA board?
     rpi-hwid tinytapeout [--json] [--no-repl] [--no-stop-service]
                                                           on a Pi: which Tiny Tapeout board?
@@ -87,6 +87,13 @@ def cmd_probe(args: argparse.Namespace) -> int:
 def cmd_fpga(args: argparse.Namespace) -> int:
     from rpi_hwid import fpga
 
+    if args.recover_cynthion:
+        # the way home for an analyzer left in Apollo mode, which collect
+        # and the module itself tell people to run as this command
+        res = fpga.cynthion_offline_probe(recover=True)
+        print("cynthion: %s" % ("back in gateware mode" if res.get("restored")
+                                else res.get("error") or "did not come back"))
+        return 0 if res.get("restored") else 1
     f = fpga.collect_fpga(args.jtag, args.flash, args.force_offline, args.pins, args.soc)
     if args.json:
         print(json.dumps(f, indent=1))
@@ -219,6 +226,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--soc", action="store_true",
                    help="also read an fpgas.online SoC's ident and DNA over PCIe "
                         "BAR0, to check them against JTAG")
+    p.add_argument("--recover-cynthion", action="store_true",
+                   help="put a Cynthion left in Apollo mode by --force-offline back into "
+                        "its gateware")
     p.add_argument("--pins", metavar="TDI:TDO:TCK:TMS",
                    help="the GPIO JTAG harness, when it is not the NeTV2's "
                         f"{fpga_module_pins()} (an Acorn is 2:3:4:14 on a "
