@@ -1,0 +1,22 @@
+name: Refresh bundled packages
+
+# Every suite bundles python3-spiflash from mithro/spiflash
+# (.github/apt-packaging.toml, `bundle = true`). A newer spiflash build
+# reaches rpi-hwid's users only when this repository publishes again; both
+# are rolling releases, so this checks daily whether spiflash has something
+# newer than the live site bundles, and only then starts "Debian packages" on
+# main (mithro/apt-repo-action docs/packaging.md, "Bundling a dependency
+# repository"). Most days nothing runs.
+on:
+  schedule: [{cron: "41 4 * * *"}]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write      # to start the build workflow
+
+jobs:
+  refresh:
+    uses: mithro/apt-repo-action/.github/workflows/refresh-bundled.yml@main
+    with:
+      suites: "bookworm trixie forky sid"
