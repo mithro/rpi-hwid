@@ -266,3 +266,45 @@ def test_a_pi_4s_fan_is_sent_as_read_and_none():
     site = label_input.build("rpi4-tt", decode(details))
     assert site["summary"]["fan"] is None
     assert label_input.comparable(site) == label_input.comparable(pi4)
+
+
+
+def test_an_id_bus_that_did_not_come_up_leaves_the_header_unread(pi5, monkeypatch):
+    """dtparam i2c_vc=on brings no /dev/i2c-0 up: with --user-bus the user
+    bus is read and finds nothing, but the ID bus was not read, so the
+    header is not read -- not [], which would print "HAT none"."""
+    _, calls, _ = pi5
+
+    def sh(args, timeout=15):
+        calls.append(args)
+        if args[:2] == ["sudo", "vcgencmd"]:
+            return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
+        return ""                          # no overlay brings i2c-0 up
+    monkeypatch.setattr(probe, "sh", sh)
+    doc = cli.pi_only_label_input("p48", user_bus=True)
+    assert doc["summary"]["header"] is None
+
+
+def test_a_hat_the_firmware_read_settles_it_even_then(pi5, monkeypatch):
+    root, _, _ = pi5
+    monkeypatch.setattr(probe, "sh", lambda args, timeout=15: "")
+    for key, value in (("vendor", "Digilent"), ("product", "Pmod HAT Adaptor")):
+        _w(root, f"/proc/device-tree/hat/{key}", value + "\0")
+    doc = cli.pi_only_label_input("p48", user_bus=True)
+    assert doc["summary"]["header"] == ["Digilent Pmod HAT Adaptor"]
+
+
+@pytest.mark.parametrize(("buses", "user_bus", "header", "want"), [
+    ({"id": True, "user": True}, True, [], []),
+    ({"id": True, "user": True}, True, ["Waveshare PoE HAT (B)"], ["Waveshare PoE HAT (B)"]),
+    ({"id": False, "user": True}, True, ["Waveshare PoE HAT (B)"], None),
+    ({"id": True, "user": False}, True, [], None),
+    ({"id": True, "user": False}, False, [], None),
+    ({"id": True, "user": False}, False, ["Waveshare PoE M.2 HAT+ (B)"],
+     ["Waveshare PoE M.2 HAT+ (B)"]),
+    ({"id": False, "user": False}, False, [], None),
+    ({}, False, ["no HAT header on this board"], ["no HAT header on this board"]),
+])
+def test_the_header_is_null_wherever_a_bus_it_needed_went_unread(buses, user_bus, header, want):
+    d = {"header_buses_read": buses, "hat_fw": None}
+    assert cli.header_as_read(header, d, user_bus) == want

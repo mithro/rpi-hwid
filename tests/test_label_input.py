@@ -189,7 +189,7 @@ def test_what_is_not_a_label_input_is_refused(doc, problem):
     ({"header": [1]}, {}, r"summary.header\[0\]: a string is required"),
     ({"dmi": []}, {}, "summary.dmi: an object is required"),
     ({"macs": [{"kind": "eth", "mac": 1}]}, {}, r"summary.macs\[0\].mac: a string is required"),
-    ({}, {"x": float("nan")}, "sources: not writable as JSON"),
+    ({}, {"x": float("nan")}, "sources.x: not writable as JSON"),
 ])
 def test_a_wrong_field_is_named(summary, sources, problem):
     with pytest.raises(label_input.InputError, match=problem):
@@ -426,3 +426,33 @@ def test_comparable_leaves_out_what_each_read_measures_afresh():
     # and anything else still counts
     b["summary"]["serial"] = "0000000000000000"
     assert label_input.comparable(a) != label_input.comparable(b)
+
+
+
+@pytest.mark.parametrize(("sources", "problem"), [
+    ({1: "a", "b": "c"}, "sources: key 1 is not a string"),
+    ({"a": {2: "x"}}, "sources.a: key 2 is not a string"),
+    ({"a": [{"b": {3: 1}}]}, r"sources.a\[0\].b: key 3 is not a string"),
+    ({"a": float("inf")}, "sources.a: not writable as JSON"),
+    ({"a": {1, 2}}, "sources.a: not writable as JSON: a set"),
+])
+def test_sources_that_dumps_could_not_write_are_refused(sources, problem):
+    with pytest.raises(label_input.InputError, match=problem):
+        label_input.build("h", {"model": "m"}, sources)
+
+
+def test_a_number_too_big_for_a_float_is_refused_not_a_traceback():
+    with pytest.raises(label_input.InputError, match="ext5v_v: a finite number is required"):
+        label_input.build("h", {"ext5v_v": 10 ** 400})
+    with pytest.raises(label_input.InputError, match="ext5v_v: a finite number is required"):
+        label_input.load('{"schema": "rpi-hwid/label-input", "version": 1, "host": "h", '
+                         '"sources": {}, "summary": {"ext5v_v": 1' + "0" * 400 + '}}')
+
+
+def test_the_cli_says_so_too(tmp_path, capsys):
+    raw = copy.deepcopy(RAW["pi-sw2-p48"])
+    raw["verdict"]["summary"]["ext5v_v"] = 10 ** 400
+    path = tmp_path / "p48.json"
+    path.write_text(json.dumps(raw))
+    assert cli.main(["label-input", "--from", str(path)]) == 1
+    assert "a finite number is required" in capsys.readouterr().err
