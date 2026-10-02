@@ -207,3 +207,52 @@ def test_the_schema_requires_what_check_requires():
     doc["summary"]["fpga"][0]["kind"] = None
     with pytest.raises(jsonschema.ValidationError):
         jsonschema.validate(doc, schema)
+
+
+# --- only the labels being made --------------------------------------------------
+
+def test_a_board_label_not_asked_for_is_not_refused():
+    """--only x86 makes no Pi label, so a Pi short of its header is no reason
+    to stop."""
+    docs = _docs(header=None)
+    assert list(labels.all_labels(docs, {"x86"})) == []
+    rows = list(labels.all_labels(docs, {"x86", "acorn"}))
+    assert [r[1] for r in rows] == ["acorn"]
+    with pytest.raises(labels.MissingFieldsError):
+        list(labels.all_labels(docs, {"rpi"}))
+
+
+def test_list_only_x86_on_a_pi_with_an_unread_header_succeeds(tmp_path):
+    (tmp_path / "p48.json").write_text(
+        label_input.dumps(label_input.build("pi-sw2-p48", summary(header=None))))
+    assert labels.main(["--data", str(tmp_path), "--list", "--only", "x86"]) == 0
+
+
+FOMU = {"kind": "fomu", "serial": "fomu-1"}
+
+
+def test_a_fomu_has_no_label_and_needs_nothing():
+    acorn = RAW["pi-sw2-p48"]["verdict"]["summary"]["fpga"][0]
+    needs = missing(summary(fpga=[FOMU, acorn]))
+    assert "fpga[0]" not in needs
+    assert needs["fpga[1]"] == []
+
+
+def test_a_fomu_is_not_drawn_and_the_board_after_it_keeps_its_key():
+    acorn = dict(RAW["pi-sw2-p48"]["verdict"]["summary"]["fpga"][0], dna=None)
+    rows = list(labels.all_labels(_docs(fpga=[FOMU]), labels.KINDS))
+    assert "fomu" not in [r[1] for r in rows]
+    with pytest.raises(labels.MissingFieldsError, match=r"the fpga\[1\] label needs dna"):
+        list(labels.all_labels(_docs(fpga=[FOMU, acorn]), labels.KINDS))
+
+
+def test_check_follows_only(tmp_path, capsys):
+    (tmp_path / "pi-sw2-p48.json").write_text(
+        label_input.dumps(label_input.build("pi-sw2-p48", summary(header=None))))
+    assert labels.main(["--data", str(tmp_path), "--check", "--only", "fpga"]) == 0
+    out = capsys.readouterr().out.splitlines()
+    assert out == ["pi-sw2-p48  fpga[0]        complete", "0 labels short of a field"]
+    assert labels.main(["--data", str(tmp_path), "--check", "--only", "rpi"]) == 1
+    assert "needs header" in capsys.readouterr().out
+    assert labels.main(["--data", str(tmp_path), "--check", "--only", "arty"]) == 0
+    assert capsys.readouterr().out.splitlines() == ["0 labels short of a field"]
