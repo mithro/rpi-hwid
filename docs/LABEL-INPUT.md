@@ -92,9 +92,11 @@ with this list, rather than printed with a gap or a placeholder.
 ```
 
 The keys are `board` (the host's own label) and `fpga[i]`, `tinytapeout[i]`
-and `usb_net[i]` by position in those lists. A list that is empty or null describes no
+and `usb_net[i]` by position in those lists. A list that is empty describes no
 labels, so a document of the Pi's facts alone (`--pi-only`) has no `fpga[i]`
-keys until the FPGA boards are added. A board this package has no label for
+keys until the FPGA boards are added. An `fpga` or `tinytapeout` list that is
+null was not read, and is named under its own key (`{"fpga": ["fpga"]}`):
+which labels it would make is not known, so none of them is made. A board this package has no label for
 has no `board` key, and an FPGA board with no label (a `fomu`, or a `tt`,
 which has a Tiny Tapeout label of its own) has no `fpga[i]` key: the keys
 keep the board's own position, so the next board is still `fpga[1]`.
@@ -212,6 +214,55 @@ HAT.
 It drives GPIO2/3, so it is for when nothing else may be using them:
 fpgas-verify passes it only at boot, before any test, and only where the
 setup's wiring says those pins are safe for I2C then.
+
+## This host's labels: `labels --this-host`
+
+```
+$ sudo rpi-hwid labels --this-host [--out labels.pdf] [--list] [--input FILE] [--host NAME]
+$ sudo fpgas-verify --label                     # the same, started from fpgas-verify
+```
+
+Builds this host's label input on the host and makes its labels from it.
+The Pi's facts come from the Pi-only probe above (never `--user-bus`: this
+runs on demand, while others may be using the board). The FPGA boards come
+from fpgas-verify's identity where it is installed and answers -- asked
+whenever it is installed, whatever sysfs shows, since a NeTV2 on its harness
+or a Tiny Tapeout board shows nothing there; its boards alone, with the fields
+it gave, which is what the site gets -- and otherwise
+from the FPGA module's passive reads (see [PROBE.md](PROBE.md#fpga-boards)),
+with no `--jtag`, `--flash`, `--soc` or `--force-offline` of its own. Started
+by `fpgas-verify --label`, which sets `FPGAS_VERIFY_IDENTITY`, it sends nothing
+to any FPGA at all. `--input` also writes the label input it built:
+`rpi_hwid.this_host.label_input_document(host)` from Python.
+
+That document is what the fpgas.online site's must match under
+`label_input.comparable`, the site building it from the Pi's registration and
+the `pi-identified` and `fpga-board-identified` events. A label it is short of
+a field for is refused with the list (`labels --check` says the same for a
+directory).
+
+**What fpgas-verify read at boot** (contract 29). Its boot scan reads the
+header's user bus, which this never does, so it knows the HAT a header read on
+demand leaves null -- and the power class such a HAT settles. Where its
+`--identify` document carries a `pi` object (the boot `pi-identified` facts,
+under Summary's field names, with `read_at`), each of its fields fills one
+this read left null, and a power class this read could not settle
+(`undetermined`, `ambiguous`); a value read here is never replaced. The fields
+taken are listed, with `read_at`, under `sources.pi_from_boot`. The site has
+the same boot event, so the two documents agree. With no `pi` object, nothing
+changes.
+
+**fpgas-verify installed, and failing** (contract 30) -- `sudo -n` refused, a
+timeout, nothing printed: the FPGA and Tiny Tapeout boards are not known.
+`fpga` and `tinytapeout` are null, `sources.fpgas_verify_error` says why (and
+`sources.fpga_sysfs` what sysfs alone saw, never passed off as the list), and
+`labels --this-host` refuses their labels with that reason on stderr and exits
+1. `--only rpi` still makes the Pi's.
+
+A Tiny Tapeout board is not in it yet: reading one here would mean taking its
+demo board's port from the service using it. Once fpgas-verify reports a Tiny
+Tapeout board's identity, which it reads while it owns the port at boot
+(contract 21), it will come from there.
 
 ## From Python
 

@@ -135,7 +135,7 @@ disallow_untyped_calls = false
 warn_return_any = false
 
 [[tool.mypy.overrides]]
-module = "rpi_hwid.cli"
+module = ["rpi_hwid.cli", "rpi_hwid.this_host"]
 disallow_untyped_calls = false
 warn_return_any = false
 

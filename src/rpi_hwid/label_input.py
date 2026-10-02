@@ -519,9 +519,11 @@ def missing(doc: dict[str, Any] | str | bytes) -> dict[str, list[str]]:
     The keys are ``board`` (the Pi's, or the Orange Pi's, RISC-V board's or
     PC's own label), and ``fpga[i]``, ``tinytapeout[i]`` and ``usb_net[i]``
     by position in those lists; field names are the record's own. A label
-    whose list is empty can be made. A list that is empty or null describes no
-    labels at all, so a document of the Pi's facts alone has no ``fpga[i]``
-    keys until the FPGA's are added. A summary that names no board this
+    whose list is empty can be made. A list that is empty describes no
+    labels, so a document of the Pi's facts alone has no ``fpga[i]`` keys
+    until the FPGA's are added; an ``fpga`` or ``tinytapeout`` list that is
+    null was not read, and is named under its own key (``{"fpga": ["fpga"]}``):
+    which labels it would make is not known. A summary that names no board this
     package labels has no ``board`` key.
 
     The labels refuse what this reports (``rpi-hwid labels``, and the
@@ -533,6 +535,12 @@ def missing(doc: dict[str, Any] | str | bytes) -> dict[str, list[str]]:
     board = _board_needs(s, to_probe_document(d).summary)
     if board is not None:
         out["board"] = board
+    # A list that is null was not read (contract 17 and 30: fpgas-verify
+    # installed and failing): what boards it holds is not known, so its
+    # labels cannot be listed, let alone made. [] is a list read empty.
+    for key in ("fpga", "tinytapeout"):
+        if s[key] is None:
+            out[key] = [key]
     for i, b in enumerate(s["fpga"] or ()):
         if b["kind"] in FPGA_LABEL_KINDS:
             out[f"fpga[{i}]"] = _fpga_needs(b)

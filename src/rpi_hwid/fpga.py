@@ -2777,7 +2777,11 @@ def fpga_summary(boards):
     return out
 
 
-def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=False):
+def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=False,
+                 identify=False):
+    # `identify`: ask fpgas-verify whatever sysfs shows (labels --this-host,
+    # contract 26) -- a NeTV2 on its harness alone, or a Tiny Tapeout board,
+    # shows nothing on PCIe or a Digilent FT2232.
     # Inside an outer fpgas-verify, nothing is sent to any FPGA: what the
     # boards are comes from the identity the outer run read, and sysfs.
     if nested():
@@ -2817,7 +2821,7 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     artys = [u for u in f["ftdi"] if u["id"] == "0403:6010"
              and (u["manufacturer"] or "").startswith("Digilent")]
     f["fpgas_verify"] = identity_probe(max(1, len(endpoints) + len(artys))) \
-        if endpoints or artys or jtag or nested() else None
+        if endpoints or artys or jtag or nested() or identify else None
     identified = (f["fpgas_verify"] or {}).get("read", [])
     # Which boards still want their flash read over JTAG, which loads a
     # bridge in place of the running design: those whose flash fpgas-verify

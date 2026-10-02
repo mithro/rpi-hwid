@@ -1,6 +1,7 @@
 """Print-ready hardware labels from collected probe documents.
 
     rpi-hwid labels --data data/ --out labels.pdf [--artwork DIR] [--names names.json]
+    rpi-hwid labels --this-host [--out labels.pdf] [--list] [--input FILE]
 
 An A4 PDF laid out for 21-per-sheet 63.5 x 38.1 mm address labels (the
 Avery L7160 grid: three columns, seven rows, 2.54 mm between columns,
@@ -1829,6 +1830,10 @@ def board_label_wanted(doc, only):
 def key_wanted(key, kind, only):
     """Whether `only` asks for the label at label input key `key`, a board
     of `kind` where it is an FPGA."""
+    if key == "fpga":
+        return "fpga" in only or bool(only & set(FPGA_KINDS))
+    if key == "tinytapeout":
+        return "tt" in only
     if key.startswith("fpga["):
         return "fpga" in only or kind in only
     if key.startswith("tinytapeout["):
@@ -1885,6 +1890,14 @@ def whole_labels(docs, only, pinned_names=None, order=None, hosts=None):
     # input's key for it, past any board that has no label
     fpga_at = {host: [i for i, b in enumerate(docs[host].summary.fpga)
                       if b.kind in FPGA_KINDS] for host in docs}
+    # a list that was not read: its labels are not known, so none is made
+    for host in sorted(docs):
+        if hosts is not None and host not in hosts:
+            continue
+        if any_fpga:
+            refuse_missing(host, "fpga", needs[host])
+        if "tt" in only:
+            refuse_missing(host, "tinytapeout", needs[host])
     for record_kind, records in (
             ("fpga", fpga_records(docs, pinned_names) if any_fpga else ()),
             ("tt", tinytapeout_records(docs) if "tt" in only else ()),
@@ -2118,7 +2131,16 @@ def render_label(inputs, label_id, outline=False, pinned_names=None, artwork=Non
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="rpi-hwid labels", description=__doc__.split("\n")[0])
-    ap.add_argument("--data", required=True, type=Path, help="directory of probe JSON documents")
+    source = ap.add_mutually_exclusive_group(required=True)
+    source.add_argument("--data", type=Path,
+                        help="directory of probe JSON documents and label inputs")
+    source.add_argument("--this-host", action="store_true",
+                        help="read this host (run on it): the Pi-only probe and fpgas-verify's "
+                             "identity of its FPGA boards (rpi_hwid.this_host)")
+    ap.add_argument("--host", help="with --this-host: the name to file it under "
+                                   "(default: this host's name)")
+    ap.add_argument("--input", type=Path, metavar="FILE",
+                    help="with --this-host: also write the label input it built to FILE")
     ap.add_argument("--out", default="hardware-labels.pdf", type=Path)
     from rpi_hwid import micro
     micro_kinds = list(micro.kinds())
@@ -2146,7 +2168,28 @@ def main(argv=None):
 
 
 def _main(ap, args, micro_kinds):
-    docs = load_collected(args.data)
+    if (args.host or args.input) and not args.this_host:
+        ap.error("--host and --input go with --this-host")
+    if args.this_host:
+        import socket
+
+        from rpi_hwid import this_host
+
+        host = args.host or socket.gethostname()
+        doc = this_host.label_input_document(host)
+        if args.input:
+            args.input.write_text(label_input.dumps(doc))
+        failed = doc["sources"].get("fpgas_verify_error")
+        wanted = set(args.only or KINDS)
+        if failed and (wanted & ({"fpga", "tt"} | set(FPGA_KINDS))):
+            # contract 30: never a silent fallback to sysfs's partial list
+            print("%s: the FPGA and Tiny Tapeout boards are not known: %s; "
+                  "their labels are refused (--only rpi still makes the Pi's)"
+                  % (host, failed), file=sys.stderr)
+            return 1
+        docs = {host: label_input.to_probe_document(doc)}
+    else:
+        docs = load_collected(args.data)
     pinned = json.loads(args.names.read_text()) if args.names else None
     only = args.only or list(KINDS) + micro_kinds
     if args.json and not args.list:
