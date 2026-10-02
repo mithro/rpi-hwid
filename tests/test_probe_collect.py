@@ -373,7 +373,7 @@ def test_fpga_jtag_without_either_tool_is_an_error_record(fake_root, monkeypatch
     # have the suite run `sudo openocd` against their own machine's GPIO.
     monkeypatch.setattr(fpga, "sh", lambda *a, **k: "")
     f = fpga.collect_fpga(jtag=True)
-    assert f["jtag"] == {"error": "openFPGALoader not installed"}
+    assert f["jtag"]["error"] == "openFPGALoader not installed"
 
 
 # The two raw shifts below were taken off real boards, each on a host that

@@ -299,9 +299,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="put a Cynthion left in Apollo mode by --force-offline back into "
                         "its gateware")
     p.add_argument("--pins", metavar="TDI:TDO:TCK:TMS",
-                   help="the GPIO JTAG harness, when it is not the NeTV2's "
-                        f"{fpga_module_pins()} (an Acorn is 2:3:4:14 on a "
-                        "Compute Blade, 10:9:11:8 on a Pi 5)")
+                   help="the GPIO JTAG harness (default: the board's -- an Acorn on PCIe "
+                        "is 2:3:4:14 on a Compute Module, 10:9:11:8 on a Pi 5 or 500; "
+                        f"otherwise the NeTV2's {fpga_module_pins()})")
     p.set_defaults(func=cmd_fpga)
 
     p = sub.add_parser("tinytapeout",

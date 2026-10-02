@@ -468,7 +468,7 @@ def test_the_soc_is_read_before_a_flash_read_replaces_it(monkeypatch):
     monkeypatch.setattr(fpga, "jtag_probe",
                         lambda flash=False, pins=None, parts=None, detach=None:
                         order.append("jtag") or None)
-    monkeypatch.setattr(fpga, "soc_probe", lambda slot: order.append("soc") or {})
+    monkeypatch.setattr(fpga, "soc_probe", lambda slot, board=None: order.append("soc") or {})
     fpga.collect_fpga(jtag=True, flash=True, soc=True)
     assert order == ["soc", "jtag"]
 

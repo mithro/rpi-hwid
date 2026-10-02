@@ -503,3 +503,7 @@ def no_downloads(monkeypatch):
         raise AssertionError("a test tried to fetch " + url)
 
     monkeypatch.setattr(fpga, "ofl_get", refuse)
+    # nor any board lock on this machine: the module takes fpgas-verify's
+    # locks under /run, and a test must not make, hold or wait on the real
+    # ones. A test of the locks points them under its own tree.
+    monkeypatch.setattr(fpga, "BOARD_LOCKS", {})
