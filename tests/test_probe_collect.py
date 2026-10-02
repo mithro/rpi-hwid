@@ -2234,3 +2234,36 @@ def test_identify_is_given_sixty_seconds(monkeypatch):
     fpga.identity_probe()
     fpga.identity_probe(3)
     assert seen == [60, 120]
+
+
+
+def test_a_command_that_outlives_sudos_sigkill_is_let_go(monkeypatch):
+    """SIGKILL to sudo leaves its child running, the pipes held open: a
+    plain communicate() would wait for the child's own exit (17 s on p47)."""
+    events = []
+
+    class Pipe:
+        def close(self):
+            events.append("closed")
+
+    class Clinging:
+        stdout, stderr = Pipe(), Pipe()
+
+        def __init__(self, args, **kw):
+            pass
+
+        def communicate(self, timeout=None):
+            events.append(("wait", timeout))
+            raise fpga.subprocess.TimeoutExpired("x", timeout)
+
+        def terminate(self):
+            events.append("TERM")
+
+        def kill(self):
+            events.append("KILL")
+    monkeypatch.setattr(fpga.subprocess, "Popen", Clinging)
+    out, err, timed_out = fpga.sh_split_timed(["sudo", "-n", "fpgas-verify", "--identify"], 7)
+    assert (out, err, timed_out) == (
+        "", "fpgas-verify did not exit after SIGKILL to sudo", True)
+    assert events == [("wait", 7), "TERM", ("wait", 5), "KILL", ("wait", 5),
+                      "closed", "closed"]

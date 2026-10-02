@@ -662,7 +662,21 @@ def sh_split_timed(args, timeout=15):
             out, err = p.communicate(timeout=TERM_GRACE_S)
         except subprocess.TimeoutExpired:
             p.kill()
-            out, err = p.communicate()
+            try:
+                out, err = p.communicate(timeout=TERM_GRACE_S)
+            except subprocess.TimeoutExpired:
+                # Under sudo, SIGKILL reaches sudo alone, and the command it
+                # ran holds the pipes open while it finishes: stop waiting,
+                # and let go of them.
+                for pipe in (p.stdout, p.stderr):
+                    try:
+                        pipe.close()
+                    except (AttributeError, OSError):
+                        pass
+                words = [a for a in args if a != "sudo" and not a.startswith("-")]
+                return "", "%s did not exit after SIGKILL%s" % (
+                    words[0] if words else args[0],
+                    " to sudo" if args[0] == "sudo" else ""), True
         return out or "", err or "", True
 
 
@@ -1543,6 +1557,8 @@ def identity_probe(boards=1):
     read, why = identity_parse(out)
     if timed_out:
         why = "%s did not answer within %d s (a board busy?)" % (FPGAS_VERIFY, timeout)
+        if "did not exit after SIGKILL" in err:
+            why += "; " + err
     elif why and err.strip():
         why += " (stderr: %s)" % last_lines(err)
     try:
