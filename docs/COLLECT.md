@@ -121,6 +121,9 @@ when that module ran), `hat_uuid` the EEPROM's UUID when one was read,
 `null` elsewhere. Everything outside `verdict` is evidence, kept so a wrong
 verdict can be argued with.
 
+`rpi-hwid labels --data` also reads [label input documents](LABEL-INPUT.md):
+the same `summary`, versioned and checked, for a builder other than the probe.
+
 ## From Python
 
 Everything on the collecting side is a frozen dataclass (`rpi_hwid.model`); the

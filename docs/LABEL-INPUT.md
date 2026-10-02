@@ -1,0 +1,101 @@
+# The label input document
+
+What the labels need for one host, in a shape that something other than
+rpi-hwid's own probe can write: the fpgas.online site builds it from what each
+Pi sends, and renders the labels on its server. It is versioned, it is checked
+field by field, and it is written one way only, so a Pi and the site that
+build it for the same host write the same bytes.
+
+`rpi-hwid labels --data DIR` reads these beside probe documents (see
+[COLLECT.md](COLLECT.md)); the labels made from either are the same.
+
+## Version 1
+
+```json
+{
+ "host": "pi-sw2-p48",
+ "schema": "rpi-hwid/label-input",
+ "sources": {"fpga": "fpgas-verify", "serial": "registration", "header": "rpi-hwid"},
+ "summary": {
+  "fan": true,
+  "fpga": [{"kind": "acorn", "dna": "0x0054b48664b04854", "idcode": "0x13636093",
+            "flash_jedec": "0x010219", "flash_extended_id": "0x4d0180",
+            "flash_uid": "edcbeececb2b2a88b04f914d2e46af90", "flash_uid_bits": 128,
+            "flash_uid_state": "read"}],
+  "hat_uuid": "9729525c-eeee-98e9-f348-a0720f4c16eb",
+  "header": ["Waveshare PoE M.2 HAT+ (B)"],
+  "macs": [{"kind": "eth", "mac": "88:a2:9e:45:85:77"}],
+  "model": "Raspberry Pi 5 Model B Rev 1.1",
+  "revision": "b04171",
+  "rtc_battery": false,
+  "serial": "0cd35697db04a4ab"
+ },
+ "version": 1
+}
+```
+
+(The Pi 5 and Acorn at pi-sw2-p48, as a builder might send it: what it did
+not read, it left out. `dumps` writes the same document with every other
+field present and null.)
+
+| key | |
+|---|---|
+| `schema` | always `"rpi-hwid/label-input"` |
+| `version` | `1`. A reader refuses any other: a version it was not taught is not read hopefully. |
+| `host` | the host the labels are for, a non-empty string |
+| `summary` | the facts, under the field names of `rpi_hwid.model.Summary` verbatim; its `fpga`, `tinytapeout`, `macs` and `usb_net` lists hold `FpgaBoard`, `TinyTapeoutBoard`, `Mac` and `UsbNetAdapter` records, again by their field names. [COLLECT.md](COLLECT.md#the-document) describes each field. |
+| `sources` | who read each top-level summary field: `rpi-hwid` (this package's probe, on the host), `fpgas-verify` (the fpgas.online verifier, on the host), `registration` (what the host told the fpgas.online site when it registered) or `site` (typed in on the site). Provenance, not data. |
+
+The rules:
+
+* **`null` is "not read", and so is a missing key.** `load` fills every field
+  in, null where nothing was sent, so the two cannot differ in what a reader
+  sees. This is why the probe's `[]` and `null` mean different things: a
+  `header` of `[]` is a header that was read and has nothing on it (the label
+  prints "HAT none"), and a `header` of `null` is one nobody read.
+* **Unknown keys are refused**, at every level: a builder that renamed a field
+  is told so rather than having it dropped. A builder holding more than the
+  labels take (fpgas-verify's per-board dict carries `variant`, `bdf` and
+  others) keeps only `label_input.PI_FIELDS`, `FPGA_FIELDS` and `TT_FIELDS`.
+* **Types are checked**: strings are strings, booleans are JSON booleans,
+  integers are JSON numbers. A whole number in a float field (`ext5v_v`) is
+  written as a float, so `5` and `5.0` are one text.
+* **Hex identifiers are lower case and `0x`-prefixed**, as the probe writes
+  them.
+
+The JSON Schema ships with the package, derived from the same records
+(`label_input.schema_path()`, `src/rpi_hwid/label-input-v1.schema.json`).
+
+## Writing it
+
+Only `label_input.dumps` writes the document: checked, normalised (every field
+present, null where not read, lists not tuples), keys sorted, one-space indent,
+ASCII, a trailing newline. `label_input.comparable` is the same text without
+`sources`, and is what two builders of one host's document compare: who read
+a field may legitimately differ between the Pi and the site, the facts may
+not.
+
+On a host, from a probe document:
+
+```
+$ rpi-hwid probe --json > pi-sw2-p48.json
+$ rpi-hwid label-input --from pi-sw2-p48.json > labels/pi-sw2-p48.json
+```
+
+## From Python
+
+Everything takes and returns plain dicts, touches no hardware and starts no
+process, so it is safe in a web worker.
+
+```python
+from rpi_hwid import label_input
+
+doc = label_input.build("pi-sw2-p48", summary, sources)  # checked and normalised
+doc = label_input.load(text_or_dict)                     # the same, from a document
+text = label_input.dumps(doc)                            # the one serialisation
+same = label_input.comparable(a) == label_input.comparable(b)
+record = label_input.to_probe_document(doc)              # what the label code reads
+```
+
+`build`, `load`, `dumps` and `comparable` raise `label_input.InputError`, whose
+`problems` lists every reason the document was refused, not only the first.
