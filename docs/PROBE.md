@@ -218,6 +218,15 @@ for one, `--jtag` reads nothing, and a flash it read is never read again over
 JTAG, which would replace the running design. Its document is kept under
 `fpga.fpgas_verify`. Without fpgas-verify, nothing here changes.
 
+When fpgas-verify itself runs rpi-hwid (`fpgas-verify --label`), it sets
+`FPGAS_VERIFY_IDENTITY` to the identity document it has already read. Then the
+FPGA module sends nothing to any FPGA -- no JTAG, no BAR, no gateware read, no
+Cynthion TraceID, whatever `--jtag`, `--flash`, `--soc` or `--force-offline`
+say -- because the outer run is using the board. It asks `fpgas-verify
+--identify` all the same, which prints that document and touches nothing, and
+keeps the variable through sudo (`sudo -n
+--preserve-env=FPGAS_VERIFY_IDENTITY`; as root, it is simply inherited).
+
 ```
 $ rpi-hwid fpga --jtag          # a Pi 4 with an Arty A7-35T on USB
   fpga   : arty (Digilent FT2232 210319B301DE; FT2232 JTAG idcode 0x362d093 artix a7 35t), DNA 0x00628502251ea85c
