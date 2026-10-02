@@ -413,18 +413,19 @@ HARNESS_TCK, HARNESS_TMS, HARNESS_TDI, HARNESS_TDO = 4, 17, 27, 22
 # harness there was. Measured on the fleet 2026-09-20/21.
 def default_pins(pcie, model=None):
     """The GPIO harness to drive when none was named: an Acorn's own P1 where
-    an Acorn is on PCIe -- 10:9:11:8 on a Pi 5, 2:3:4:14 on a Compute Module
-    4 (the ps1 Compute Blades) -- and the NeTV2's otherwise. A Pi with an
-    Acorn on any other board names its pins with --pins."""
+    an Acorn is on PCIe -- 2:3:4:14 on a Compute Module, 4 or 5 (the Compute
+    Blades), 10:9:11:8 on a Pi 5 or a Pi 500 (its keyboard sibling: the same
+    BCM2712 and RP1, so the same header) -- and the NeTV2's otherwise. A Pi
+    with an Acorn on any other board names its pins with --pins."""
     acorn = any(pc["id"] in ("1e24:021f", "1e24:0101", "10ee:7011")
                 or pc.get("subsystem") in ACORN_SUBSYSTEM for pc in pcie or ())
     if not acorn:
         return HARNESS_PINS
     model = model if model is not None else (read(ROOT + "/proc/device-tree/model") or "")
-    if "Pi 5" in model:
-        return "10:9:11:8"
-    if "Compute Module 4" in model:
+    if "Compute Module" in model:
         return "2:3:4:14"
+    if re.search(r"\bPi 5\b|\bPi 500\b", model):
+        return "10:9:11:8"
     return HARNESS_PINS
 
 
@@ -528,6 +529,59 @@ finally:
 '''
 
 
+# The locks fpgas-verify holds while it uses a board (its board.py: each
+# board's /run/fpgas-online/<slug>.lock, the Acorn's shared with
+# fpgas-acorn-flash). rpi-hwid takes the same one around every SoC, BAR or
+# JTAG access, so neither reconfigures a pin or a command register in the
+# middle of the other's read. Not taken nested: the outer fpgas-verify has
+# let go of its locks, and nothing here touches an FPGA then.
+BOARD_LOCKS = {
+    "acorn": "/run/lock/fpgas-acorn.lock",
+    "netv2": "/run/fpgas-online/netv2.lock",
+    "arty": "/run/fpgas-online/arty.lock",
+}
+LOCK_WAIT_S = 30
+
+
+class BoardBusyError(Exception):
+    """A board's lock was held by someone else for all of LOCK_WAIT_S."""
+
+
+def take_lock(board, wait=None):
+    """The open file holding `board`'s lock, or None where there is no such
+    lock to take (no fpgas-verify here, or no lock for the board); raises
+    BoardBusyError when it stays held for `wait` seconds. flock needs only a
+    file opened for reading, so a lock file root made is taken as well."""
+    import fcntl
+    import time
+    path = BOARD_LOCKS.get(board)
+    if not path or not os.path.isdir(os.path.dirname(ROOT + path)):
+        return None
+    try:
+        held = open(ROOT + path, "a")
+    except OSError:
+        try:
+            held = open(ROOT + path, "r")
+        except OSError:
+            return None          # never made, so never held
+    wait = LOCK_WAIT_S if wait is None else wait
+    deadline = time.time() + wait
+    while True:
+        try:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return held
+        except OSError:
+            if time.time() >= deadline:
+                held.close()
+                raise BoardBusyError("board busy: %s held for %g s" % (path, wait))
+            time.sleep(0.5)
+
+
+def release_lock(held):
+    if held is not None:
+        held.close()
+
+
 # The PCI command register's Memory Space enable. With no driver bound the
 # endpoint can be left with it off ("Mem-" in lspci), and every BAR read then
 # answers nothing; fpgas-verify sets it for its own read and puts it back.
@@ -535,19 +589,29 @@ PCI_COMMAND_MEMORY = 0x2
 
 
 def soc_probe(slot):
-    """The SoC's ident and DNA over PCIe, or {"error": why}. The endpoint's
-    memory decoding is turned on for the read where it is off, and the
-    command register put back as it was found afterwards."""
-    before = pcie_command(slot)
-    enable = before is not None and not before & PCI_COMMAND_MEMORY
-    if enable:
-        sh(["sudo", "setpci", "-s", slot, "COMMAND=%04x" % (before | PCI_COMMAND_MEMORY)])
+    """The SoC's ident and DNA over PCIe, or {"error": why}, under the
+    Acorn's lock. The endpoint's memory decoding is turned on for the read
+    where it is off, and turned off again afterwards."""
     try:
-        out = sh_all(["sudo", sys.executable or "python3", "-c", SOC_READER, slot],
-                     timeout=30)
-    finally:
+        held = take_lock("acorn")
+    except BoardBusyError as exc:
+        return {"error": str(exc)}
+    try:
+        before = pcie_command(slot)
+        enable = before is not None and not before & PCI_COMMAND_MEMORY
+        # value:mask, so only the Memory Space bit is written, both ways:
+        # whatever else changes in the register meanwhile is left alone
+        bit = "COMMAND=%04x:%04x"
         if enable:
-            sh(["sudo", "setpci", "-s", slot, "COMMAND=%04x" % before])
+            sh(["sudo", "setpci", "-s", slot, bit % (PCI_COMMAND_MEMORY, PCI_COMMAND_MEMORY)])
+        try:
+            out = sh_all(["sudo", sys.executable or "python3", "-c", SOC_READER, slot],
+                         timeout=30)
+        finally:
+            if enable:
+                sh(["sudo", "setpci", "-s", slot, bit % (0, PCI_COMMAND_MEMORY)])
+    finally:
+        release_lock(held)
     err = re.search(r"ERROR=(.*)", out)
     if err:
         return {"error": err.group(1).strip()}
@@ -1621,9 +1685,13 @@ def pin_states(pins):
     return states if set(states) == set(nums) else None
 
 
-def restore_pins(states):
+def restore_pins(states, pins):
+    """Put each pin back, then read them again: the pins that did not come
+    back as they were found, by gpio."""
     for gpio in sorted(states, key=int):
         sh(["sudo", "-n", "pinctrl", "set", gpio] + states[gpio])
+    after = pin_states(pins) or {}
+    return sorted((g for g in states if after.get(g) != states[g]), key=int)
 
 
 def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
@@ -1632,17 +1700,38 @@ def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
     TDI driven, and on an Acorn's 10:9:11:8 those are the Pi's SPI0 pins.
     A Digilent or CH347 cable drives no Pi pin, so there is nothing to put
     back."""
-    if digilent_cables() or ch347_cables():
-        return jtag_probe_chain(want_flash, pins, parts, detach)
-    states = pin_states(pins or HARNESS_PINS)
+    if digilent_cables():
+        board = "arty"
+    elif ch347_cables():
+        board = None
+    else:
+        board = harness_board(pins)
     try:
-        res = jtag_probe_chain(want_flash, pins, parts, detach)
+        held = take_lock(board)
+    except BoardBusyError as exc:
+        return {"idcode": None, "error": str(exc)}
+    try:
+        if board == "arty" or board is None and ch347_cables():
+            return jtag_probe_chain(want_flash, pins, parts, detach)
+        harness = pins or HARNESS_PINS
+        states = pin_states(harness)
+        not_back = None
+        try:
+            res = jtag_probe_chain(want_flash, pins, parts, detach)
+        finally:
+            if states:
+                not_back = restore_pins(states, harness)
+        if isinstance(res, dict):
+            if states:
+                res["pins_restored"] = sorted((g for g in states if g not in not_back), key=int)
+                if not_back:
+                    res["pins_not_restored"] = not_back
+            else:
+                res["pins_not_restored"] = "pinctrl could not read the harness's pins, " \
+                    "so they were not put back"
+        return res
     finally:
-        if states:
-            restore_pins(states)
-    if states and isinstance(res, dict):
-        res["pins_restored"] = sorted(states, key=int)
-    return res
+        release_lock(held)
 
 
 def jtag_probe_chain(want_flash=False, pins=None, parts=None, detach=None):
@@ -1685,7 +1774,11 @@ def jtag_probe_chain(want_flash=False, pins=None, parts=None, detach=None):
     # stderr as well: that is where openFPGALoader says why it failed, and
     # without it a build missing its GPIO backend recorded raw "" and the
     # board simply vanished from the verdict.
-    det = sh_all(harness + ["--detect"], timeout=60)
+    # --verbose-level 2 for the raw scan: plain --detect prints the IDCODE
+    # its part table is keyed on, version bits masked off (0x3636093 for an
+    # Acorn's 0x13636093); the raw "- 0 -> 0x13636093" line has them all
+    # (openFPGALoader 0.9.0 and later, as fpgas-verify reads it).
+    det = sh_all(harness + ["--detect", "--verbose-level", "2"], timeout=60)
     m = re.search(r"idcode\s+(0x[0-9a-f]+)", det)
     if not m:
         if ch347:
@@ -1709,7 +1802,9 @@ def jtag_probe_chain(want_flash=False, pins=None, parts=None, detach=None):
         if ocd is not None:
             res["openocd"] = ocd.get("raw")
         return res
-    res = {"idcode": m.group(1)}
+    raw = [r for r in re.findall(r"^- \d+ -> (0x[0-9a-fA-F]{8})\s*$", det, re.M)
+           if r.lower() != "0xffffffff"]
+    res = {"idcode": raw[0].lower() if raw else m.group(1)}
     fam = re.search(r"family\s+(.*?)\s*$", det, re.M)
     if fam:
         res["family"] = fam.group(1)
