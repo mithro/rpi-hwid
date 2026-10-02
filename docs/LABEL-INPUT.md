@@ -127,9 +127,12 @@ The JSON Schema ships with the package, derived from the same records
 Only `label_input.dumps` writes the document: checked, normalised (every field
 present, filled in as above, lists not tuples), keys sorted, one-space indent,
 ASCII, a trailing newline. `label_input.comparable` is the same text without
-`sources`, and is what two builders of one host's document compare: who read
-a field may legitimately differ between the Pi and the site, the facts may
-not.
+`sources`, and without what is measured afresh on every read -- `ext5v_v` (the
+PMIC's ADC), `max_current_ma` (the USB-C current last negotiated) and each
+MAC's `signal` -- and is what two builders of one host's document compare: who
+read a field, and a voltage read at boot against one read at label time, may
+legitimately differ between the Pi and the site; the facts may not. Those
+values stay in the document, and on the labels, as read.
 
 On a host, from a probe document (the full probe, which also reads the
 header's user bus; it is not what the fpgas.online site's documents are
@@ -215,8 +218,10 @@ $ sudo fpgas-verify --label                     # the same, started from fpgas-v
 Builds this host's label input on the host and makes its labels from it.
 The Pi's facts come from the Pi-only probe above (never `--user-bus`: this
 runs on demand, while others may be using the board). The FPGA boards come
-from fpgas-verify's identity where it is installed and answers -- its boards
-alone, with the fields it gave, which is what the site gets -- and otherwise
+from fpgas-verify's identity where it is installed and answers -- asked
+whenever it is installed, whatever sysfs shows, since a NeTV2 on its harness
+or a Tiny Tapeout board shows nothing there; its boards alone, with the fields
+it gave, which is what the site gets -- and otherwise
 from the FPGA module's passive reads (see [PROBE.md](PROBE.md#fpga-boards)),
 with no `--jtag`, `--flash`, `--soc` or `--force-offline` of its own. Started
 by `fpgas-verify --label`, which sets `FPGAS_VERIFY_IDENTITY`, it sends nothing

@@ -112,10 +112,14 @@ def test_a_document_of_only_the_sent_fields_is_byte_identical_to_the_pis():
     assert label_input.dumps(site) != label_input.dumps(pi)
 
 
-def test_comparable_is_dumps_without_sources():
+def test_comparable_is_dumps_without_sources_and_the_measured():
     doc = pi_doc()
     whole = json.loads(label_input.dumps(doc))
     del whole["sources"]
+    for key in label_input.MEASURED:
+        del whole["summary"][key]
+    for mac in whole["summary"]["macs"]:
+        del mac["signal"]
     assert label_input.comparable(doc) == json.dumps(whole, sort_keys=True, indent=1) + "\n"
 
 
@@ -403,3 +407,22 @@ def test_sources_is_free_form_provenance():
     assert json.loads(label_input.dumps(doc))["sources"] == sources
     jsonschema.validate(json.loads(label_input.dumps(doc)),
                         json.loads(label_input.schema_path().read_text()))
+
+
+def test_comparable_leaves_out_what_each_read_measures_afresh():
+    """Contract 25: the site's boot-time reading and the Pi's label-time one
+    differ on these without either being wrong."""
+    a = pi_doc()
+    b = copy.deepcopy(a)
+    b["summary"]["ext5v_v"] = 5.1
+    b["summary"]["max_current_ma"] = 5000
+    b["summary"]["macs"] = [dict(m, signal="driver") for m in b["summary"]["macs"]]
+    assert label_input.comparable(a) == label_input.comparable(b)
+    assert label_input.dumps(a) != label_input.dumps(b)          # kept as read
+    text = json.loads(label_input.comparable(a))["summary"]
+    assert "ext5v_v" not in text
+    assert "max_current_ma" not in text
+    assert all("signal" not in m for m in text["macs"])
+    # and anything else still counts
+    b["summary"]["serial"] = "0000000000000000"
+    assert label_input.comparable(a) != label_input.comparable(b)
