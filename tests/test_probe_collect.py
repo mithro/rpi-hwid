@@ -923,6 +923,7 @@ def test_a_netv2_on_its_harness_is_the_one_chain_there():
     boards = [{"kind": "jtag", "idcode": "0x3631093", "how": "GPIO JTAG"}]
     _merged(boards, {"kind": "netv2", "idcode": "0x13631093", "dna": "0x00742c4e63b9085c"})
     assert boards == [{"kind": "netv2", "idcode": "0x13631093", "dna": "0x00742c4e63b9085c",
+                       "dna_sources": ["fpgas-verify"],
                        "how": "GPIO JTAG; fpgas-verify --identify"}]
 
 
@@ -934,9 +935,112 @@ def test_a_board_nothing_here_found_is_added_as_fpgas_verify_described_it():
 
 
 def test_two_boards_of_a_kind_with_nothing_to_tell_them_apart_are_not_guessed_at():
+    """Put on neither, and not added as a third: listed as unplaced."""
     boards = [{"kind": "netv2", "how": "a"}, {"kind": "netv2", "how": "b"}]
-    _merged(boards, {"kind": "netv2", "dna": "0x00742c4e63b9085c"})
-    assert [b.get("dna") for b in boards] == [None, None, "0x00742c4e63b9085c"]
+    reading = {"kind": "netv2", "dna": "0x00742c4e63b9085c"}
+    assert _merged(boards, reading) == [reading]
+    assert [b.get("dna") for b in boards] == [None, None]
+
+
+def test_a_netv2_on_pcie_is_the_board_fpgas_verify_found_by_jtag():
+    """fpgas-verify finds a NeTV2 by its JTAG scan and gives no slot; the
+    Pi lists it on PCIe. One board, not two."""
+    boards = [{"kind": "netv2", "slot": "0000:01:00.0", "how": "PCIe 10ee:7024"}]
+    _merged(boards, {"kind": "netv2", "idcode": "0x13631093", "dna": "0x00742c4e63b9085c"})
+    assert len(boards) == 1
+    assert boards[0]["dna"] == "0x00742c4e63b9085c"
+
+
+def test_a_board_of_another_die_is_not_the_one():
+    boards = [{"kind": "netv2", "idcode": "0x3636093", "how": "a"}]
+    _merged(boards, {"kind": "netv2", "idcode": "0x13631093"})
+    assert len(boards) == 2
+
+
+def test_a_dna_the_board_has_is_checked_not_overwritten():
+    boards = [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "dna_sources": ["jtag"],
+               "how": "a"}]
+    _merged(boards, {"kind": "netv2", "dna": "0x742c4e63b9085c"})
+    assert boards[0]["dna"] == "0x00742c4e63b9085c"
+    assert boards[0]["dna_sources"] == ["fpgas-verify", "jtag"]
+    assert boards[0]["dna_agree"] is True
+
+
+def test_dnas_that_disagree_are_recorded_and_neither_kept():
+    """A wrong match, or a wrong read: there is no telling which, so the
+    label has no DNA rather than an arbitrary one."""
+    boards = [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "dna_sources": ["jtag"],
+               "how": "a"}]
+    _merged(boards, {"kind": "netv2", "dna": "0x0054b48664b04854"})
+    assert boards[0]["dna"] is None
+    assert boards[0]["dna_agree"] is False
+    assert boards[0]["dna_conflict"] == {"fpgas-verify": "0x0054b48664b04854",
+                                         "jtag": "0x00742c4e63b9085c"}
+
+
+def test_a_dna_merge_soc_left_in_conflict_stays_in_conflict():
+    boards = [{"kind": "acorn", "slot": "0001:01:00.0", "dna": None, "dna_agree": False,
+               "dna_conflict": {"jtag": "0x1", "pcie": "0x2"}, "how": "a"}]
+    _merged(boards, {"kind": "acorn", "bdf": "0001:01:00.0", "dna": "0x0054b48664b04854"})
+    assert boards[0]["dna"] is None
+    assert boards[0]["dna_conflict"]["fpgas-verify"] == "0x0054b48664b04854"
+
+
+def test_a_field_from_the_boot_report_never_beats_a_live_read():
+    boards = [{"kind": "arty", "serial": "210319B301DE", "flash_jedec": "0x20ba18",
+               "how": "a"}]
+    _merged(boards, {"kind": "arty", "serial": "210319B301DE", "flash_jedec": "0xc22017",
+                     "flash_uid_state": "read", "flash_uid": "ab",
+                     "from_report": ["flash_jedec", "flash_uid_state", "flash_uid"]})
+    b = boards[0]
+    assert b["flash_jedec"] == "0x20ba18"
+    assert b["report_conflict"] == {"flash_jedec": {"live": "0x20ba18", "report": "0xc22017"}}
+    assert b["from_report"] == ["flash_jedec", "flash_uid_state", "flash_uid"]
+    assert b["flash_uid"] == "ab"                    # nothing live disagreed
+
+
+def test_from_report_survives_the_parse():
+    doc = _identity(from_report=["flash_jedec", "flash_uid", "variant"])
+    (read,), _ = fpga.identity_parse(json.dumps(doc))
+    assert read["from_report"] == ["flash_jedec", "flash_uid"]
+
+
+def _arty_collect(fake_root, monkeypatch, reading):
+    shutil.rmtree(fake_root / "sys/bus/pci/devices/0001:01:00.0")
+    wanted = []
+    monkeypatch.setattr(fpga, "ftdi_devices", lambda: [
+        {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319B301DE",
+         "path": "1-1"}])
+    monkeypatch.setattr(fpga, "identity_probe", lambda: {"read": [reading], "error": None})
+    monkeypatch.setattr(fpga, "jtag_probe", lambda want_flash=False, *a, **k: (
+        wanted.append(want_flash), {"idcode": "0x362d093", "dna": "0x00628502251ea85c",
+                                    "cable": "digilent"})[1])
+    fpga.collect_fpga(jtag=True, flash=True)
+    return wanted
+
+
+def test_an_arty_whose_flash_fpgas_verify_gave_gets_no_bridge(fake_root, monkeypatch):
+    """Its DNA still comes from the chain, but the flash it has is not read
+    again: that read loads a bridge in place of the running design."""
+    wanted = _arty_collect(fake_root, monkeypatch, {
+        "kind": "arty", "serial": "210319B301DE", "idcode": "0x0362d093",
+        "flash_jedec": "0x20ba18", "flash_uid_state": "read", "flash_uid": "ab"})
+    assert wanted == [False]
+
+
+def test_an_arty_whose_flash_fpgas_verify_did_not_give_is_read(fake_root, monkeypatch):
+    wanted = _arty_collect(fake_root, monkeypatch, {
+        "kind": "arty", "serial": "210319B301DE", "idcode": "0x0362d093"})
+    assert wanted == [True]
+
+
+def test_a_reading_nowhere_to_put_is_listed_in_the_evidence(fake_root, monkeypatch):
+    monkeypatch.setattr(fpga, "fpga_verdict", lambda f: [
+        {"kind": "netv2", "how": "a"}, {"kind": "netv2", "how": "b"}])
+    monkeypatch.setattr(fpga, "identity_probe", lambda: {
+        "read": [{"kind": "netv2", "dna": "0x1"}], "error": None})
+    f = fpga.collect_fpga()
+    assert f["fpgas_verify"]["unplaced"] == [{"kind": "netv2", "dna": "0x1"}]
 
 
 def test_tiny_tapeout_and_fomu_boards_get_no_fpga_label():
