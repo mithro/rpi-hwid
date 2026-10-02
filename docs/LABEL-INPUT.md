@@ -62,6 +62,47 @@ The rules:
   written as a float, so `5` and `5.0` are one text.
 * **Hex identifiers are lower case and `0x`-prefixed**, as the probe writes
   them.
+* **A record in a list needs the fields it is built from**: an FPGA board its
+  `kind`, a MAC its `kind` and `mac`, a USB adapter its `iface`, `mac`,
+  `vidpid` and `kind`. Without them it is not a record, and the document is
+  refused. The summary's own fields may all be missing; what that costs is
+  below.
+
+## What each label needs
+
+`label_input.missing(doc)` lists every label the document describes, each
+with the fields it still needs; `rpi-hwid labels --data DIR --check` prints
+the same for every document in a directory, probe documents included, and
+exits 1 if any label is short. A label that is short of a field is refused,
+with this list, rather than printed with a gap or a placeholder.
+
+```python
+>>> label_input.missing(doc)
+{"board": ["header"], "fpga[0]": [], "usb_net[0]": []}
+```
+
+The keys are `board` (the host's own label) and `fpga[i]`, `tinytapeout[i]`
+and `usb_net[i]` by position in those lists. A list that is null describes no
+labels, so a document of the Pi's facts alone (`--pi-only`) has no `fpga[i]`
+keys until the FPGA boards are added. A board this package has no label for
+has no `board` key.
+
+| label | needs | optional |
+|---|---|---|
+| Raspberry Pi | `model`, `serial`, `revision` (one this package can decode), `macs`, `header` (`[]` when read and bare); on a Pi 5 also `fan` and `rtc_battery` | `memory`, `hat_uuid`, `compatible`, `power_class`, `max_current_ma`, `ext5v_v` |
+| Orange Pi | `serial`, `compatible`, `memory`, `macs`, `header` | the rest |
+| RISC-V board | `serial`, `macs`, `riscv` | the rest |
+| PC | `macs`, `dmi` (a PC's firmware may carry no serial, which its label says) | the rest |
+| FPGA: Acorn, NeTV2, PCILeech, other Xilinx | `dna`, `idcode`, `flash_jedec`, `flash_uid_state` (not `blank`), and `flash_uid` when it is `read` or `flash_uid_note` when it is `none` | `flash_extended_id` and `flash_sfdp` (without them a part whose ID several parts share prints as its family, e.g. S25Fx256S), `soc_model`, `flash_uid_bits`, `flash_error`, `flash_source` |
+| FPGA: Arty | as above, and `serial` (its FT2232's) | as above |
+| FPGA: Cynthion | `trace_id`, `hw_rev`, `serial` | the rest |
+| Tiny Tapeout | `usb_serial`, `mcu`, `chip`, `demoboard`; `shuttle` when `chip` is `asic` | `commit`, `repo`, `demoboard_version`, `sdk` |
+| USB network adapter | (its record's own fields) | `driver`, `manufacturer`, `product`, `usb_serial`, `bcd_usb`, `usb_speed`, `signal` |
+
+Some refusals are not a missing field, and still stop a label: a flash ID
+that no table names, a RISC-V board whose serial and EEPROM disagree, a PC
+whose serial the probe could not read. These come from the label code with
+their own explanation.
 
 The JSON Schema ships with the package, derived from the same records
 (`label_input.schema_path()`, `src/rpi_hwid/label-input-v1.schema.json`).
