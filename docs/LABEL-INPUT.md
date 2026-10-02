@@ -95,7 +95,12 @@ The keys are `board` (the host's own label) and `fpga[i]`, `tinytapeout[i]`
 and `usb_net[i]` by position in those lists. A list that is empty or null describes no
 labels, so a document of the Pi's facts alone (`--pi-only`) has no `fpga[i]`
 keys until the FPGA boards are added. A board this package has no label for
-has no `board` key.
+has no `board` key, and an FPGA board with no label (a `fomu`, or a `tt`,
+which has a Tiny Tapeout label of its own) has no `fpga[i]` key: the keys
+keep the board's own position, so the next board is still `fpga[1]`.
+
+Only the labels being made are refused: `--only fpga` does not stop on a Pi
+whose header was not read, and `--check` lists only what `--only` asks for.
 
 | label | needs | optional |
 |---|---|---|
