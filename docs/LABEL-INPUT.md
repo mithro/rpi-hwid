@@ -230,3 +230,32 @@ record = label_input.to_probe_document(doc)              # what the label code r
 
 `build`, `load`, `dumps` and `comparable` raise `label_input.InputError`, whose
 `problems` lists every reason the document was refused, not only the first.
+
+## Rendering on a server
+
+`rpi_hwid.labels` (the `labels` extra: reportlab, segno, svglib, pillow,
+spiflash) turns label inputs into PDF bytes. The calls take a list of label
+inputs (dicts or their JSON text, one per host), read no hardware, start no
+process, write no file, and leave nothing set behind them: the artwork
+directory is a context variable, so concurrent renders in one process do not
+see each other's.
+
+```python
+from rpi_hwid import labels
+
+rows = labels.list_labels(docs)            # [{"id", "host", "kind", "title", "size"}, ...]
+rows = labels.list_labels(docs, only=["rpi", "acorn"])
+pdf = labels.render_sheet(docs)            # A4 L7160 sheets, as `rpi-hwid labels` prints
+pdf = labels.render_sheet(docs, start=5)   # the first five positions left blank
+pdf = labels.render_label(docs, rows[0]["id"])   # one label, a page its own size
+```
+
+`only` takes the kinds `rpi-hwid labels --only` does; `render_sheet` also takes
+`outline`, and all three `pinned_names` (`--names`) and `artwork` (`--artwork`,
+a directory). The PDFs carry no creation date, so the same inputs give the
+same bytes. A label short of a field raises `labels.MissingFieldsError`
+naming it, and the other refusals (`IdentifierNotReadError`,
+`HeaderNotReadError`, `FlashNotReadError`, `UnknownFlashPartError`) say why a
+label cannot be printed; `render_label` raises `KeyError` for an id the
+inputs do not make, and `InputError` comes from an input that is not a label
+input.
