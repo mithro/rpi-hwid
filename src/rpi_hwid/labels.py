@@ -513,15 +513,15 @@ def camera_generation(sensor):
 def camera_words(cam):
     """What a camera's mark says, as (generation, focus, optics).
 
-    Focus is "AF" where a lens driver was found and "fixed" where one was
-    looked for and is not there. Where nobody could look it is None and the
-    mark says neither: a missing word is not the word "fixed", so a camera
-    that was never asked cannot be read as one that answered. Optics is the
-    Camera Module 3's own account of its lens and filter, then the lens angle
-    a person supplied; None when there is neither. The lens driver's name is
-    evidence for the document and is never printed.
+    Focus is "AF" where a lens driver was found, and None otherwise. Fixed
+    focus is what a camera is assumed to have, so it is not said: a lens
+    driver looked for and not there, and one nobody could look for, print the
+    same nothing, and the mark claims a motor only where one answered. Optics
+    is the Camera Module 3's own account of its lens and filter, then the
+    lens angle a person supplied; None when there is neither. The lens
+    driver's name is evidence for the document and is never printed.
     """
-    focus = {True: "AF", False: "fixed"}.get(cam.autofocus)
+    focus = "AF" if cam.autofocus else None
     optics = []
     if cam.variant:
         optics.append(CAMERA_VARIANT.get(cam.variant, cam.variant.replace("_", " ")))
@@ -559,7 +559,7 @@ def mark_camera(lab, cam, x, y, size):
     generation is the one thing every camera has, so it is inside the
     outline and black, and the mark is whole without the words beside it.
     Each word keeps its own line whether or not the other is there, so
-    "fixed" is never found where "wide" would be.
+    "AF" is never found where "wide" would be.
     """
     c = lab.c
     gen, focus, optics = camera_words(cam)

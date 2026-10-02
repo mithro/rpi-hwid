@@ -44,14 +44,15 @@ def test_a_sensor_is_named_by_its_camera_generation(sensor, generation):
 
 
 @pytest.mark.parametrize(("camera", "words"), [
-    (Camera("ov5647", autofocus=False), ("v1", "fixed", None)),
+    # fixed focus is what a camera is assumed to have, so it is not said
+    (Camera("ov5647", autofocus=False), ("v1", None, None)),
     (Camera("ov5647", autofocus=True, lens="0x0c"), ("v1", "AF", None)),
-    # nobody could look for a lens driver: no word at all, which is neither
-    # of the two answers
+    # nobody could look for a lens driver: the same assumption, the same mark
     (Camera("ov5647"), ("v1", None, None)),
-    (Camera("ov5647", autofocus=False, fov=65), ("v1", "fixed", "65°")),
-    (Camera("ov5647", autofocus=False, fov=120), ("v1", "fixed", "120°")),
+    (Camera("ov5647", autofocus=False, fov=65), ("v1", None, "65°")),
+    (Camera("ov5647", autofocus=False, fov=120), ("v1", None, "120°")),
     (Camera("ov5647", fov=160), ("v1", None, "160°")),
+    (Camera("ov5647", autofocus=True, fov=160), ("v1", "AF", "160°")),
     (Camera("imx219", autofocus=True, lens="dw9714"), ("v2", "AF", None)),
     (Camera("imx708", autofocus=True, lens="dw9807"), ("v3", "AF", None)),
     (Camera("imx708", variant="wide", autofocus=True), ("v3", "AF", "wide")),
@@ -59,10 +60,21 @@ def test_a_sensor_is_named_by_its_camera_generation(sensor, generation):
     (Camera("imx708", variant="wide_noir", autofocus=True), ("v3", "AF", "wide NoIR")),
     # a person's angle for a lens whose module also names itself: both
     (Camera("imx708", variant="wide", fov=120), ("v3", None, "wide 120°")),
-    (Camera("imx477", autofocus=False), ("HQ", "fixed", None)),
+    # an HQ camera's lens is turned by hand: no motor, so no word
+    (Camera("imx477", autofocus=False), ("HQ", None, None)),
 ])
 def test_what_a_camera_mark_says(camera, words):
     assert labels.camera_words(camera) == words
+
+
+def test_fixed_focus_is_never_printed(docs, tmp_path, monkeypatch):
+    said = []
+    real_text = labels.Label.text
+    monkeypatch.setattr(labels.Label, "text", lambda self, x, y, s, *a, **k: (
+        said.append(s), real_text(self, x, y, s, *a, **k))[1])
+    render(docs, tmp_path, (Camera("ov5647", autofocus=False), Camera("imx477")))
+    assert {"v1", "HQ"} <= set(said)
+    assert not [s for s in said if "fixed" in s.lower() or "AF" in s]
 
 
 def test_the_lens_driver_is_never_printed():
@@ -173,6 +185,18 @@ def test_the_title_gives_up_the_room_a_camera_takes(docs, tmp_path, monkeypatch)
     assert one_sub == bare_sub
 
 
+def test_a_plain_camera_costs_a_pi_5_title_nothing(docs, tmp_path, monkeypatch):
+    """The common case: a fixed-focus camera on a Pi 5 that also has its fan
+    and clock. The three marks fit beside "Raspberry Pi 5" at full size."""
+    from reportlab.pdfgen import canvas
+
+    title = labels.board_record(docs[HOST]).title
+    room, _sub = title_and_subtitle_room(
+        docs, tmp_path, monkeypatch, (Camera("imx219", autofocus=False),))
+    lab = labels.Label(canvas.Canvas(str(tmp_path / "t.pdf")), 0, 0)
+    assert lab.fitted_size(title, labels.SANS_BOLD, 11, room) == 11
+
+
 def test_the_subtitle_gives_up_room_only_to_a_second_camera(docs, tmp_path, monkeypatch):
     _title, bare = title_and_subtitle_room(docs, tmp_path, monkeypatch, None)
     _title, two = title_and_subtitle_room(
@@ -264,9 +288,11 @@ def test_a_mark_is_as_wide_as_what_it_says(docs, tmp_path):
     lab = labels.Label(canvas.Canvas(str(tmp_path / "w.pdf")), 0, 0)
     size = 2.6 * mm
     bare = labels.camera_width(lab, Camera("ov5647"), size)
-    fixed = labels.camera_width(lab, Camera("ov5647", autofocus=False), size)
+    focusing = labels.camera_width(lab, Camera("ov5647", autofocus=True), size)
     wide = labels.camera_width(lab, Camera("imx708", variant="wide_noir", autofocus=True), size)
-    assert size < bare < fixed < wide
+    assert size < bare < focusing < wide
+    # a camera with nothing to say beyond its generation is the body alone
+    assert labels.camera_width(lab, Camera("ov5647", autofocus=False), size) == bare
     # the widest thing a Camera Module 3 can say still leaves most of the
     # column to the title
     assert wide < 13 * mm
