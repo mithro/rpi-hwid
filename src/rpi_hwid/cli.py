@@ -204,6 +204,26 @@ def cmd_name(args: argparse.Namespace) -> int:
     return 0
 
 
+def header_as_read(header: list[str] | None, d: dict[str, Any],
+                   user_bus: bool) -> list[str] | None:
+    """The header as far as it was read, or None where it was not (contract
+    17): the firmware's reading of a HAT EEPROM (/proc/device-tree/hat)
+    settles it; otherwise a header bus that should have been read and was
+    not -- the ID bus that did not come up, the user bus with --user-bus
+    when it did not -- leaves the header not read, whatever the other bus
+    found; and without --user-bus an empty header is not read either, since
+    a HAT known only by its chips there (a Waveshare PoE HAT (B)) would be
+    missed and "HAT none" printed on its Pi."""
+    buses = d.get("header_buses_read") or {}
+    if not buses or d.get("hat_fw"):
+        return header             # no header to read, or the firmware read it
+    if buses.get("id") is False or (user_bus and buses.get("user") is False):
+        return None
+    if not user_bus and not header:
+        return None
+    return header
+
+
 def pi_only_label_input(host: str, user_bus: bool = False) -> dict[str, Any]:
     """This host's label input from the Pi alone: no FPGA, no Tiny Tapeout,
     and the header's user bus (GPIO2/3) left untouched unless `user_bus`
@@ -214,11 +234,7 @@ def pi_only_label_input(host: str, user_bus: bool = False) -> dict[str, Any]:
     d = probe.collect(user_bus=user_bus)
     d["verdict"] = probe.verdict(d)
     summary = dict(d["verdict"]["summary"])
-    # With the user bus unread, an empty header is not a header read as
-    # empty: a HAT known only by what answers there (a Waveshare PoE HAT
-    # (B)) would be missed, and "HAT none" printed on its Pi. Unread, then.
-    if not summary.get("header") and (d.get("header_buses_read") or {}).get("user") is False:
-        summary["header"] = None
+    summary["header"] = header_as_read(summary.get("header"), d, user_bus)
     return label_input.build(host, summary, dict.fromkeys(summary, "rpi-hwid"))
 
 
@@ -239,10 +255,11 @@ def cmd_label_input(args: argparse.Namespace) -> int:
         # skips a login banner before it, as load_collected does
         raw = ProbeDocument.from_json(path.stem, path.read_text()).evidence
         doc = label_input.from_probe(args.host or path.stem, raw)
-    except ValueError as exc:  # InputError is one
+        text = label_input.dumps(doc)
+    except (ValueError, OverflowError) as exc:  # InputError is a ValueError
         print(f"{path}: {exc}", file=sys.stderr)
         return 1
-    sys.stdout.write(label_input.dumps(doc))
+    sys.stdout.write(text)
     return 0
 
 
