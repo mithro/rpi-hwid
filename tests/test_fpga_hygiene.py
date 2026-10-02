@@ -96,8 +96,9 @@ def test_a_lock_let_go_within_the_wait_is_taken(locks, monkeypatch):
     monkeypatch.setattr(fpga, "LOCK_WAIT_S", 5)
     held = _hold(locks, "/run/lock/fpgas-acorn.lock")
     threading.Timer(0.3, held.close).start()
-    got = fpga.take_lock("acorn")
+    got, note = fpga.take_lock("acorn")
     assert got is not None
+    assert note is None
     fpga.release_lock(got)
 
 
@@ -129,10 +130,110 @@ def test_an_artys_cable_takes_the_artys_lock(locks, monkeypatch):
         held.close()
 
 
-def test_no_fpgas_verify_no_lock(tmp_path, monkeypatch):
-    monkeypatch.setattr(fpga, "ROOT", str(tmp_path))
+def test_a_missing_lock_file_is_never_made_by_a_user(locks, monkeypatch):
+    """A user-owned lock file in sticky /run/lock is one root cannot open for
+    writing under fs.protected_regular: fpgas-verify and fpgas-acorn-flash
+    would break until the next boot (reproduced on p48)."""
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: 1000)
+    got, note = fpga.take_lock("acorn")
+    assert got is None
+    assert note == "not taken: /run/lock/fpgas-acorn.lock does not exist"
+    assert not (locks / "run/lock/fpgas-acorn.lock").exists()
+
+
+def test_root_may_make_its_own(locks, monkeypatch):
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: 0)
+    got, note = fpga.take_lock("acorn")
+    assert note is None
+    fpga.release_lock(got)
+    assert (locks / "run/lock/fpgas-acorn.lock").exists()
+
+
+def test_an_existing_lock_is_only_ever_opened_for_reading(locks, monkeypatch):
+    path = locks / "run/lock/fpgas-acorn.lock"
+    path.write_text("")
+    path.chmod(0o444)
+    opened = []
+    real = open
+
+    def spy(file, mode="r", *a, **k):
+        opened.append(mode)
+        return real(file, mode, *a, **k)
+    monkeypatch.setattr("builtins.open", spy)
+    got, note = fpga.take_lock("acorn")
+    fpga.release_lock(got)
+    assert opened == ["r"]
+    assert note is None
+
+
+def test_without_fpgas_verify_a_lock_not_taken_is_only_recorded(locks, ran, monkeypatch):
+    root, _ = ran
+    _config(root, 0x0006)
     monkeypatch.setattr(fpga, "BOARD_LOCKS", REAL_LOCKS)
-    assert fpga.take_lock("acorn") is None
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: 1000)
+    res = fpga.soc_probe(SLOT, "acorn")
+    assert res["lock"] == "not taken: /run/lock/fpgas-acorn.lock does not exist"
+    assert res["dna"]
+
+
+def test_with_fpgas_verify_a_lock_not_taken_means_no_read(locks, monkeypatch):
+    """It may be running: a board whose lock could not be taken is not read."""
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: 1000)
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: (
+        "/usr/bin/fpgas-verify" if args == ["which", "fpgas-verify"]
+        else pytest.fail(f"touched the board: {args!r}")))
+    monkeypatch.setattr(fpga, "sh_all", lambda *a, **k: pytest.fail("touched the board"))
+    res = fpga.soc_probe(SLOT, "acorn")
+    assert res["error"].startswith("not taken: /run/lock/fpgas-acorn.lock does not exist; "
+                                   "fpgas-verify is installed")
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "ch347_cables", list)
+    monkeypatch.setattr(fpga, "jtag_probe_chain", lambda *a: pytest.fail("read the chain"))
+    res = fpga.jtag_probe(pins="27:22:4:17")
+    assert res["idcode"] is None
+    assert "netv2.lock does not exist" in res["error"]
+
+
+@pytest.mark.parametrize(("pc", "board"), [
+    ({"id": "1e24:021f", "subsystem": "1e24:021f", "bars": [128 << 10, 64 << 10]}, "acorn"),
+    ({"id": "10ee:7011", "subsystem": "", "bars": [128 << 10, 64 << 10]}, "acorn"),
+    ({"id": "10ee:7024", "subsystem": "", "bars": [1 << 20]}, "netv2"),
+    ({"id": "10ee:7011", "subsystem": "", "bars": [1 << 20]}, None),
+    ({"id": "10ee:0666", "subsystem": "", "bars": [4 << 10]}, None),
+])
+def test_an_endpoints_lock_is_its_boards(pc, board):
+    assert fpga.pcie_board(pc) == board
+
+
+def test_a_netv2_endpoints_bar_read_takes_the_netv2_lock(locks, ran, monkeypatch):
+    root, _ = ran
+    _config(root, 0x0006)
+    monkeypatch.setattr(fpga, "BOARD_LOCKS", REAL_LOCKS)
+    held = _hold(locks, "/run/fpgas-online/netv2.lock")
+    try:
+        assert fpga.soc_probe(SLOT, "netv2")["error"].startswith(
+            "board busy: /run/fpgas-online/netv2.lock")
+        assert "error" not in fpga.soc_probe(SLOT, "acorn")
+    finally:
+        held.close()
+
+
+def test_a_flash_read_holds_the_lock_of_each_endpoint_it_takes_off_the_bus(locks, monkeypatch):
+    """The chain is the NeTV2's harness; the Acorn on PCIe is detached for the
+    read, so the Acorn's lock is wanted too."""
+    monkeypatch.setattr(fpga, "digilent_cables", list)
+    monkeypatch.setattr(fpga, "ch347_cables", list)
+    monkeypatch.setattr(fpga, "pcie_devices", lambda: [
+        {"slot": SLOT, "id": "1e24:021f", "subsystem": "1e24:021f",
+         "bars": [128 << 10, 64 << 10]}])
+    monkeypatch.setattr(fpga, "jtag_probe_chain", lambda *a: pytest.fail("read"))
+    (locks / "run/fpgas-online/netv2.lock").write_text("")
+    held = _hold(locks, "/run/lock/fpgas-acorn.lock")
+    try:
+        res = fpga.jtag_probe(want_flash=True, pins="27:22:4:17", detach=[SLOT])
+    finally:
+        held.close()
+    assert res["error"].startswith("board busy: /run/lock/fpgas-acorn.lock")
 
 
 # --- the harness -----------------------------------------------------------------
@@ -275,6 +376,11 @@ def test_the_idcode_is_the_raw_scans_whole_value(monkeypatch):
     res = fpga.jtag_probe_chain(pins="10:9:11:8")
     assert res["idcode"] == "0x13636093"
     assert seen[0][-3:] == ["--detect", "--verbose-level", "2"]
+
+
+def test_an_all_zero_raw_idcode_is_no_idcode(monkeypatch):
+    _chain(monkeypatch, DETECT_P48.replace("- 0 -> 0x13636093", "- 0 -> 0x00000000"))
+    assert fpga.jtag_probe_chain(pins="10:9:11:8")["idcode"] == "0x3636093"
 
 
 def test_without_the_raw_scan_the_masked_one_stands(monkeypatch):

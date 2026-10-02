@@ -204,11 +204,17 @@ With `--soc`, an endpoint whose memory decoding is off (no driver bound,
 `Mem-`) has that one bit turned on with `setpci` for the BAR read, and off
 again after.
 
-Every SoC, BAR or JTAG access holds the board's fpgas-verify lock
-(`/run/lock/fpgas-acorn.lock` for an Acorn, `/run/fpgas-online/netv2.lock` and
-`arty.lock`), so it never lands in the middle of fpgas-verify's own; a lock held
-for 30 s makes that board's read `board busy`. A host with no fpgas-verify has
-no lock to wait for. A GPIO chain that
+Every SoC, BAR or JTAG access holds the fpgas-verify lock of the board it
+touches (`/run/lock/fpgas-acorn.lock` for an Acorn, `/run/fpgas-online/netv2.lock`
+and `arty.lock`), chosen by what the board is -- and, for a flash read, the
+lock of each PCIe endpoint it takes off the bus as well -- so it never lands in
+the middle of fpgas-verify's own; a lock held for 30 s makes that read `board
+busy`. A lock file is opened for reading only, and never created except by
+root: fpgas-verify makes them at boot, and one a user made in `/run/lock` would
+be one root's own tools cannot open for writing (`fs.protected_regular`). A
+lock that cannot be taken (no such file, no permission) is recorded under the
+reading's `lock`; where fpgas-verify is installed, and so may be using the
+board, that board is then not read at all. A GPIO chain that
 answers on a host with no Arty is taken to be a NeTV2. With `--flash`, an Arty's
 SPI flash is identified by JEDEC id, which reloads the FPGA with openFPGALoader's
 bridge bitstream. The id is reported with the RDID bytes after it and the SFDP

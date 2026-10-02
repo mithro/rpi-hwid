@@ -547,34 +547,91 @@ class BoardBusyError(Exception):
     """A board's lock was held by someone else for all of LOCK_WAIT_S."""
 
 
+class LockNotTakenError(Exception):
+    """A board's lock could not be taken where fpgas-verify, which may be
+    using the board, is installed: its reads are not done."""
+
+
 def take_lock(board, wait=None):
-    """The open file holding `board`'s lock, or None where there is no such
-    lock to take (no fpgas-verify here, or no lock for the board); raises
-    BoardBusyError when it stays held for `wait` seconds. flock needs only a
-    file opened for reading, so a lock file root made is taken as well."""
+    """(the open file holding `board`'s lock, None) -- or (None, why it was
+    not taken), or (None, None) for a board with no lock. Raises
+    BoardBusyError when it stays held for `wait` seconds.
+
+    A lock file is never created by anyone but root: fpgas-verify makes them
+    at boot, and one a user made in /run/lock (sticky, world-writable) is
+    one root's own open(path, "w") is refused under fs.protected_regular,
+    which breaks fpgas-verify and fpgas-acorn-flash until the next boot. An
+    existing one is opened for reading, which is all flock needs."""
     import fcntl
     import time
     path = BOARD_LOCKS.get(board)
-    if not path or not os.path.isdir(os.path.dirname(ROOT + path)):
-        return None
+    if not path:
+        return None, None
+    full = ROOT + path
     try:
-        held = open(ROOT + path, "a")
-    except OSError:
-        try:
-            held = open(ROOT + path, "r")
-        except OSError:
-            return None          # never made, so never held
+        if os.path.exists(full):
+            held = open(full, "r")
+        elif os.geteuid() == 0 and os.path.isdir(os.path.dirname(full)):
+            held = open(full, "a")       # root's own, as fpgas-verify's would be
+        else:
+            return None, "not taken: %s does not exist" % path
+    except OSError as exc:
+        return None, "not taken: %s: %s" % (path, exc.strerror or exc)
     wait = LOCK_WAIT_S if wait is None else wait
     deadline = time.time() + wait
     while True:
         try:
             fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return held
+            return held, None
         except OSError:
             if time.time() >= deadline:
                 held.close()
                 raise BoardBusyError("board busy: %s held for %g s" % (path, wait))
             time.sleep(0.5)
+
+
+def lock_boards(boards):
+    """(the locks held, why any were not taken) for `boards`, in a fixed
+    order. Raises BoardBusyError for a board someone else holds, and
+    LockNotTakenError for one whose lock could not be taken while
+    fpgas-verify is installed (it may be using that board then); without
+    fpgas-verify there is no one to keep out of the way of, and the reason
+    is only recorded."""
+    held, notes = [], []
+    try:
+        for board in sorted(set(b for b in boards if b)):
+            got, note = take_lock(board)
+            if got is not None:
+                held.append(got)
+            if note:
+                notes.append(note)
+        if notes and sh(["which", FPGAS_VERIFY]):
+            raise LockNotTakenError(
+                "%s; %s is installed and may be using the board, so it was not read"
+                % ("; ".join(notes), FPGAS_VERIFY))
+    except Exception:
+        for got in held:
+            release_lock(got)
+        raise
+    return held, notes
+
+
+def release_locks(held):
+    for got in held:
+        release_lock(got)
+
+
+def pcie_board(pc):
+    """The board kind a PCIe endpoint is, as fpga_verdict names it, for its
+    lock: a NeTV2's LitePCIe id, an Acorn's ids, BARs or SQRL subsystem."""
+    sizes = sorted(pc.get("bars") or (), reverse=True)
+    if pc["id"] == "10ee:7024":
+        return "netv2"
+    if pc["id"] in ("1e24:021f", "10ee:7011") and sizes == [128 << 10, 64 << 10]:
+        return "acorn"
+    if pc.get("subsystem") in ACORN_SUBSYSTEM or pc["id"] == "1e24:0101":
+        return "acorn"
+    return None
 
 
 def release_lock(held):
@@ -588,13 +645,14 @@ def release_lock(held):
 PCI_COMMAND_MEMORY = 0x2
 
 
-def soc_probe(slot):
-    """The SoC's ident and DNA over PCIe, or {"error": why}, under the
-    Acorn's lock. The endpoint's memory decoding is turned on for the read
-    where it is off, and turned off again afterwards."""
+def soc_probe(slot, board="acorn"):
+    """The SoC's ident and DNA over PCIe, or {"error": why}, under the lock
+    of the board the endpoint is (`board`, pcie_board's). The endpoint's
+    memory decoding is turned on for the read where it is off, and turned
+    off again afterwards."""
     try:
-        held = take_lock("acorn")
-    except BoardBusyError as exc:
+        held, notes = lock_boards([board])
+    except (BoardBusyError, LockNotTakenError) as exc:
         return {"error": str(exc)}
     try:
         before = pcie_command(slot)
@@ -611,7 +669,7 @@ def soc_probe(slot):
             if enable:
                 sh(["sudo", "setpci", "-s", slot, bit % (0, PCI_COMMAND_MEMORY)])
     finally:
-        release_lock(held)
+        release_locks(held)
     err = re.search(r"ERROR=(.*)", out)
     if err:
         return {"error": err.group(1).strip()}
@@ -625,6 +683,8 @@ def soc_probe(slot):
     m = re.search(r"DNA=([0-9a-f]{16})", out)
     if m:
         res["dna"] = soc_dna(int(m.group(1)[:8], 16), int(m.group(1)[8:], 16))
+    if notes:
+        res["lock"] = "; ".join(notes)
     return res
 
 
@@ -1722,13 +1782,20 @@ def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
         board = None
     else:
         board = harness_board(pins)
+    # A flash read takes the PCIe endpoints off the bus: each one's own
+    # board's lock is held too, whichever board the chain is.
+    detached = [pcie_board(pc) for pc in pcie_devices()
+                if pc["slot"] in (detach or ())] if want_flash and detach else []
     try:
-        held = take_lock(board)
-    except BoardBusyError as exc:
+        held, notes = lock_boards([board] + detached)
+    except (BoardBusyError, LockNotTakenError) as exc:
         return {"idcode": None, "error": str(exc)}
     try:
         if board == "arty" or board is None and ch347_cables():
-            return jtag_probe_chain(want_flash, pins, parts, detach)
+            res = jtag_probe_chain(want_flash, pins, parts, detach)
+            if notes and isinstance(res, dict):
+                res["lock"] = "; ".join(notes)
+            return res
         harness = pins or HARNESS_PINS
         states = pin_states(harness)
         not_back = None
@@ -1745,9 +1812,11 @@ def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
             else:
                 res["pins_not_restored"] = "pinctrl could not read the harness's pins, " \
                     "so they were not put back"
+            if notes:
+                res["lock"] = "; ".join(notes)
         return res
     finally:
-        release_lock(held)
+        release_locks(held)
 
 
 def jtag_probe_chain(want_flash=False, pins=None, parts=None, detach=None):
@@ -1819,7 +1888,7 @@ def jtag_probe_chain(want_flash=False, pins=None, parts=None, detach=None):
             res["openocd"] = ocd.get("raw")
         return res
     raw = [r for r in re.findall(r"^- \d+ -> (0x[0-9a-fA-F]{8})\s*$", det, re.M)
-           if r.lower() != "0xffffffff"]
+           if r.lower() not in ("0xffffffff", "0x00000000")]   # past the chain, or none
     res = {"idcode": raw[0].lower() if raw else m.group(1)}
     fam = re.search(r"family\s+(.*?)\s*$", det, re.M)
     if fam:
@@ -2731,7 +2800,7 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     if soc:
         for pc in f["pcie"]:
             if pc["id"].startswith(("10ee:", "1e24:")):
-                f["soc"][pc["slot"]] = soc_probe(pc["slot"])
+                f["soc"][pc["slot"]] = soc_probe(pc["slot"], pcie_board(pc))
     # fpgas-verify reads an Acorn's flash through its SoC without replacing
     # it, and needs no chain to do it: pi-sw2-p48's was read this way while
     # its harness said "TDO is stuck at 0". So it is asked first, and on its
