@@ -229,10 +229,13 @@ the `pi-identified` and `fpga-board-identified` events. A label it is short of
 a field for is refused with the list (`labels --check` says the same for a
 directory).
 
-A Tiny Tapeout board is not in it yet: reading one here would mean taking its
-demo board's port from the service using it. Once fpgas-verify reports a Tiny
-Tapeout board's identity, which it reads while it owns the port at boot
-(contract 21), it will come from there.
+A Tiny Tapeout board is never read here: that would mean taking its demo
+board's port from the service using it. fpgas-verify reads it at boot, while
+it owns the port (contract 21), and reports it as kind `tt` with
+TinyTapeoutBoard's fields; it is taken from there into `tinytapeout`, once
+the USB tree in sysfs shows an RP2 (2e8a:0005) with that `usb_serial` (no tty
+is opened). One the USB tree does not show is left out, and its serial listed
+under `sources.tinytapeout_not_on_usb`.
 
 ## From Python
 

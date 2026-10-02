@@ -11,16 +11,19 @@ when fpgas-verify started this (``FPGAS_VERIFY_IDENTITY``, rpi_hwid.fpga).
 So this is the document the site builds from the same facts, and the two
 can be compared with ``label_input.comparable``.
 
-A Tiny Tapeout board is not in it: reading one here would mean taking its
-demo board's port from the service using it. When fpgas-verify reports a
-Tiny Tapeout board's identity (contract 21), it will come from there.
+A Tiny Tapeout board is never read here: that would mean taking its demo
+board's port from the service using it. fpgas-verify reads it at boot, while
+it owns the port (contract 21), and its identity document carries the board
+as kind "tt"; that is taken here, checked against the USB tree in sysfs (the
+RP2's 2e8a:0005 with that serial: no tty is opened), and one the USB tree
+does not show is left out and named in `sources`.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from rpi_hwid import cli, fpga, label_input
+from rpi_hwid import cli, fpga, label_input, tinytapeout
 
 
 def identity_boards(found: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -39,6 +42,28 @@ def identity_boards(found: dict[str, Any]) -> list[dict[str, Any]] | None:
             if isinstance(b, dict) and b.get("kind") in fpga.IDENTITY_KINDS]
 
 
+def identity_tinytapeout(found: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    """(the Tiny Tapeout boards fpgas-verify's document gives, reduced to
+    TinyTapeoutBoard's fields, each one on this host's USB; the usb_serials
+    of those that are not). Only a board with a usb_serial is taken: that is
+    the one thing sysfs can check, and the label is keyed on it."""
+    fv = found.get("fpgas_verify") or {}
+    doc = fv.get("document")
+    if not isinstance(doc, dict) or identity_boards(found) is None:
+        return [], []
+    on_usb = {u["serial"] for u in tinytapeout.usb_candidates()
+              if u["id"] == "2e8a:0005" and u["serial"]}
+    boards, absent = [], []
+    for b in doc.get("boards") or ():
+        if not isinstance(b, dict) or b.get("kind") != "tt" or not b.get("usb_serial"):
+            continue
+        if b["usb_serial"] not in on_usb:
+            absent.append(b["usb_serial"])
+            continue
+        boards.append({k: b[k] for k in label_input.TT_FIELDS if b.get(k) is not None})
+    return boards, absent
+
+
 def label_input_document(host: str) -> dict[str, Any]:
     """The label input for this host."""
     pi = cli.pi_only_label_input(host)
@@ -52,6 +77,12 @@ def label_input_document(host: str) -> dict[str, Any]:
         # agree
         summary["fpga"] = boards
         sources["fpga"] = "fpgas-verify"
+        tt, absent = identity_tinytapeout(found)
+        if tt:
+            summary["tinytapeout"] = tt
+            sources["tinytapeout"] = "fpgas-verify"
+        if absent:
+            sources["tinytapeout_not_on_usb"] = absent
     else:
         summary["fpga"] = [{k: v for k, v in b.items() if k in label_input.FPGA_FIELDS}
                            for b in found["summary"]]

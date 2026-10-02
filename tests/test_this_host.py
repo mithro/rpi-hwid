@@ -43,6 +43,9 @@ def host(tmp_path, monkeypatch):
         monkeypatch.setattr(fpga, name, lambda *a, _n=name, **k: pytest.fail(_n + " ran"))
     monkeypatch.setattr(tinytapeout, "collect_tinytapeout",
                         lambda *a, **k: pytest.fail("Tiny Tapeout board probed"))
+    monkeypatch.setattr(tinytapeout, "open_tty",
+                        lambda *a, **k: pytest.fail("a Tiny Tapeout board's port opened"))
+    monkeypatch.setattr(tinytapeout, "ROOT", str(tmp_path))
     return tmp_path
 
 
@@ -193,3 +196,47 @@ def test_host_and_input_go_with_this_host(tmp_path):
         labels.main(["--data", str(tmp_path), "--host", "x"])
     with pytest.raises(SystemExit):
         labels.main(["--data", str(tmp_path), "--this-host"])
+
+
+# --- Tiny Tapeout, from fpgas-verify (contract 21) ------------------------------
+
+TT_BOARD = {"board": "tt", "kind": "tt", "variant": "ttdbv3", "serial": "E6614C311B7A7A37",
+            "usb": "1-1.2", "usb_serial": "E6614C311B7A7A37", "mcu": "RP2350",
+            "chip": "asic", "shuttle": "tt06", "demoboard": "TT06+",
+            "demoboard_version": "v2.0.1", "sdk": "2.0.1", "from_report": ["shuttle"]}
+
+
+def _with_boards(monkeypatch, *extra):
+    doc = json.loads(GOLDEN.read_text())
+    doc["boards"] += list(extra)
+    monkeypatch.setattr(fpga, "identity_probe", lambda: {
+        "read": fpga.identity_parse(json.dumps(doc))[0], "error": None, "document": doc})
+
+
+def test_a_tiny_tapeout_board_comes_from_fpgas_verify(host, monkeypatch):
+    """The tree's demo board at 1-1.2 has this serial; nothing opens its port."""
+    _with_boards(monkeypatch, TT_BOARD)
+    doc = this_host.label_input_document("pi-sw2-p48")
+    (tt,) = doc["summary"]["tinytapeout"]
+    assert tt["usb_serial"] == "E6614C311B7A7A37"
+    assert tt["shuttle"] == "tt06"
+    assert {k for k, v in tt.items() if v is not None} <= set(label_input.TT_FIELDS)
+    assert doc["sources"]["tinytapeout"] == "fpgas-verify"
+    assert [b["kind"] for b in doc["summary"]["fpga"]] == ["acorn"]
+    assert label_input.missing(doc)["tinytapeout[0]"] == []
+
+
+def test_a_tiny_tapeout_board_not_on_usb_is_left_out_and_named(host, monkeypatch):
+    _with_boards(monkeypatch, dict(TT_BOARD, usb_serial="0123456789ABCDEF"))
+    doc = this_host.label_input_document("pi-sw2-p48")
+    assert doc["summary"]["tinytapeout"] == []
+    assert doc["sources"]["tinytapeout_not_on_usb"] == ["0123456789ABCDEF"]
+
+
+def test_a_tiny_tapeout_board_without_a_usb_serial_is_not_taken(host, monkeypatch):
+    """What fpgas-verify sends before contract 21 (serial, but no
+    TinyTapeoutBoard fields) is not yet a Tiny Tapeout identity."""
+    _with_boards(monkeypatch, {"board": "tt", "kind": "tt", "serial": "E6614C311B7A7A37"})
+    doc = this_host.label_input_document("pi-sw2-p48")
+    assert doc["summary"]["tinytapeout"] == []
+    assert "tinytapeout" not in doc["sources"]
