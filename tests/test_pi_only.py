@@ -99,6 +99,69 @@ def test_a_hat_the_firmware_read_is_still_named(pi5):
     assert s["hat_uuid"] == "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a"
 
 
+# --- --user-bus (contract 18) ------------------------------------------------
+
+def test_user_bus_scans_it_and_puts_back_what_it_brought_up(pi5, monkeypatch):
+    root, calls, buses = pi5
+    (root / "dev/i2c-1").unlink()                     # off, as most of the fleet has it
+
+    def sh(args, timeout=15):
+        calls.append(args)
+        if args == ["sudo", "dtparam", "i2c_arm=on"]:
+            _w(root, "/dev/i2c-1", "")
+            overlays.append("dtparam i2c_arm=on")
+        elif args == ["sudo", "dtparam", "i2c_vc=on"]:
+            _w(root, "/dev/i2c-0", "")
+            overlays.append("dtparam i2c_vc=on")
+        elif args == ["sudo", "dtparam", "-l"]:
+            return "\n".join(f"{i}:  {o}" for i, o in enumerate(overlays))
+        elif args[:3] == ["sudo", "dtparam", "-r"]:
+            gone = overlays.pop(int(args[3]))
+            (root / ("dev/i2c-1" if gone.endswith("arm=on") else "dev/i2c-0")).unlink()
+        elif args[:2] == ["sudo", "vcgencmd"]:
+            return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
+        return ""
+    overlays = []
+    monkeypatch.setattr(probe, "sh", sh)
+    doc = cli.pi_only_label_input("p48", user_bus=True)
+    assert 1 in buses, "the user bus was scanned"
+    assert ["sudo", "dtparam", "i2c_arm=on"] in calls
+    assert overlays == []
+    assert not (root / "dev/i2c-1").exists(), "left as it was found"
+    # read, and nothing there: a bare header, which the Pi label can say
+    assert doc["summary"]["header"] == []
+
+
+def test_user_bus_names_a_hat_known_only_by_its_chips(pi5, monkeypatch):
+    _ = pi5
+    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: ["20", "3c"] if bus == 1 else [])
+    assert cli.pi_only_label_input("p48", user_bus=True)["summary"]["header"] == [
+        "Waveshare PoE HAT (B)"]
+
+
+def test_without_user_bus_nothing_changes(pi5):
+    _, calls, buses = pi5
+    cli.pi_only_label_input("p48")
+    assert 1 not in buses
+    assert ["sudo", "dtparam", "i2c_arm=on"] not in calls
+
+
+def test_user_bus_goes_with_pi_only(capsys, tmp_path):
+    path = tmp_path / "x.json"
+    path.write_text("{}")
+    assert cli.main(["label-input", "--from", str(path), "--user-bus"]) == 2
+    assert "--user-bus goes with --pi-only" in capsys.readouterr().err
+
+
+def test_the_cli_passes_user_bus_on(pi5, monkeypatch, capsys):
+    seen = []
+    monkeypatch.setattr(cli, "pi_only_label_input",
+                        lambda host, user_bus=False: seen.append(user_bus) or
+                        label_input.build(host, {"model": "m"}))
+    assert cli.main(["label-input", "--pi-only", "--user-bus", "--host", "h"]) == 0
+    assert seen == [True]
+
+
 def test_the_cli_prints_the_document(pi5, capsys):
     assert cli.main(["label-input", "--pi-only", "--host", "p48"]) == 0
     out = capsys.readouterr().out
@@ -171,6 +234,8 @@ def test_the_document_survives_the_event_encoding(pi5):
     details = encode(pi["summary"])
     assert details["macs"] == '[{"kind":"eth","mac":"98:fe:54:13:f5:75","signal":"driver"}]'
     assert details["fpga"] == "[]"
+    # contract 19: the adapters go too, so the site's usb_net matches
+    assert json.loads(details["usb_net"])[0]["vidpid"] == "0bda:8153"
     assert details["hat_uuid"] == "-"          # this HAT has none
     site = label_input.build("p48", decode(details), {"serial": "registration"})
     assert label_input.comparable(site) == label_input.comparable(pi)

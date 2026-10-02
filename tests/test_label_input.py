@@ -185,8 +185,7 @@ def test_what_is_not_a_label_input_is_refused(doc, problem):
     ({"header": [1]}, {}, r"summary.header\[0\]: a string is required"),
     ({"dmi": []}, {}, "summary.dmi: an object is required"),
     ({"macs": [{"kind": "eth", "mac": 1}]}, {}, r"summary.macs\[0\].mac: a string is required"),
-    ({}, {"power": "rpi-hwid"}, "sources.power: not a summary field"),
-    ({}, {"serial": "guess"}, "sources.serial: 'guess' is not one of"),
+    ({}, {"x": float("nan")}, "sources: not writable as JSON"),
 ])
 def test_a_wrong_field_is_named(summary, sources, problem):
     with pytest.raises(label_input.InputError, match=problem):
@@ -393,3 +392,14 @@ def test_a_header_nobody_read_is_refused_not_printed_as_none():
     # the label input says so first, in its own field names
     with pytest.raises(labels.MissingFieldsError, match="board label needs header"):
         list(labels.all_labels({"pi-sw2-p48": _record(None)}, labels.KINDS))
+
+
+def test_sources_is_free_form_provenance():
+    """Contract 20: the site's own keys and values are its business."""
+    sources = {"collected_by": "fpgas.online-site 1.2", "registration": {"at": "2026-10-02"},
+               "pi-identified": ["2026-10-02T01:02:03Z", 7], "fpga-board-identified": None}
+    doc = label_input.build("h", {"model": "m"}, sources)
+    assert doc["sources"] == sources
+    assert json.loads(label_input.dumps(doc))["sources"] == sources
+    jsonschema.validate(json.loads(label_input.dumps(doc)),
+                        json.loads(label_input.schema_path().read_text()))

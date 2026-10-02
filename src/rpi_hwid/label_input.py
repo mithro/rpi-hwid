@@ -42,6 +42,8 @@ SCHEMA = "rpi-hwid/label-input"
 VERSION = 1
 SCHEMA_FILE = "label-input-v1.schema.json"
 
+# What rpi-hwid itself writes in `sources`, per summary field. Other builders
+# write what they like there (contract 20): the site, its event names.
 # Who read a field. "rpi-hwid": this package's probe, on the host.
 # "fpgas-verify": the fpgas.online verifier, on the host. "registration":
 # what the host told the fpgas.online site when it registered. "site": typed
@@ -172,7 +174,7 @@ def load(doc: dict[str, Any] | str | bytes) -> dict[str, Any]:
 
 
 def build(host: str, summary: dict[str, Any],
-          sources: dict[str, str] | None = None) -> dict[str, Any]:
+          sources: dict[str, Any] | None = None) -> dict[str, Any]:
     """A version-1 label input for `host` from a summary dict, checked and
     normalised: what the builder left out is filled in as ``normalise``
     says, and an explicit null stays "not read"."""
@@ -260,11 +262,12 @@ def check(doc: Any) -> list[str]:
     if not isinstance(sources, dict):
         problems.append("sources: an object is required")
     else:
-        for key, who in sorted(sources.items()):
-            if key not in PI_FIELDS:
-                problems.append(f"sources.{key}: not a summary field")
-            elif who not in SOURCES:
-                problems.append(f"sources.{key}: {who!r} is not one of {list(SOURCES)}")
+        # Provenance, free-form (contract 20): any keys, any JSON values. It
+        # is not compared and no label reads it; only its JSON-ness counts.
+        try:
+            json.dumps(sources, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            problems.append(f"sources: not writable as JSON: {exc}")
     return problems
 
 
@@ -446,8 +449,8 @@ def json_schema() -> dict[str, Any]:
             "version": {"type": "integer", "const": VERSION, "multipleOf": 1},
             "host": {"type": "string", "minLength": 1},
             "summary": _record_schema(Summary),
-            "sources": {"type": "object", "additionalProperties": False,
-                        "properties": {k: {"enum": list(SOURCES)} for k in PI_FIELDS}},
+            "sources": {"type": "object",
+                        "description": "Provenance, free-form: any keys, any JSON values."},
         },
     }
 
