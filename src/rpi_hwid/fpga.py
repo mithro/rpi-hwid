@@ -759,7 +759,21 @@ def sh_split_timed(args, timeout=15):
             out, err = p.communicate(timeout=TERM_GRACE_S)
         except subprocess.TimeoutExpired:
             p.kill()
-            out, err = p.communicate()
+            try:
+                out, err = p.communicate(timeout=TERM_GRACE_S)
+            except subprocess.TimeoutExpired:
+                # Under sudo, SIGKILL reaches sudo alone, and the command it
+                # ran holds the pipes open while it finishes: stop waiting,
+                # and let go of them.
+                for pipe in (p.stdout, p.stderr):
+                    try:
+                        pipe.close()
+                    except (AttributeError, OSError):
+                        pass
+                words = [a for a in args if a != "sudo" and not a.startswith("-")]
+                return "", "%s did not exit after SIGKILL%s" % (
+                    words[0] if words else args[0],
+                    " to sudo" if args[0] == "sudo" else ""), True
         return out or "", err or "", True
 
 
@@ -1664,6 +1678,8 @@ def identity_probe(boards=1):
     read, why = identity_parse(out)
     if timed_out:
         why = "%s did not answer within %d s (a board busy?)" % (FPGAS_VERIFY, timeout)
+        if "did not exit after SIGKILL" in err:
+            why += "; " + err
     elif why and err.strip():
         why += " (stderr: %s)" % last_lines(err)
     try:
@@ -2623,15 +2639,19 @@ def merge_report_fields(board, reading):
     recorded as such, and never win over a value read here, live: one that
     disagrees is recorded instead."""
     report = reading.pop("from_report", None) or []
-    if report:
-        board["from_report"] = report
+    taken = []
     for field in report:
         live, said = board.get(field), reading.get(field)
-        if live is None or said is None:
+        if said is None:
+            continue                 # the report gave nothing for it
+        if live is None:
+            taken.append(field)
             continue
         if not same_value(field, live, said):
             board.setdefault("report_conflict", {})[field] = {"live": live, "report": said}
         del reading[field]           # the live value stands either way
+    if taken:
+        board["from_report"] = taken     # only what the board took from it
 
 
 def merge_identity(boards, read):
