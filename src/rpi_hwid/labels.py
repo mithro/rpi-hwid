@@ -530,6 +530,63 @@ def camera_words(cam):
     return camera_generation(cam.sensor), focus, " ".join(optics) or None
 
 
+def camera_layout(lab, cam, size):
+    """The measurements `mark_camera` and `camera_width` share for a mark
+    `size` high: the generation's type size and the body's width, then the
+    words' type size and the width of the longer of their two lines."""
+    gen, focus, optics = camera_words(cam)
+    gen_size, word_size = size * 0.68, size * 0.58
+    pad, lens = size * 0.16, size * 0.27
+    body_w = pad + 2 * lens + pad + lab.width(gen, SANS_BOLD, gen_size) + pad
+    words_w = max(lab.width(w, SANS_BOLD, word_size) for w in (focus or "", optics or ""))
+    return gen_size, body_w, word_size, words_w
+
+
+def camera_width(lab, cam, size):
+    """The width `mark_camera` takes for `cam`: the title is told to leave
+    it, so it is measured before anything is drawn."""
+    _gen_size, body_w, _word_size, words_w = camera_layout(lab, cam, size)
+    return body_w + (size * 0.22 + words_w if words_w else 0)
+
+
+def mark_camera(lab, cam, x, y, size):
+    """A camera with its generation lettered on its body, and beside it what
+    else is known: the focus on the upper line, the optics on the lower.
+
+    The outline is a pocket camera, a lens in a body with a shutter button,
+    because that is the picture that means "camera" at two millimetres; a
+    drawing of the module itself is a square with a dot in it. The
+    generation is the one thing every camera has, so it is inside the
+    outline and black, and the mark is whole without the words beside it.
+    Each word keeps its own line whether or not the other is there, so
+    "fixed" is never found where "wide" would be.
+    """
+    c = lab.c
+    gen, focus, optics = camera_words(cam)
+    gen_size, body_w, word_size, _words_w = camera_layout(lab, cam, size)
+    pad, lens = size * 0.16, size * 0.27
+    body_h = size * 0.86
+    px, py = lab.pt(x, y + size)
+    c.setStrokeColor(GREY)
+    c.setFillColor(GREY)
+    c.setLineWidth(size * 0.07)
+    c.roundRect(px, py, body_w, body_h, size * 0.12, stroke=1, fill=0)
+    c.rect(px + pad, py + body_h, lens * 1.2, size * 0.12, stroke=0, fill=1)   # shutter button
+    cx, cy = px + pad + lens, py + body_h / 2
+    c.circle(cx, cy, lens, stroke=1, fill=0)
+    c.circle(cx, cy, size * 0.09, stroke=0, fill=1)
+    c.setStrokeColor(black)
+    c.setFillColor(black)
+    c.setLineWidth(1)
+    lab.text(x + pad + 2 * lens + pad, y + size - body_h / 2 - gen_size * 0.36, gen,
+             SANS_BOLD, gen_size)
+    wx = x + body_w + size * 0.22
+    if focus:
+        lab.text(wx, y, focus, SANS_BOLD, word_size, color=GREY)
+    if optics:
+        lab.text(wx, y + size - word_size * 0.72, optics, SANS_BOLD, word_size, color=GREY)
+
+
 def mark_rj45(lab, x, y, height):
     """An 8P8C jack outline: the body, the latch tab, eight contacts."""
     c = lab.c
@@ -770,17 +827,52 @@ def draw_board_columns(lab, b, x):
     icons = [m for m, on in ((mark_fan, b.fan), (mark_clock, b.rtc_battery)) if on]
     icon, icon_gap = 2.6 * mm, 1.1 * mm
     icons_w = len(icons) * icon + max(0, len(icons) - 1) * icon_gap
-    ix = LABEL_W - PAD - icons_w
+
+    # The cameras on the CSI ports go in the same corner, right of those
+    # two, one mark each at the icons' height. A mark with its words is
+    # several icons wide, so a second camera (a Pi 5 has two ports) goes
+    # under the first and not beside it: the title band is two marks deep,
+    # and that room comes out of the subtitle's line and not the title's.
+    # Cameras past two start another column, for a multiplexer board.
+    # Nothing is drawn for no cameras, found or never looked for.
+    cams = b.cameras or ()
+    cam_cols = [cams[i:i + 2] for i in range(0, len(cams), 2)]
+    col_ws = [max(camera_width(lab, cam, icon) for cam in col) for col in cam_cols]
+    cams_w = sum(col_ws) + max(0, len(col_ws) - 1) * icon_gap
+    corner_w = cams_w + (icon_gap if cams and icons else 0) + icons_w
+
+    # A lone camera beside a name that is already long ("Raspberry Pi
+    # Compute Module 5") would shrink it past reading or cut it short, so
+    # there it drops to the subtitle's line, under the fan and clock, and the
+    # title keeps the room it has on a board with no camera.
+    cam_row = 0
+    if len(cams) == 1 and lab.fitted_size(b.title, SANS_BOLD, 11,
+                                          head_w - corner_w - 1.5 * mm) < 7:
+        cam_row, corner_w = 1, icons_w
+
+    ix = LABEL_W - PAD - corner_w
     for draw in icons:
         draw(lab, ix, y + 0.2 * mm, icon)
         ix += icon + icon_gap
+    cx = LABEL_W - PAD - cams_w
+    for cam_col, cam_col_w in zip(cam_cols, col_ws, strict=True):
+        for row, cam in enumerate(cam_col, cam_row):
+            mark_camera(lab, cam, cx, y + 0.2 * mm + row * (icon + 0.6 * mm), icon)
+        cx += cam_col_w + icon_gap
 
     # the title gives up the room the icons take, rather than running under
     # them: lab.fit shrinks and then ellipsises, so a long name degrades
-    # gracefully instead of colliding.
-    title_w = head_w - (icons_w + 1.5 * mm if icons else 0)
+    # gracefully instead of colliding. The subtitle gives up room only to a
+    # camera on the second row, which is all that reaches down to its line;
+    # it may then go a point smaller than elsewhere, because the widest mark
+    # would otherwise cut the revision code off its end.
+    title_w = head_w - (corner_w + 1.5 * mm if corner_w else 0)
     lab.fit(head_x, y, b.title, SANS_BOLD, 11, title_w)
-    lab.fit(head_x, y + 4.6 * mm, b.subtitle, SANS, 6.5, head_w)
+    if cam_row or len(cams) > 1:
+        lab.fit(head_x, y + 4.6 * mm, b.subtitle, SANS, 6.5, head_w - cams_w - 1.5 * mm,
+                min_size=4.5)
+    else:
+        lab.fit(head_x, y + 4.6 * mm, b.subtitle, SANS, 6.5, head_w)
 
     # HAT band: the HAT line, then the uuid line centred in the rest of the
     # band (regular weight: bold mono at 6 pt fills in under toner). Every
