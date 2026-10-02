@@ -1480,6 +1480,10 @@ def read_flash(res, harness, board, part):
 FPGAS_VERIFY = "fpgas-verify"
 IDENTITY_SCHEMA = "fpgas-verify/identity"
 IDENTITY_VERSION = 1
+# The boards it describes that have an FPGA label here. A Tiny Tapeout
+# board is the Tiny Tapeout module's, and a Fomu has no label yet; both
+# stay in the evidence.
+IDENTITY_KINDS = ("acorn", "arty", "netv2", "pcileech", "unknown-fpga")
 # How long --identify may take. fpgas-verify waits at most 30 s for each
 # board's lock and leaves a board it could not get out, "board busy"
 # (contract 23): so 30 s a board, and 30 s for the rest, never under 60 s.
@@ -1510,31 +1514,34 @@ IDENTITY_FIELDS = ("kind", "serial", "dna", "idcode", "flash", "flash_jedec",
 
 
 def identity_parse(out):
-    """({PCIe slot: the board's FpgaBoard fields}, why the rest were not
-    read) from what `fpgas-verify --identify` printed."""
+    """([each board's FpgaBoard fields, with `bdf` for one on PCIe], why the
+    rest were not read) from what `fpgas-verify --identify` printed."""
     try:
         doc = json.loads(out)
     except ValueError:
         text = out.strip()
-        return {}, "%s printed %s" % (
+        return [], "%s printed %s" % (
             FPGAS_VERIFY, "no document: " + text[-200:] if text else "nothing")
     if not isinstance(doc, dict) or doc.get("schema") != IDENTITY_SCHEMA:
-        return {}, "%s printed something other than %s" % (FPGAS_VERIFY, IDENTITY_SCHEMA)
+        return [], "%s printed something other than %s" % (FPGAS_VERIFY, IDENTITY_SCHEMA)
     # the integer 1: not true, not 1.0, which compare equal to it
     version = doc.get("identity_version")
     if type(version) is not int or version != IDENTITY_VERSION:
-        return {}, "%s wrote identity_version %r, and this reads %d" % (
+        return [], "%s wrote identity_version %r, and this reads %d" % (
             FPGAS_VERIFY, doc.get("identity_version"), IDENTITY_VERSION)
-    read, why = {}, []
+    read, why = [], []
     for b in doc.get("boards") or ():
-        if not isinstance(b, dict):
+        if not isinstance(b, dict) or b.get("kind") not in IDENTITY_KINDS:
             continue
         fields = dict((k, b[k]) for k in IDENTITY_FIELDS if b.get(k) is not None)
-        errors = ["%s: %s" % (k, b[k]) for k in sorted(b) if k.endswith("_error")]
         if b.get("bdf"):
-            read[b["bdf"]] = fields
-        else:
-            why.append("%s: not on PCIe" % (b.get("board") or b.get("kind")))
+            fields["bdf"] = b["bdf"]
+        # what fpgas-verify took from its boot report rather than reading now
+        report = [k for k in (b.get("from_report") or ()) if k in fields]
+        if report:
+            fields["from_report"] = report
+        read.append(fields)
+        errors = ["%s: %s" % (k, b[k]) for k in sorted(b) if k.endswith("_error")]
         if errors:
             why.append("%s: %s" % (b.get("board") or b.get("kind"), "; ".join(errors)))
     if not doc.get("boards"):
@@ -2365,24 +2372,136 @@ def merge_soc(boards, soc):
     return boards
 
 
-def merge_identity(boards, read):
-    """Put what fpgas-verify read of each board on the board at that PCIe
-    address, its answer winning over the chain's.
+# Why a reading was put on no board, where boards of its kind were found.
+AMBIGUOUS = "more than one board of its kind could be it"
+OTHER_DIE = "the board of its kind found here has another die (IDCODE)"
 
-    By slot, not through the chain: the chain belongs to whatever board its
-    harness names, and on a Pi 4's default pins that is a NeTV2."""
-    for board in boards:
-        reading = read.get(board.get("slot") or "")
-        if reading:
-            if reading.get("flash_uid_state") != "read" and (
-                    board.get("flash_jedec") or board.get("flash_source") == "jtag"):
-                # the chain read the flash fpgas-verify could not: its read
-                # stands, and none of fpgas-verify's flash fields join it
-                reading = dict((k, v) for k, v in reading.items()
-                               if not k.startswith("flash"))
-            board.update(reading)
+
+def same_die(board, reading):
+    """Whether two IDCODEs, where both are known, name the same die (the
+    silicon revision bits aside)."""
+    try:
+        a, b = int(board["idcode"], 16), int(reading["idcode"], 16)
+    except (KeyError, TypeError, ValueError):
+        return True
+    return a & 0x0FFFFFFF == b & 0x0FFFFFFF
+
+
+def identity_board(boards, reading, taken):
+    """The board in `boards` that fpgas-verify's `reading` is of; None when
+    there is no board of its kind; or why it is put on none (AMBIGUOUS,
+    OTHER_DIE) when there are boards of its kind and none is clearly it.
+
+    A board on PCIe by its slot, not through the chain: the chain belongs to
+    whatever board its harness names, and on a Pi 4's default pins that is
+    a NeTV2. An Arty by its FT2232's serial. Otherwise the one board of its
+    kind whose die agrees, found on PCIe or not -- fpgas-verify finds a
+    NeTV2 by its JTAG scan and gives no slot, though the Pi may list it on
+    PCIe too -- or, for a NeTV2, the one chain ("jtag") where the harness
+    does not name the board."""
+    free = [b for b in boards if id(b) not in taken]
+    if reading.get("bdf"):
+        return next((b for b in free if b.get("slot") == reading["bdf"]), None)
+    if reading["kind"] == "arty" and reading.get("serial"):
+        return next((b for b in free if b["kind"] == "arty"
+                     and b.get("serial") == reading["serial"]), None)
+    found = False
+    for kinds in ((reading["kind"],), ("jtag",) if reading["kind"] == "netv2" else ()):
+        candidates = [b for b in free if b["kind"] in kinds]
+        same = [b for b in candidates if same_die(b, reading)]
+        if len(same) == 1:
+            return same[0]
+        if same:
+            return AMBIGUOUS
+        found = found or bool(candidates)
+    return OTHER_DIE if found else None
+
+
+def merge_dna(board, dna):
+    """Fold fpgas-verify's DNA into the board's, checked against any it
+    already has. A DNA the board has is never overwritten: readings that
+    disagree are recorded and neither is kept, as merge_soc does; one that
+    is already in conflict stays so, fpgas-verify's reading joining it."""
+    method = FPGAS_VERIFY
+    if board.get("dna_conflict"):
+        board["dna_conflict"] = dict(board["dna_conflict"], **{method: normalise_id(dna)})
+        board["dna"] = None
+        return
+    readings = {method: dna}
+    if board.get("dna"):
+        for source in board.get("dna_sources") or ["jtag"]:
+            readings[source] = board["dna"]
+    checked = cross_check(readings)
+    board["dna"] = checked["value"]
+    board["dna_sources"] = checked["sources"]
+    if checked["agree"] is not None:
+        board["dna_agree"] = checked["agree"]
+    if checked.get("conflict"):
+        board["dna_conflict"] = checked["conflict"]
+
+
+# The fields that are hex numbers, compared as numbers (0x0362d093 and
+# 0x362d093 are one IDCODE); every other field is compared as written.
+HEX_FIELDS = ("dna", "idcode", "flash_jedec", "flash_extended_id", "flash_uid")
+
+
+def same_value(field, a, b):
+    if field in HEX_FIELDS:
+        na, nb = normalise_id(a), normalise_id(b)
+        if na is not None and nb is not None:
+            return na == nb
+    return str(a) == str(b)
+
+
+def merge_report_fields(board, reading):
+    """Fields fpgas-verify took from its boot report (`from_report`) are
+    recorded as such, and never win over a value read here, live: one that
+    disagrees is recorded instead."""
+    report = reading.pop("from_report", None) or []
+    taken = []
+    for field in report:
+        live, said = board.get(field), reading.get(field)
+        if said is None:
+            continue                 # the report gave nothing for it
+        if live is None:
+            taken.append(field)
+            continue
+        if not same_value(field, live, said):
+            board.setdefault("report_conflict", {})[field] = {"live": live, "report": said}
+        del reading[field]           # the live value stands either way
+    if taken:
+        board["from_report"] = taken     # only what the board took from it
+
+
+def merge_identity(boards, read):
+    """Put what fpgas-verify read of each board on that board, its answer
+    winning over the chain's except where they disagree; a board it read
+    that nothing here found is added as it described it, and one that
+    could be more than one board is put on none and listed (returned)."""
+    taken, unplaced = set(), []
+    for reading in read:
+        board = identity_board(boards, reading, taken)
+        if board in (AMBIGUOUS, OTHER_DIE):
+            unplaced.append(dict(reading, unplaced_because=board))
+            continue
+        reading = dict((k, v) for k, v in reading.items() if k != "bdf")
+        if board is None:
+            board = {"kind": reading["kind"], "how": FPGAS_VERIFY + " --identify"}
+            boards.append(board)
+        else:
             board["how"] = board.get("how", "") + "; %s --identify" % FPGAS_VERIFY
-    return boards
+        taken.add(id(board))
+        merge_report_fields(board, reading)
+        if reading.get("flash_uid_state") != "read" and (
+                board.get("flash_jedec") or board.get("flash_source") == "jtag"):
+            # the chain read the flash fpgas-verify could not: its read
+            # stands, and none of fpgas-verify's flash fields join it
+            reading = dict((k, v) for k, v in reading.items()
+                           if not k.startswith("flash"))
+        if reading.get("dna"):
+            merge_dna(board, reading.pop("dna"))
+        board.update(reading)
+    return unplaced
 
 
 def fpga_summary(boards):
@@ -2434,19 +2553,43 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     # own; only a board it could not read goes on to the bridge, which
     # replaces whatever design is running -- possibly someone's session.
     endpoints = fpga_endpoints(f["pcie"])
-    f["fpgas_verify"] = identity_probe(len(endpoints)) if endpoints else None
-    identified = (f["fpgas_verify"] or {}).get("read", {})
-    unread = [s for s in endpoints
-              if identified.get(s, {}).get("flash_uid_state") != "read"]
-    f["jtag"] = jtag_probe(flash and (unread or not endpoints), pins,
-                           gateware_parts(f["pcileech"]), endpoints) if jtag else None
+    artys = [u for u in f["ftdi"] if u["id"] == "0403:6010"
+             and (u["manufacturer"] or "").startswith("Digilent")]
+    f["fpgas_verify"] = identity_probe(max(1, len(endpoints) + len(artys))) \
+        if endpoints or artys or jtag else None
+    identified = (f["fpgas_verify"] or {}).get("read", [])
+    # Which boards still want their flash read over JTAG, which loads a
+    # bridge in place of the running design: those whose flash fpgas-verify
+    # did not give. By slot, an Arty by its serial, and a chain with no
+    # board on PCIe or USB by any board fpgas-verify found the same way.
+    read_flash = [b for b in identified if b.get("flash_uid_state") == "read"]
+    unread = [s for s in endpoints if not any(b.get("bdf") == s for b in read_flash)]
+    unread_artys = [u for u in artys if not any(
+        b["kind"] == "arty" and b.get("serial") == u.get("serial") for b in read_flash)]
+    chain_unread = not endpoints and not artys and not any(
+        not b.get("bdf") and b["kind"] != "arty" for b in read_flash)
+    want_flash = flash and bool(unread or unread_artys or chain_unread)
+    # The chain is read only for what fpgas-verify did not give: a board
+    # whose DNA and IDCODE it read, and whose flash it read too where one
+    # was asked for, needs nothing from JTAG -- and a flash read over JTAG
+    # replaces the running design.
+    answered = bool(identified) and all(
+        b.get("dna") and b.get("idcode")
+        and (not flash or b.get("flash_uid_state") == "read") for b in identified) \
+        and len(identified) >= len(endpoints) + len(artys)
+    f["jtag"] = jtag_probe(want_flash, pins,
+                           gateware_parts(f["pcileech"]), endpoints) \
+        if jtag and not answered else None
     # The ECP5 TraceID, and only when asked for by name. This ends the
     # board's capture and may drop power to whatever is on its TARGET port,
     # so it is not folded into --jtag, which is harmless everywhere else.
     f["cynthion_jtag"] = None
     if force_offline and any(cynthion_flash_uid(c) for c in f["cynthion"]):
         f["cynthion_jtag"] = cynthion_offline_probe()
-    f["boards"] = merge_identity(merge_soc(fpga_verdict(f), f["soc"]), identified)
+    f["boards"] = merge_soc(fpga_verdict(f), f["soc"])
+    unplaced = merge_identity(f["boards"], identified)
+    if unplaced:
+        f["fpgas_verify"]["unplaced"] = unplaced
     f["summary"] = fpga_summary(f["boards"])
     return f
 

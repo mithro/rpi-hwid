@@ -786,27 +786,27 @@ def _identity(**changes):
 def test_the_golden_identity_document_is_read():
     read, why = fpga.identity_parse(IDENTITY_P48.read_text())
     assert why is None
-    assert read == {"0001:01:00.0": {
+    assert read == [{
+        "bdf": "0001:01:00.0",
         "kind": "acorn", "dna": "0x0054b48664b04854", "idcode": "0x13636093",
         "soc_model": "cle-215+", "flash": "S25FL256S", "flash_source": "pcie",
         "flash_jedec": "0x010219", "flash_extended_id": "0x4d0180",
         "flash_uid": "edcbeececb2b2a88b04f914d2e46af90", "flash_uid_bits": 128,
-        "flash_uid_state": "read"}}
+        "flash_uid_state": "read"}]
 
 
 def test_fpgas_verifys_own_fields_stay_in_the_evidence():
     """variant, build, flash_quad and the rest are fpgas-verify's: a board
     takes only FpgaBoard's fields, so the summary never meets a field the
     model refuses."""
-    read, _ = fpga.identity_parse(IDENTITY_P48.read_text())
-    assert set(read["0001:01:00.0"]) <= set(fpga.IDENTITY_FIELDS)
+    (read,), _ = fpga.identity_parse(IDENTITY_P48.read_text())
+    assert set(read) - {"bdf"} <= set(fpga.IDENTITY_FIELDS)
     assert set(fpga.IDENTITY_FIELDS) <= {f.name for f in dataclasses.fields(FpgaBoard)}
 
 
 @pytest.mark.parametrize(("doc", "because"), [
     (_identity(dna=None, dna_error="BAR0 could not be read"),
      "acorn: dna_error: BAR0 could not be read"),
-    (_identity(bdf=None), "acorn: not on PCIe"),
     (dict(_identity(), boards=[]), "no board found"),
     (dict(_identity(), identity_version=2), "identity_version 2, and this reads 1"),
     (dict(_identity(), identity_version=True), "identity_version True, and this reads 1"),
@@ -820,12 +820,12 @@ def test_what_fpgas_verify_could_not_read_says_why(doc, because):
 
 def test_a_document_of_another_version_is_not_read():
     read, _ = fpga.identity_parse(json.dumps(dict(_identity(), identity_version=2)))
-    assert read == {}
+    assert read == []
 
 
 def test_output_that_is_not_the_tools_document_is_not_read():
     read, why = fpga.identity_parse("sudo: fpgas-verify: command not found")
-    assert read == {}
+    assert read == []
     assert "command not found" in why
 
 
@@ -892,6 +892,206 @@ def test_an_acorns_flash_is_asked_of_fpgas_verify_before_any_bridge_is_loaded(fa
     assert f["fpgas_verify"]["error"] is None
 
 
+def test_a_board_fpgas_verify_read_whole_is_not_read_over_jtag(fake_root, monkeypatch):
+    """Its DNA, IDCODE and flash came from fpgas-verify, so even --jtag
+    --flash leaves the chain alone."""
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, _identity())
+    assert f["jtag"] is None
+    assert not [a for a in ran if "openFPGALoader" in a]
+    assert board["dna"] == "0x0054b48664b04854"
+
+
+def test_a_dna_fpgas_verify_did_not_read_sends_it_to_the_chain(fake_root, monkeypatch):
+    f, board, _ = _acorn_collect(fake_root, monkeypatch, _identity(dna=None))
+    assert f["jtag"]["idcode"] == "0x3636093"
+    assert board["dna"] == "0x0054b48664b04854"         # the chain's
+    assert board["flash_source"] == "pcie"              # and fpgas-verify's flash
+
+
+def _merged(boards, *readings):
+    return fpga.merge_identity(boards, list(readings))
+
+
+def test_an_arty_is_matched_by_its_ft2232_serial():
+    artys = [{"kind": "arty", "serial": "210319A8B4C1", "how": "a"},
+             {"kind": "arty", "serial": "210319B301DE", "how": "b"}]
+    _merged(artys, {"kind": "arty", "serial": "210319B301DE", "idcode": "0x0362d093"})
+    assert "idcode" not in artys[0]
+    assert artys[1]["idcode"] == "0x0362d093"
+    assert artys[1]["how"] == "b; fpgas-verify --identify"
+
+
+def test_a_netv2_on_its_harness_is_the_one_chain_there():
+    boards = [{"kind": "jtag", "idcode": "0x3631093", "how": "GPIO JTAG"}]
+    _merged(boards, {"kind": "netv2", "idcode": "0x13631093", "dna": "0x00742c4e63b9085c"})
+    assert boards == [{"kind": "netv2", "idcode": "0x13631093", "dna": "0x00742c4e63b9085c",
+                       "dna_sources": ["fpgas-verify"],
+                       "how": "GPIO JTAG; fpgas-verify --identify"}]
+
+
+def test_a_board_nothing_here_found_is_added_as_fpgas_verify_described_it():
+    boards = []
+    _merged(boards, {"kind": "netv2", "idcode": "0x13631093"})
+    assert boards == [{"kind": "netv2", "idcode": "0x13631093",
+                       "how": "fpgas-verify --identify"}]
+
+
+def test_two_boards_of_a_kind_with_nothing_to_tell_them_apart_are_not_guessed_at():
+    """Put on neither, and not added as a third: listed as unplaced."""
+    boards = [{"kind": "netv2", "how": "a"}, {"kind": "netv2", "how": "b"}]
+    reading = {"kind": "netv2", "dna": "0x00742c4e63b9085c"}
+    assert _merged(boards, reading) == [dict(reading, unplaced_because=fpga.AMBIGUOUS)]
+    assert [b.get("dna") for b in boards] == [None, None]
+
+
+def test_a_netv2_on_pcie_is_the_board_fpgas_verify_found_by_jtag():
+    """fpgas-verify finds a NeTV2 by its JTAG scan and gives no slot; the
+    Pi lists it on PCIe. One board, not two."""
+    boards = [{"kind": "netv2", "slot": "0000:01:00.0", "how": "PCIe 10ee:7024"}]
+    _merged(boards, {"kind": "netv2", "idcode": "0x13631093", "dna": "0x00742c4e63b9085c"})
+    assert len(boards) == 1
+    assert boards[0]["dna"] == "0x00742c4e63b9085c"
+
+
+def test_a_board_of_another_die_is_not_the_one_nor_a_second_board():
+    """Put on none, and not added: it is listed with why."""
+    boards = [{"kind": "netv2", "idcode": "0x3636093", "how": "a"}]
+    reading = {"kind": "netv2", "idcode": "0x13631093"}
+    assert _merged(boards, reading) == [dict(reading, unplaced_because=fpga.OTHER_DIE)]
+    assert boards == [{"kind": "netv2", "idcode": "0x3636093", "how": "a"}]
+
+
+def test_a_dna_the_board_has_is_checked_not_overwritten():
+    boards = [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "dna_sources": ["jtag"],
+               "how": "a"}]
+    _merged(boards, {"kind": "netv2", "dna": "0x742c4e63b9085c"})
+    assert boards[0]["dna"] == "0x00742c4e63b9085c"
+    assert boards[0]["dna_sources"] == ["fpgas-verify", "jtag"]
+    assert boards[0]["dna_agree"] is True
+
+
+def test_dnas_that_disagree_are_recorded_and_neither_kept():
+    """A wrong match, or a wrong read: there is no telling which, so the
+    label has no DNA rather than an arbitrary one."""
+    boards = [{"kind": "netv2", "dna": "0x00742c4e63b9085c", "dna_sources": ["jtag"],
+               "how": "a"}]
+    _merged(boards, {"kind": "netv2", "dna": "0x0054b48664b04854"})
+    assert boards[0]["dna"] is None
+    assert boards[0]["dna_agree"] is False
+    assert boards[0]["dna_conflict"] == {"fpgas-verify": "0x0054b48664b04854",
+                                         "jtag": "0x00742c4e63b9085c"}
+
+
+def test_a_dna_merge_soc_left_in_conflict_stays_in_conflict():
+    boards = [{"kind": "acorn", "slot": "0001:01:00.0", "dna": None, "dna_agree": False,
+               "dna_conflict": {"jtag": "0x1", "pcie": "0x2"}, "how": "a"}]
+    _merged(boards, {"kind": "acorn", "bdf": "0001:01:00.0", "dna": "0x0054b48664b04854"})
+    assert boards[0]["dna"] is None
+    assert boards[0]["dna_conflict"]["fpgas-verify"] == "0x0054b48664b04854"
+
+
+def test_a_field_from_the_boot_report_never_beats_a_live_read():
+    boards = [{"kind": "arty", "serial": "210319B301DE", "flash_jedec": "0x20ba18",
+               "how": "a"}]
+    _merged(boards, {"kind": "arty", "serial": "210319B301DE", "flash_jedec": "0xc22017",
+                     "flash_uid_state": "read", "flash_uid": "ab",
+                     "from_report": ["flash_jedec", "flash_uid_state", "flash_uid"]})
+    b = boards[0]
+    assert b["flash_jedec"] == "0x20ba18"
+    assert b["report_conflict"] == {"flash_jedec": {"live": "0x20ba18", "report": "0xc22017"}}
+    assert b["from_report"] == ["flash_uid_state", "flash_uid"]   # the jedec stood
+    assert b["flash_uid"] == "ab"                    # nothing live disagreed
+
+
+def test_a_report_never_beats_a_live_flash_read_whatever_its_type():
+    """p47: the chain read an S25FL128S over JTAG; the report said
+    S25FL127S over spioverjtag. None of that is hex, and all of it was
+    once compared as equal and overwritten."""
+    boards = [{"kind": "arty", "serial": "210319B301DE", "flash": "Spansion S25FL128S",
+               "flash_source": "jtag", "flash_uid_state": "read", "flash_jedec": "0x012018",
+               "how": "a"}]
+    _merged(boards, {"kind": "arty", "serial": "210319B301DE", "flash": "S25FL127S",
+                     "flash_source": "spioverjtag", "flash_uid_state": "read",
+                     "flash_jedec": "0x12018",
+                     "from_report": ["flash", "flash_source", "flash_uid_state",
+                                     "flash_jedec"]})
+    b = boards[0]
+    assert (b["flash"], b["flash_source"], b["flash_jedec"]) == (
+        "Spansion S25FL128S", "jtag", "0x012018")
+    assert b["report_conflict"] == {
+        "flash": {"live": "Spansion S25FL128S", "report": "S25FL127S"},
+        "flash_source": {"live": "jtag", "report": "spioverjtag"}}
+
+
+def test_from_report_survives_the_parse():
+    doc = _identity(from_report=["flash_jedec", "flash_uid", "variant"])
+    (read,), _ = fpga.identity_parse(json.dumps(doc))
+    assert read["from_report"] == ["flash_jedec", "flash_uid"]
+
+
+def _arty_collect(fake_root, monkeypatch, reading):
+    shutil.rmtree(fake_root / "sys/bus/pci/devices/0001:01:00.0")
+    wanted = []
+    monkeypatch.setattr(fpga, "ftdi_devices", lambda: [
+        {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319B301DE",
+         "path": "1-1"}])
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {"read": [reading], "error": None})
+    monkeypatch.setattr(fpga, "jtag_probe", lambda want_flash=False, *a, **k: (
+        wanted.append(want_flash), {"idcode": "0x362d093", "dna": "0x00628502251ea85c",
+                                    "cable": "digilent"})[1])
+    fpga.collect_fpga(jtag=True, flash=True)
+    return wanted
+
+
+def test_an_arty_whose_flash_fpgas_verify_gave_gets_no_bridge(fake_root, monkeypatch):
+    """Its DNA still comes from the chain, but the flash it has is not read
+    again: that read loads a bridge in place of the running design."""
+    wanted = _arty_collect(fake_root, monkeypatch, {
+        "kind": "arty", "serial": "210319B301DE", "idcode": "0x0362d093",
+        "flash_jedec": "0x20ba18", "flash_uid_state": "read", "flash_uid": "ab"})
+    assert wanted == [False]
+
+
+def test_an_arty_whose_flash_fpgas_verify_did_not_give_is_read(fake_root, monkeypatch):
+    wanted = _arty_collect(fake_root, monkeypatch, {
+        "kind": "arty", "serial": "210319B301DE", "idcode": "0x0362d093"})
+    assert wanted == [True]
+
+
+def test_a_reading_nowhere_to_put_is_listed_in_the_evidence(fake_root, monkeypatch):
+    monkeypatch.setattr(fpga, "fpga_verdict", lambda f: [
+        {"kind": "netv2", "how": "a"}, {"kind": "netv2", "how": "b"}])
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {
+        "read": [{"kind": "netv2", "dna": "0x1"}], "error": None})
+    f = fpga.collect_fpga()
+    assert f["fpgas_verify"]["unplaced"] == [
+        {"kind": "netv2", "dna": "0x1", "unplaced_because": fpga.AMBIGUOUS}]
+
+
+def test_tiny_tapeout_and_fomu_boards_get_no_fpga_label():
+    doc = dict(_identity(), boards=[
+        {"board": "tt", "kind": "tt", "serial": "E6614C311B7A7A37"},
+        {"board": "fomu", "kind": "fomu", "serial": "fomu-1"}])
+    read, why = fpga.identity_parse(json.dumps(doc))
+    assert read == []
+    assert why is None
+
+
+def test_fpgas_verify_is_asked_about_an_arty_on_usb(fake_root, monkeypatch):
+    shutil.rmtree(fake_root / "sys/bus/pci/devices/0001:01:00.0")
+    asked = []
+    monkeypatch.setattr(fpga, "ftdi_devices", lambda: [
+        {"id": "0403:6010", "manufacturer": "Digilent", "serial": "210319B301DE",
+         "path": "1-1"}])
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: asked.append(1) or {
+        "read": [{"kind": "arty", "serial": "210319B301DE", "idcode": "0x0362d093"}],
+        "error": None})
+    f = fpga.collect_fpga()
+    assert asked
+    (arty,) = [b for b in f["boards"] if b["kind"] == "arty"]
+    assert arty["idcode"] == "0x0362d093"
+
+
 def test_as_root_fpgas_verify_is_run_without_sudo(fake_root, monkeypatch):
     def run(args, timeout=15):
         ran.append(args)
@@ -909,7 +1109,7 @@ def test_an_acorns_flash_is_read_by_fpgas_verify_when_its_chain_does_not_answer(
     """pi-sw2-p48, 2026-09-25: its SoC read the flash while its harness gave
     "TDO is stuck at 0". The PCIe read needs no chain, and it is not skipped
     when there is none."""
-    f, board, ran = _acorn_collect(fake_root, monkeypatch, _identity(),
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, _identity(dna=None),
                                    chain="JTAG init failed with: TDO is stuck at 0")
     assert f["jtag"]["idcode"] is None
     assert not [a for a in ran if "--flash-info-json" in a or a.endswith("/remove")]
@@ -2318,6 +2518,19 @@ def test_identify_is_given_sixty_seconds(monkeypatch):
     assert seen == [60, 120]
 
 
+@pytest.mark.parametrize(("restored", "rc", "said"), [
+    (True, 0, "cynthion: back in gateware mode"),
+    (False, 1, "cynthion: did not come back")])
+def test_the_recovery_collect_names_is_a_command(monkeypatch, capsys, restored, rc, said):
+    """collect and the module tell people to run `rpi-hwid fpga
+    --recover-cynthion`; it was an unrecognised argument."""
+    from rpi_hwid import cli
+    monkeypatch.setattr(fpga, "cynthion_offline_probe",
+                        lambda recover=False: {"restored": restored} if recover else {})
+    monkeypatch.setattr(fpga, "collect_fpga", lambda *a, **k: pytest.fail("collected"))
+    assert cli.main(["fpga", "--recover-cynthion"]) == rc
+    assert capsys.readouterr().out.strip() == said
+
 
 def test_a_command_that_outlives_sudos_sigkill_is_let_go(monkeypatch):
     """SIGKILL to sudo leaves its child running, the pipes held open: a
@@ -2349,3 +2562,17 @@ def test_a_command_that_outlives_sudos_sigkill_is_let_go(monkeypatch):
         "", "fpgas-verify did not exit after SIGKILL to sudo", True)
     assert events == [("wait", 7), "TERM", ("wait", 5), "KILL", ("wait", 5),
                       "closed", "closed"]
+
+
+
+def test_from_report_lists_only_what_was_taken_from_the_report():
+    """A field whose live value stood was not taken from the report, and one
+    the report did not give was not either."""
+    boards = [{"kind": "arty", "serial": "210319B301DE", "flash_jedec": "0x012018",
+               "how": "a"}]
+    _merged(boards, {"kind": "arty", "serial": "210319B301DE", "flash_jedec": "0x012018",
+                     "flash_uid": "ab", "flash_uid_state": "read",
+                     "from_report": ["flash_jedec", "flash_uid", "flash_uid_state",
+                                     "flash_sfdp"]})
+    assert boards[0]["from_report"] == ["flash_uid", "flash_uid_state"]
+    assert boards[0]["flash_uid"] == "ab"

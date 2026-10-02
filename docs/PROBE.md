@@ -200,14 +200,42 @@ apart. How the label names the part from them, and why an id that names no part
 stops label generation, is in [LABELS.md](LABELS.md#the-flash-part).
 
 Where [fpgas-verify](https://github.com/fpgas-online/fpgas.online-test-designs)
-is installed (an fpgas.online host), an FPGA on PCIe is asked about first with
-`fpgas-verify --identify` (directly as root, else `sudo -n`). It reads only what
-is safe while the board is in use: an Acorn's IDCODE, Device DNA, and its
-configuration flash through the board's own SoC, all six RDID bytes included.
-What it reads is put on the board at that PCIe slot, and wins over the chain's;
-a flash it read is not read again over JTAG, which would replace the running
-design. The document it printed is kept whole under `fpga.fpgas_verify.document`, as evidence; it is given 60 s, fpgas-verify bounding its own wait for a busy board at 30. Without fpgas-verify,
-nothing here changes.
+is installed (an fpgas.online host), it is asked about the boards first, with
+`fpgas-verify --identify` (directly as root, else `sudo -n`), whenever there is
+an FPGA on PCIe, a Digilent FT2232 on USB, or `--jtag`. It reads only what is
+safe while a board is in use: IDCODE, Device DNA, and an Acorn's configuration
+flash through the board's own SoC, all six RDID bytes included; what it cannot
+read safely (an Arty's or NeTV2's flash) it gives from its boot report, and
+says which fields those are (`from_report`). It is given 60 s, fpgas-verify
+bounding its own wait for a busy board at 30.
+
+What it reads is put on the board it describes: by PCIe slot, an Arty by its
+FT2232's serial, otherwise the one board of that kind whose die (IDCODE) agrees,
+on PCIe or not -- fpgas-verify finds a NeTV2 by its JTAG scan and gives no slot
+-- or, for a NeTV2, the one chain the harness does not name (`jtag`). A reading
+that could be more than one board is put on none, and listed under
+`fpga.fpgas_verify.unplaced`; one that matches no board is added. Its values
+win over the chain's, except:
+
+* a DNA: the board's and fpgas-verify's are compared, and when they disagree
+  (a wrong match, or a wrong read) neither is kept, as with the SoC's DNA
+  (`dna_conflict`); a DNA already in conflict stays so;
+* a field from its boot report never beats one read live here that disagrees:
+  the live one stays and the two are recorded under `report_conflict`;
+* a flash it could not read leaves the chain's read standing.
+
+A Tiny Tapeout board or a Fomu it reports gets no FPGA label: the first has its
+own module and label, the second none yet. The document it printed is kept
+whole under `fpga.fpgas_verify.document`, as evidence: its own fields, and the
+boards with no label here.
+
+The chain is then read only for what fpgas-verify did not give. When every
+board it read came with its DNA and IDCODE, and its flash where `--flash` asks
+for one, `--jtag` reads nothing. Otherwise the chain is read, but with `--flash`
+the flash only when some board's flash fpgas-verify did not give (by slot, an
+Arty by its serial, a chain on the harness by a board found the same way): a
+JTAG flash read loads a bridge in place of the running design. Without
+fpgas-verify, nothing here changes.
 
 ```
 $ rpi-hwid fpga --jtag          # a Pi 4 with an Arty A7-35T on USB
