@@ -13,6 +13,7 @@
     rpi-hwid tasmota --sheet CSV --site NAME=OCTET --out DIR
                                                           over HTTP, read-only: Tasmota plugs
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
+    rpi-hwid labels --this-host [--out labels.pdf]        on a Pi: this host's labels
     rpi-hwid label-input --from PROBE_JSON | --pi-only [--host NAME]
                                                           the labels' versioned input document
     rpi-hwid name --netv2 DNA… | --arty SERIAL… | --cynthion UID…

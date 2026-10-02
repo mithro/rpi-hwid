@@ -1,6 +1,7 @@
 """Print-ready hardware labels from collected probe documents.
 
     rpi-hwid labels --data data/ --out labels.pdf [--artwork DIR] [--names names.json]
+    rpi-hwid labels --this-host [--out labels.pdf] [--list] [--input FILE]
 
 An A4 PDF laid out for 21-per-sheet 63.5 x 38.1 mm address labels (the
 Avery L7160 grid: three columns, seven rows, 2.54 mm between columns,
@@ -1968,7 +1969,16 @@ def check_main(docs):
 def main(argv=None):
     global ARTWORK_DIR
     ap = argparse.ArgumentParser(prog="rpi-hwid labels", description=__doc__.split("\n")[0])
-    ap.add_argument("--data", required=True, type=Path, help="directory of probe JSON documents")
+    source = ap.add_mutually_exclusive_group(required=True)
+    source.add_argument("--data", type=Path,
+                        help="directory of probe JSON documents and label inputs")
+    source.add_argument("--this-host", action="store_true",
+                        help="read this host (run on it): the Pi-only probe and fpgas-verify's "
+                             "identity of its FPGA boards (rpi_hwid.this_host)")
+    ap.add_argument("--host", help="with --this-host: the name to file it under "
+                                   "(default: this host's name)")
+    ap.add_argument("--input", type=Path, metavar="FILE",
+                    help="with --this-host: also write the label input it built to FILE")
     ap.add_argument("--out", default="hardware-labels.pdf", type=Path)
     from rpi_hwid import micro
     micro_kinds = list(micro.kinds())
@@ -1992,7 +2002,20 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     ARTWORK_DIR = str(args.artwork) if args.artwork else None
-    docs = load_collected(args.data)
+    if (args.host or args.input) and not args.this_host:
+        ap.error("--host and --input go with --this-host")
+    if args.this_host:
+        import socket
+
+        from rpi_hwid import this_host
+
+        host = args.host or socket.gethostname()
+        doc = this_host.label_input_document(host)
+        if args.input:
+            args.input.write_text(label_input.dumps(doc))
+        docs = {host: label_input.to_probe_document(doc)}
+    else:
+        docs = load_collected(args.data)
     pinned = json.loads(args.names.read_text()) if args.names else None
     only = args.only or list(KINDS) + micro_kinds
     if args.json and not args.list:
