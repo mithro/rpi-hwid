@@ -162,7 +162,12 @@ What it never does:
 read: where it is not already up, `modprobe i2c-dev` and `dtparam
 i2c_arm=on`, a quick-write scan of the addresses, then its own dtparam
 removed and the module unloaded, so the host is left as it was found. With
-it read, a header with nothing on it is `[]`, and the Pi label can be made.
+both buses read, a header with nothing on it is `[]`, and the Pi label can be
+made. A header bus that should have been read and was not -- the ID bus
+whose `dtparam` brought no `/dev/i2c-0` up, or the user bus under
+`--user-bus` -- leaves the header null (not read), whatever the other bus
+found, unless the firmware's own reading (`/proc/device-tree/hat`) names the
+HAT.
 It drives GPIO2/3, so it is for when nothing else may be using them:
 fpgas-verify passes it only at boot, before any test, and only where the
 setup's wiring says those pins are safe for I2C then.
