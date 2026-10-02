@@ -1449,8 +1449,11 @@ IDENTITY_ENV = "FPGAS_VERIFY_IDENTITY"
 
 
 def nested():
-    """Whether this runs inside an outer fpgas-verify (IDENTITY_ENV set)."""
+    """Whether this runs inside an outer fpgas-verify: IDENTITY_ENV set, and
+    not empty (contract 22)."""
     return bool(os.environ.get(IDENTITY_ENV))
+
+
 IDENTITY_SCHEMA = "fpgas-verify/identity"
 IDENTITY_VERSION = 1
 # The boards it describes that have an FPGA label here. A Tiny Tapeout
@@ -2549,7 +2552,12 @@ def describe(boards):
 def main():
     if "--recover-cynthion" in sys.argv:
         # The way home for a board left in Apollo mode, which is the one
-        # state this tool can leave a rig in that a person has to undo.
+        # state this tool can leave a rig in that a person has to undo. It
+        # drives the analyzer, so not inside an outer fpgas-verify either.
+        if nested():
+            print("cynthion: not recovered: %s is set, so an outer fpgas-verify "
+                  "is using the boards" % IDENTITY_ENV)
+            sys.exit(2)
         res = cynthion_offline_probe(recover=True)
         print("cynthion: %s" % ("back in gateware mode" if res.get("restored")
                                 else res.get("error") or "did not come back"))

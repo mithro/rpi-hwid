@@ -2392,3 +2392,30 @@ def test_identify_is_given_sixty_seconds(monkeypatch):
     monkeypatch.setattr(fpga.os, "geteuid", lambda: 0)
     fpga.identity_probe()
     assert seen == [60]
+
+
+@pytest.mark.parametrize(("value", "is_nested"), [
+    ("/run/fpgas-online/identity-7.json", True), ("", False), (None, False)])
+def test_the_marker_counts_only_when_it_is_not_empty(monkeypatch, value, is_nested):
+    """Contract 22."""
+    if value is None:
+        monkeypatch.delenv("FPGAS_VERIFY_IDENTITY", raising=False)
+    else:
+        monkeypatch.setenv("FPGAS_VERIFY_IDENTITY", value)
+    assert fpga.nested() is is_nested
+
+
+def test_an_empty_marker_is_no_marker_through_sudo(monkeypatch):
+    assert _identify_argv(monkeypatch, 1000, "") == [
+        ["sudo", "-n", "fpgas-verify", "--identify"]]
+
+
+def test_recovering_a_cynthion_is_refused_inside_fpgas_verify(monkeypatch, capsys):
+    monkeypatch.setenv("FPGAS_VERIFY_IDENTITY", "/run/fpgas-online/identity-7.json")
+    monkeypatch.setattr(fpga, "cynthion_offline_probe",
+                        lambda **k: pytest.fail("the analyzer was driven"))
+    monkeypatch.setattr(fpga.sys, "argv", ["fpga.py", "--recover-cynthion"])
+    with pytest.raises(SystemExit) as exc:
+        fpga.main()
+    assert exc.value.code == 2
+    assert "not recovered" in capsys.readouterr().out
