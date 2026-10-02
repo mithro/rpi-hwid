@@ -490,6 +490,42 @@ def mark_clock(lab, x, y, size):
     c.setLineWidth(1)
 
 
+# What Raspberry Pi calls the camera module each sensor is sold in. Third
+# parties put the same sensors on their own boards (an Arducam ov5647 is a
+# "v1" with a different lens), and the name still says what software sees.
+CAMERA_GENERATION = {"ov5647": "v1", "imx219": "v2", "imx708": "v3",
+                     "imx477": "HQ", "imx296": "GS", "imx500": "AI"}
+# A Camera Module 3 says which of its four builds it is; "NoIR" is cased as
+# it is on the module's own box.
+CAMERA_VARIANT = {"wide": "wide", "noir": "NoIR", "wide_noir": "wide NoIR"}
+
+
+def camera_generation(sensor):
+    """The name a person knows a camera by: "v1", "HQ". A sensor that is in
+    no Raspberry Pi module keeps its driver's name, which can be looked up."""
+    return CAMERA_GENERATION.get(sensor, sensor)
+
+
+def camera_words(cam):
+    """What a camera's mark says, as (generation, focus, optics).
+
+    Focus is "AF" where a lens driver was found and "fixed" where one was
+    looked for and is not there. Where nobody could look it is None and the
+    mark says neither: a missing word is not the word "fixed", so a camera
+    that was never asked cannot be read as one that answered. Optics is the
+    Camera Module 3's own account of its lens and filter, then the lens angle
+    a person supplied; None when there is neither. The lens driver's name is
+    evidence for the document and is never printed.
+    """
+    focus = {True: "AF", False: "fixed"}.get(cam.autofocus)
+    optics = []
+    if cam.variant:
+        optics.append(CAMERA_VARIANT.get(cam.variant, cam.variant.replace("_", " ")))
+    if cam.fov:
+        optics.append("%d°" % cam.fov)
+    return camera_generation(cam.sensor), focus, " ".join(optics) or None
+
+
 def mark_rj45(lab, x, y, height):
     """An 8P8C jack outline: the body, the latch tab, eight contacts."""
     c = lab.c
