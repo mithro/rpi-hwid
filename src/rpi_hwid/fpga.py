@@ -411,6 +411,24 @@ HARNESS_TCK, HARNESS_TMS, HARNESS_TDI, HARNESS_TDO = 4, 17, 27, 22
 # are the card's own JTAG header, so driving them is driving that card. This
 # is the same evidence that has always named a NeTV2 -- it was simply the only
 # harness there was. Measured on the fleet 2026-09-20/21.
+def default_pins(pcie, model=None):
+    """The GPIO harness to drive when none was named: an Acorn's own P1 where
+    an Acorn is on PCIe -- 2:3:4:14 on a Compute Module, 4 or 5 (the Compute
+    Blades), 10:9:11:8 on a Pi 5 or a Pi 500 (its keyboard sibling: the same
+    BCM2712 and RP1, so the same header) -- and the NeTV2's otherwise. A Pi
+    with an Acorn on any other board names its pins with --pins."""
+    acorn = any(pc["id"] in ("1e24:021f", "1e24:0101", "10ee:7011")
+                or pc.get("subsystem") in ACORN_SUBSYSTEM for pc in pcie or ())
+    if not acorn:
+        return HARNESS_PINS
+    model = model if model is not None else (read(ROOT + "/proc/device-tree/model") or "")
+    if "Compute Module" in model:
+        return "2:3:4:14"
+    if re.search(r"\bPi 5\b|\bPi 500\b", model):
+        return "10:9:11:8"
+    return HARNESS_PINS
+
+
 HARNESS_BOARD = {
     "27:22:4:17": "netv2",      # the NeTV2's, off the Pi's 40-pin header
     "10:9:11:8": "acorn",       # an Acorn's P1 Pico-EZmate, on a Pi 5
@@ -511,10 +529,151 @@ finally:
 '''
 
 
-def soc_probe(slot):
-    """The SoC's ident and DNA over PCIe, or {"error": why}."""
-    out = sh_all(["sudo", sys.executable or "python3", "-c", SOC_READER, slot],
-                 timeout=30)
+# The locks fpgas-verify holds while it uses a board (its board.py: each
+# board's /run/fpgas-online/<slug>.lock, the Acorn's shared with
+# fpgas-acorn-flash). rpi-hwid takes the same one around every SoC, BAR or
+# JTAG access, so neither reconfigures a pin or a command register in the
+# middle of the other's read. Not taken nested: the outer fpgas-verify has
+# let go of its locks, and nothing here touches an FPGA then.
+BOARD_LOCKS = {
+    "acorn": "/run/lock/fpgas-acorn.lock",
+    "netv2": "/run/fpgas-online/netv2.lock",
+    "arty": "/run/fpgas-online/arty.lock",
+}
+LOCK_WAIT_S = 30
+
+
+class BoardBusyError(Exception):
+    """A board's lock was held by someone else for all of LOCK_WAIT_S."""
+
+
+class LockNotTakenError(Exception):
+    """A board's lock could not be taken where fpgas-verify, which may be
+    using the board, is installed: its reads are not done."""
+
+
+def take_lock(board, wait=None):
+    """(the open file holding `board`'s lock, None) -- or (None, why it was
+    not taken), or (None, None) for a board with no lock. Raises
+    BoardBusyError when it stays held for `wait` seconds.
+
+    A lock file is never created by anyone but root: fpgas-verify's packages
+    make them at boot (tmpfiles.d, from the release with
+    fpgas.online-test-designs#80; older ones only for a board fpgas-verify
+    checked, so a non-root rpi-hwid refuses an unchecked board -- the safe
+    way to be wrong), and one a user made in /run/lock (sticky, world-writable) is
+    one root's own open(path, "w") is refused under fs.protected_regular,
+    which breaks fpgas-verify and fpgas-acorn-flash until the next boot. An
+    existing one is opened for reading, which is all flock needs."""
+    import fcntl
+    import time
+    path = BOARD_LOCKS.get(board)
+    if not path:
+        return None, None
+    full = ROOT + path
+    try:
+        if os.path.exists(full):
+            held = open(full, "r")
+        elif os.geteuid() == 0 and os.path.isdir(os.path.dirname(full)):
+            held = open(full, "a")       # root's own, as fpgas-verify's would be
+        else:
+            return None, "not taken: %s does not exist" % path
+    except OSError as exc:
+        return None, "not taken: %s: %s" % (path, exc.strerror or exc)
+    wait = LOCK_WAIT_S if wait is None else wait
+    deadline = time.time() + wait
+    while True:
+        try:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return held, None
+        except OSError:
+            if time.time() >= deadline:
+                held.close()
+                raise BoardBusyError("board busy: %s held for %g s" % (path, wait))
+            time.sleep(0.5)
+
+
+def lock_boards(boards):
+    """(the locks held, why any were not taken) for `boards`, in a fixed
+    order. Raises BoardBusyError for a board someone else holds, and
+    LockNotTakenError for one whose lock could not be taken while
+    fpgas-verify is installed (it may be using that board then); without
+    fpgas-verify there is no one to keep out of the way of, and the reason
+    is only recorded."""
+    held, notes = [], []
+    try:
+        for board in sorted(set(b for b in boards if b)):
+            got, note = take_lock(board)
+            if got is not None:
+                held.append(got)
+            if note:
+                notes.append(note)
+        if notes and sh(["which", FPGAS_VERIFY]):
+            raise LockNotTakenError(
+                "%s; %s is installed and may be using the board, so it was not read"
+                % ("; ".join(notes), FPGAS_VERIFY))
+    except Exception:
+        for got in held:
+            release_lock(got)
+        raise
+    return held, notes
+
+
+def release_locks(held):
+    for got in held:
+        release_lock(got)
+
+
+def pcie_board(pc):
+    """The board whose lock covers a PCIe endpoint: the NeTV2's for its
+    LitePCIe id (10ee:7024), and the Acorn's for every other Xilinx or SQRL
+    function (10ee:, 1e24:) -- fpgas-verify's Acorn check spots each one,
+    and fpgas-acorn-flash takes the Acorn's lock for any --bdf, so a BAR read
+    or a detach of any of them under no lock could switch Memory Space off
+    under a flash write. None for an endpoint that is no FPGA's."""
+    if pc["id"] == "10ee:7024":
+        return "netv2"
+    if pc["id"].startswith(("10ee:", "1e24:")):
+        return "acorn"
+    return None
+
+
+def release_lock(held):
+    if held is not None:
+        held.close()
+
+
+# The PCI command register's Memory Space enable. With no driver bound the
+# endpoint can be left with it off ("Mem-" in lspci), and every BAR read then
+# answers nothing; fpgas-verify sets it for its own read and puts it back.
+PCI_COMMAND_MEMORY = 0x2
+
+
+def soc_probe(slot, board="acorn"):
+    """The SoC's ident and DNA over PCIe, or {"error": why}, under the lock
+    of the board the endpoint is (`board`, pcie_board's). The endpoint's
+    memory decoding is turned on for the read where it is off, and turned
+    off again afterwards."""
+    try:
+        held, notes = lock_boards([board])
+    except (BoardBusyError, LockNotTakenError) as exc:
+        return {"error": str(exc)}
+    try:
+        before = pcie_command(slot)
+        enable = before is not None and not before & PCI_COMMAND_MEMORY
+        # value:mask, so only the Memory Space bit is written, both ways:
+        # whatever else changes in the register meanwhile is left alone
+        bit = "COMMAND=%04x:%04x"
+        if enable:
+            sh(["sudo", "setpci", "-s", slot, bit % (PCI_COMMAND_MEMORY, PCI_COMMAND_MEMORY)])
+        try:
+            out = sh_all(["sudo", sys.executable or "python3", "-c", SOC_READER, slot],
+                         timeout=30)
+        finally:
+            if enable:
+                sh(["sudo", "setpci", "-s", slot, bit % (0, PCI_COMMAND_MEMORY)])
+    finally:
+        release_locks(held)
     err = re.search(r"ERROR=(.*)", out)
     if err:
         return {"error": err.group(1).strip()}
@@ -528,6 +687,8 @@ def soc_probe(slot):
     m = re.search(r"DNA=([0-9a-f]{16})", out)
     if m:
         res["dna"] = soc_dna(int(m.group(1)[:8], 16), int(m.group(1)[8:], 16))
+    if notes:
+        res["lock"] = "; ".join(notes)
     return res
 
 
@@ -673,7 +834,8 @@ def sh_split_timed(args, timeout=15):
                         pipe.close()
                     except (AttributeError, OSError):
                         pass
-                words = [a for a in args if a != "sudo" and not a.startswith("-")]
+                words = [a for a in args
+                         if a not in ("sudo", "env") and not a.startswith("-") and "=" not in a]
                 return "", "%s did not exit after SIGKILL%s" % (
                     words[0] if words else args[0],
                     " to sudo" if args[0] == "sudo" else ""), True
@@ -1592,7 +1754,77 @@ def identity_probe(boards=1):
     return {"read": read, "error": why, "document": document}
 
 
+def pin_states(pins):
+    """{gpio: the `pinctrl set` arguments that restore it} for the harness's
+    pins, as `pinctrl get` reports them ("10: op dh pd | hi // GPIO10 =
+    output"), or None where pinctrl cannot say."""
+    nums = [p for p in pins.split(":") if p.isdigit()]
+    out = sh(["sudo", "-n", "pinctrl", "get", ",".join(nums)])
+    states = {}
+    for m in re.finditer(r"^\s*(\d+):\s+(\S+)((?:\s+(?:dh|dl|pu|pd|pn))*)\s*\|", out, re.M):
+        states[m.group(1)] = [m.group(2)] + m.group(3).split()
+    return states if set(states) == set(nums) else None
+
+
+def restore_pins(states, pins):
+    """Put each pin back, then read them again: the pins that did not come
+    back as they were found, by gpio."""
+    for gpio in sorted(states, key=int):
+        sh(["sudo", "-n", "pinctrl", "set", gpio] + states[gpio])
+    after = pin_states(pins) or {}
+    return sorted((g for g in states if after.get(g) != states[g]), key=int)
+
+
 def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
+    """jtag_probe_chain, with the GPIO harness's pins put back afterwards as
+    `pinctrl get` found them: openFPGALoader and openocd leave TCK, TMS and
+    TDI driven, and on an Acorn's 10:9:11:8 those are the Pi's SPI0 pins.
+    A Digilent or CH347 cable drives no Pi pin, so there is nothing to put
+    back."""
+    if digilent_cables():
+        board = "arty"
+    elif ch347_cables():
+        board = None
+    else:
+        board = harness_board(pins)
+    # A flash read takes the PCIe endpoints off the bus: each one's own
+    # board's lock is held too, whichever board the chain is.
+    detached = [pcie_board(pc) for pc in pcie_devices()
+                if pc["slot"] in (detach or ())] if want_flash and detach else []
+    try:
+        held, notes = lock_boards([board] + detached)
+    except (BoardBusyError, LockNotTakenError) as exc:
+        return {"idcode": None, "error": str(exc)}
+    try:
+        if board == "arty" or board is None and ch347_cables():
+            res = jtag_probe_chain(want_flash, pins, parts, detach)
+            if notes and isinstance(res, dict):
+                res["lock"] = "; ".join(notes)
+            return res
+        harness = pins or HARNESS_PINS
+        states = pin_states(harness)
+        not_back = None
+        try:
+            res = jtag_probe_chain(want_flash, pins, parts, detach)
+        finally:
+            if states:
+                not_back = restore_pins(states, harness)
+        if isinstance(res, dict):
+            if states:
+                res["pins_restored"] = sorted((g for g in states if g not in not_back), key=int)
+                if not_back:
+                    res["pins_not_restored"] = not_back
+            else:
+                res["pins_not_restored"] = "pinctrl could not read the harness's pins, " \
+                    "so they were not put back"
+            if notes:
+                res["lock"] = "; ".join(notes)
+        return res
+    finally:
+        release_locks(held)
+
+
+def jtag_probe_chain(want_flash=False, pins=None, parts=None, detach=None):
     """openFPGALoader over whichever cable this host has, else openocd.
     Returns the idcode line when a chain answers. `parts` is {die: part} from
     what the card's own gateware said, for a cable with no harness to go by;
@@ -1632,7 +1864,11 @@ def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
     # stderr as well: that is where openFPGALoader says why it failed, and
     # without it a build missing its GPIO backend recorded raw "" and the
     # board simply vanished from the verdict.
-    det = sh_all(harness + ["--detect"], timeout=60)
+    # --verbose-level 2 for the raw scan: plain --detect prints the IDCODE
+    # its part table is keyed on, version bits masked off (0x3636093 for an
+    # Acorn's 0x13636093); the raw "- 0 -> 0x13636093" line has them all
+    # (openFPGALoader 0.9.0 and later, as fpgas-verify reads it).
+    det = sh_all(harness + ["--detect", "--verbose-level", "2"], timeout=60)
     m = re.search(r"idcode\s+(0x[0-9a-f]+)", det)
     if not m:
         if ch347:
@@ -1656,7 +1892,9 @@ def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
         if ocd is not None:
             res["openocd"] = ocd.get("raw")
         return res
-    res = {"idcode": m.group(1)}
+    raw = [r for r in re.findall(r"^- \d+ -> (0x[0-9a-fA-F]{8})\s*$", det, re.M)
+           if r.lower() not in ("0xffffffff", "0x00000000")]   # past the chain, or none
+    res = {"idcode": raw[0].lower() if raw else m.group(1)}
     fam = re.search(r"family\s+(.*?)\s*$", det, re.M)
     if fam:
         res["family"] = fam.group(1)
@@ -2571,13 +2809,15 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     if soc:
         for pc in f["pcie"]:
             if pc["id"].startswith(("10ee:", "1e24:")):
-                f["soc"][pc["slot"]] = soc_probe(pc["slot"])
+                f["soc"][pc["slot"]] = soc_probe(pc["slot"], pcie_board(pc))
     # fpgas-verify reads an Acorn's flash through its SoC without replacing
     # it, and needs no chain to do it: pi-sw2-p48's was read this way while
     # its harness said "TDO is stuck at 0". So it is asked first, and on its
     # own; only a board it could not read goes on to the bridge, which
     # replaces whatever design is running -- possibly someone's session.
     endpoints = fpga_endpoints(f["pcie"])
+    # the harness this board is wired to, where none was named
+    pins = pins or default_pins(f["pcie"])
     artys = [u for u in f["ftdi"] if u["id"] == "0403:6010"
              and (u["manufacturer"] or "").startswith("Digilent")]
     f["fpgas_verify"] = identity_probe(max(1, len(endpoints) + len(artys))) \
