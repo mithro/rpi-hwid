@@ -37,7 +37,8 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setattr(probe, "i2c_open", lambda bus, addr: None)
     monkeypatch.setattr(fpga, "sh", sh)
     monkeypatch.setattr(fpga, "identity_probe", lambda: {
-        "read": fpga.identity_parse(GOLDEN.read_text())[0], "error": None})
+        "read": fpga.identity_parse(GOLDEN.read_text())[0], "error": None,
+        "document": json.loads(GOLDEN.read_text())})
     for name in ("jtag_probe", "soc_probe", "pcileech_probe", "cynthion_offline_probe"):
         monkeypatch.setattr(fpga, name, lambda *a, _n=name, **k: pytest.fail(_n + " ran"))
     monkeypatch.setattr(tinytapeout, "collect_tinytapeout",
@@ -60,18 +61,36 @@ def test_the_document_is_the_pis_facts_and_fpgas_verifys_boards(host):
     assert label_input.missing(doc) == {"board": [], "fpga[0]": [], "usb_net[0]": []}
 
 
-# The site's half (fpgas.online-site#41): it rebuilds the document from the
-# pi-identified event's details (contract 13 and 17: an unread field left
-# out, a list or object as compact JSON, numbers as decimal strings) and
-# each board's fpga-board-identified details (the golden document's fields,
-# fpgas-verify's own extras dropped through FPGA_FIELDS).
+# The site's half (fpgas.online-site#41, PR #42's fleet/hwid.py), rebuilt
+# here from the fields it takes and where it takes them -- not from the
+# Pi's summary, or the comparison would prove nothing:
+#   the registration      model, serial, revision, memory, MACs (no signal)
+#   pi-identified         SITE_PI_FIELDS, flat k=v (contract 13 and 17: an
+#                         unread field left out, "-" for read-and-none, a
+#                         list or object as compact JSON)
+#   fpga-board-identified FpgaBoard's fields of each board, fpgas-verify's
+#                         extras dropped
+# and nothing else; a header nothing sent is null.
 
-def _event(summary):
+REGISTRATION = ("model", "serial", "revision", "memory", "macs")
+SITE_PI_FIELDS_42 = {
+    "compatible": str, "power_class": str, "hat_uuid": str,
+    "fan": bool, "rtc_battery": bool, "max_current_ma": int, "ext5v_v": float,
+    "header": list, "macs": list,
+}
+# contract 19: pi-identified carries usb_net too
+SITE_PI_FIELDS = dict(SITE_PI_FIELDS_42, usb_net=list)
+
+
+def _event(summary, fields):
+    """What fpgas-verify sends in pi-identified, from the Pi's summary."""
     out = {}
-    for key, value in summary.items():
+    for key in fields:
+        value = summary.get(key)
         if value is None:
-            continue
-        if isinstance(value, (list, dict)):
+            if key != "header":          # the one field --pi-only leaves unread
+                out[key] = "-"
+        elif isinstance(value, (list, dict)):
             out[key] = json.dumps(value, separators=(",", ":"), sort_keys=True)
         elif isinstance(value, bool):
             out[key] = "true" if value else "false"
@@ -80,37 +99,65 @@ def _event(summary):
     return out
 
 
-def _site_summary(details):
-    import typing
+def _typed(text, kind):
+    if text == "-":
+        return None
+    if kind is list:
+        return json.loads(text)
+    if kind is bool:
+        return text == "true"
+    return kind(text)
 
-    from rpi_hwid.model import Summary
 
-    hints = typing.get_type_hints(Summary)
-    out = {}
-    for key, text in details.items():
-        hint = hints[key]
-        if type(None) in typing.get_args(hint):
-            (hint,) = [h for h in typing.get_args(hint) if h is not type(None)]
-        kind = typing.get_origin(hint) or hint
-        if kind in (tuple, dict):
-            out[key] = json.loads(text)
-        elif kind is bool:
-            out[key] = text == "true"
-        elif kind in (int, float):
-            out[key] = kind(text)
-        else:
-            out[key] = text
-    return out
+def _site(pi_doc, fields):
+    s = pi_doc["summary"]
+    summary = {k: s[k] for k in REGISTRATION if s.get(k)}
+    summary["macs"] = [{"kind": m["kind"], "mac": m["mac"], "signal": None}
+                       for m in s["macs"]]
+    details = _event(s, fields)
+    summary.update({k: _typed(v, fields[k]) for k, v in details.items()})
+    summary.setdefault("header", None)
+    summary["fpga"] = [{k: v for k, v in b.items() if k in label_input.FPGA_FIELDS}
+                       for b in json.loads(GOLDEN.read_text())["boards"]
+                       if b["kind"] != "tt"]
+    sources = {"collected_by": "fpgas.online-site", "registration": "fp",
+               "pi-identified": "boot 2026-10-02T00:00:00Z", "fpga-board-identified": "boot"}
+    return label_input.build(pi_doc["host"], summary, sources)
 
 
 def test_the_site_rebuilds_the_same_document_byte_for_byte(host):
     pi_doc = this_host.label_input_document("pi-sw2-p48")
-    pi_event = _event({k: v for k, v in pi_doc["summary"].items() if k != "fpga"})
-    site = _site_summary(pi_event)
-    site["fpga"] = [{k: v for k, v in b.items() if k in label_input.FPGA_FIELDS}
-                    for b in json.loads(GOLDEN.read_text())["boards"]]
-    built = label_input.build("pi-sw2-p48", site, {"serial": "registration"})
-    assert label_input.comparable(built) == label_input.comparable(pi_doc)
+    assert label_input.comparable(_site(pi_doc, SITE_PI_FIELDS)) == \
+        label_input.comparable(pi_doc)
+
+
+def test_without_usb_net_in_the_event_the_documents_differ(host):
+    """What contract 19 fixed: the Pi's own r8152 dongle is in its usb_net,
+    and the site had no way to know it."""
+    pi_doc = this_host.label_input_document("pi-sw2-p48")
+    assert pi_doc["summary"]["usb_net"]
+    assert label_input.comparable(_site(pi_doc, SITE_PI_FIELDS_42)) != \
+        label_input.comparable(pi_doc)
+
+
+def test_fpgas_verifys_boards_alone_and_as_it_gave_them(host, monkeypatch):
+    """A board only sysfs sees here (a Cynthion on USB) is one the site
+    cannot see; and no merge here adds a field fpgas-verify did not send."""
+    monkeypatch.setattr(fpga, "cynthion_devices", lambda: [
+        {"path": "1-1.1", "id": "1d50:615b", "serial": "267125df30c460de",
+         "bcd_device": "0104", "product": "Cynthion"}])
+    doc = this_host.label_input_document("pi-sw2-p48")
+    (board,) = doc["summary"]["fpga"]
+    golden = json.loads(GOLDEN.read_text())["boards"][0]
+    assert board == label_input.load(label_input.build("h", {"fpga": [
+        {k: v for k, v in golden.items() if k in label_input.FPGA_FIELDS}]}))["summary"]["fpga"][0]
+
+
+def test_without_fpgas_verify_the_fpga_module_says_what_is_there(host, monkeypatch):
+    monkeypatch.setattr(fpga, "identity_probe", lambda: None)
+    doc = this_host.label_input_document("pi-sw2-p48")
+    assert [b["kind"] for b in doc["summary"]["fpga"]] == ["acorn"]
+    assert doc["sources"]["fpga"] == "rpi-hwid"
 
 
 def test_labels_this_host_lists_this_hosts_labels(host, capsys):

@@ -212,20 +212,27 @@ $ sudo rpi-hwid labels --this-host [--out labels.pdf] [--list] [--input FILE] [-
 $ sudo fpgas-verify --label                     # the same, started from fpgas-verify
 ```
 
-Builds this host's label input on the host and makes its labels from it: the
-Pi's facts from the Pi-only probe above, and the FPGA boards from the FPGA
-module with fpgas-verify's identity (see [PROBE.md](PROBE.md#fpga-boards)),
+Builds this host's label input on the host and makes its labels from it.
+The Pi's facts come from the Pi-only probe above (never `--user-bus`: this
+runs on demand, while others may be using the board). The FPGA boards come
+from fpgas-verify's identity where it is installed and answers -- its boards
+alone, with the fields it gave, which is what the site gets -- and otherwise
+from the FPGA module's passive reads (see [PROBE.md](PROBE.md#fpga-boards)),
 with no `--jtag`, `--flash`, `--soc` or `--force-offline` of its own. Started
 by `fpgas-verify --label`, which sets `FPGAS_VERIFY_IDENTITY`, it sends nothing
 to any FPGA at all. `--input` also writes the label input it built:
 `rpi_hwid.this_host.label_input_document(host)` from Python.
 
 That document is what the fpgas.online site's must match under
-`label_input.comparable`, the site building it from the `pi-identified` and
-`fpga-board-identified` events. A label it is short of a field for is refused
-with the list (`labels --check` says the same for a directory). A Tiny Tapeout
-board is not in it: reading one means taking its demo board's port from the
-service using it, which this does not do.
+`label_input.comparable`, the site building it from the Pi's registration and
+the `pi-identified` and `fpga-board-identified` events. A label it is short of
+a field for is refused with the list (`labels --check` says the same for a
+directory).
+
+A Tiny Tapeout board is not in it yet: reading one here would mean taking its
+demo board's port from the service using it. Once fpgas-verify reports a Tiny
+Tapeout board's identity, which it reads while it owns the port at boot
+(contract 21), it will come from there.
 
 ## From Python
 
