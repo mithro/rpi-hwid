@@ -93,7 +93,12 @@ def cmd_fpga(args: argparse.Namespace) -> int:
 
     if args.recover_cynthion:
         # the way home for an analyzer left in Apollo mode, which collect
-        # and the module itself tell people to run as this command
+        # and the module itself tell people to run as this command -- not
+        # inside an outer fpgas-verify, which is using the boards
+        if fpga.nested():
+            print(f"cynthion: not recovered: {fpga.IDENTITY_ENV} is set, so an outer "
+                  "fpgas-verify is using the boards")
+            return 2
         res = fpga.cynthion_offline_probe(recover=True)
         print("cynthion: %s" % ("back in gateware mode" if res.get("restored")
                                 else res.get("error") or "did not come back"))

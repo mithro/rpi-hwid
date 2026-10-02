@@ -1092,6 +1092,67 @@ def test_fpgas_verify_is_asked_about_an_arty_on_usb(fake_root, monkeypatch):
     assert arty["idcode"] == "0x0362d093"
 
 
+# --- inside an outer fpgas-verify (contract 5) -------------------------------
+
+def _identify_argv(monkeypatch, euid, env):
+    ran = []
+
+    def run(args, timeout=15):
+        ran.append(args)
+        return IDENTITY_P48.read_text(), "", False
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/fpgas-verify")
+    monkeypatch.setattr(fpga, "sh_split_timed", run)
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: euid)
+    if env:
+        monkeypatch.setenv("FPGAS_VERIFY_IDENTITY", env)
+    else:
+        monkeypatch.delenv("FPGAS_VERIFY_IDENTITY", raising=False)
+    fpga.identity_probe()
+    return ran
+
+
+def test_sudo_keeps_the_nested_marker(monkeypatch):
+    """sudo resets the environment, so the marker is kept by name: without
+    it the inner fpgas-verify would read the board the outer one holds."""
+    assert _identify_argv(monkeypatch, 1000, "/run/fpgas-online/identity-7.json") == [
+        ["sudo", "-n", "--preserve-env=FPGAS_VERIFY_IDENTITY", "fpgas-verify", "--identify"]]
+
+
+def test_without_the_marker_sudo_is_plain(monkeypatch):
+    assert _identify_argv(monkeypatch, 1000, None) == [
+        ["sudo", "-n", "fpgas-verify", "--identify"]]
+
+
+def test_as_root_the_environment_is_simply_inherited(monkeypatch):
+    assert _identify_argv(monkeypatch, 0, "/run/fpgas-online/identity-7.json") == [
+        ["fpgas-verify", "--identify"]]
+
+
+def test_nested_nothing_is_sent_to_any_fpga(fake_root, monkeypatch):
+    """Every active read is refused, whatever was asked for; what the boards
+    are comes from the identity the outer run read."""
+    monkeypatch.setenv("FPGAS_VERIFY_IDENTITY", "/run/fpgas-online/identity-7.json")
+    for name in ("jtag_probe", "soc_probe", "pcileech_probe", "cynthion_offline_probe"):
+        monkeypatch.setattr(fpga, name, lambda *a, _n=name, **k: pytest.fail(_n + " ran"))
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {
+        "read": fpga.identity_parse(IDENTITY_P48.read_text())[0], "error": None})
+    f = fpga.collect_fpga(jtag=True, flash=True, force_offline=True, soc=True)
+    assert f["jtag"] is None
+    (board,) = [b for b in f["boards"] if b["kind"] == "acorn"]
+    assert board["dna"] == "0x0054b48664b04854"
+    assert board["flash_uid"] == "edcbeececb2b2a88b04f914d2e46af90"
+
+
+def test_nested_fpgas_verify_is_asked_even_with_nothing_on_pcie(fake_root, monkeypatch):
+    shutil.rmtree(fake_root / "sys/bus/pci/devices/0001:01:00.0")
+    monkeypatch.setenv("FPGAS_VERIFY_IDENTITY", "/run/fpgas-online/identity-7.json")
+    asked = []
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: asked.append(1) or {
+        "read": [], "error": "no board found"})
+    fpga.collect_fpga()
+    assert asked
+
+
 def test_as_root_fpgas_verify_is_run_without_sudo(fake_root, monkeypatch):
     def run(args, timeout=15):
         ran.append(args)
@@ -2518,6 +2579,33 @@ def test_identify_is_given_sixty_seconds(monkeypatch):
     assert seen == [60, 120]
 
 
+@pytest.mark.parametrize(("value", "is_nested"), [
+    ("/run/fpgas-online/identity-7.json", True), ("", False), (None, False)])
+def test_the_marker_counts_only_when_it_is_not_empty(monkeypatch, value, is_nested):
+    """Contract 22."""
+    if value is None:
+        monkeypatch.delenv("FPGAS_VERIFY_IDENTITY", raising=False)
+    else:
+        monkeypatch.setenv("FPGAS_VERIFY_IDENTITY", value)
+    assert fpga.nested() is is_nested
+
+
+def test_an_empty_marker_is_no_marker_through_sudo(monkeypatch):
+    assert _identify_argv(monkeypatch, 1000, "") == [
+        ["sudo", "-n", "fpgas-verify", "--identify"]]
+
+
+def test_recovering_a_cynthion_is_refused_inside_fpgas_verify(monkeypatch, capsys):
+    monkeypatch.setenv("FPGAS_VERIFY_IDENTITY", "/run/fpgas-online/identity-7.json")
+    monkeypatch.setattr(fpga, "cynthion_offline_probe",
+                        lambda **k: pytest.fail("the analyzer was driven"))
+    monkeypatch.setattr(fpga.sys, "argv", ["fpga.py", "--recover-cynthion"])
+    with pytest.raises(SystemExit) as exc:
+        fpga.main()
+    assert exc.value.code == 2
+    assert "not recovered" in capsys.readouterr().out
+
+
 @pytest.mark.parametrize(("restored", "rc", "said"), [
     (True, 0, "cynthion: back in gateware mode"),
     (False, 1, "cynthion: did not come back")])
@@ -2530,6 +2618,15 @@ def test_the_recovery_collect_names_is_a_command(monkeypatch, capsys, restored, 
     monkeypatch.setattr(fpga, "collect_fpga", lambda *a, **k: pytest.fail("collected"))
     assert cli.main(["fpga", "--recover-cynthion"]) == rc
     assert capsys.readouterr().out.strip() == said
+
+
+def test_the_cli_recovery_is_refused_inside_fpgas_verify(monkeypatch, capsys):
+    from rpi_hwid import cli
+    monkeypatch.setenv("FPGAS_VERIFY_IDENTITY", "/run/fpgas-online/identity-7.json")
+    monkeypatch.setattr(fpga, "cynthion_offline_probe",
+                        lambda **k: pytest.fail("the analyzer was driven"))
+    assert cli.main(["fpga", "--recover-cynthion"]) == 2
+    assert "not recovered" in capsys.readouterr().out
 
 
 def test_a_command_that_outlives_sudos_sigkill_is_let_go(monkeypatch):
