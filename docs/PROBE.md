@@ -199,6 +199,16 @@ revision where the chip answers them, because an id is shared: the S25FL127S,
 apart. How the label names the part from them, and why an id that names no part
 stops label generation, is in [LABELS.md](LABELS.md#the-flash-part).
 
+Where [fpgas-verify](https://github.com/fpgas-online/fpgas.online-test-designs)
+is installed (an fpgas.online host), an FPGA on PCIe is asked about first with
+`fpgas-verify --identify` (directly as root, else `sudo -n`). It reads only what
+is safe while the board is in use: an Acorn's IDCODE, Device DNA, and its
+configuration flash through the board's own SoC, all six RDID bytes included.
+What it reads is put on the board at that PCIe slot, and wins over the chain's;
+a flash it read is not read again over JTAG, which would replace the running
+design. Its document is kept under `fpga.fpgas_verify`. Without fpgas-verify,
+nothing here changes.
+
 ```
 $ rpi-hwid fpga --jtag          # a Pi 4 with an Arty A7-35T on USB
   fpga   : arty (Digilent FT2232 210319B301DE; FT2232 JTAG idcode 0x362d093 artix a7 35t), DNA 0x00628502251ea85c
