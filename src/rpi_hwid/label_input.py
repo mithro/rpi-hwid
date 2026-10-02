@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import types
 import typing
-from dataclasses import fields, is_dataclass
+from dataclasses import MISSING, fields, is_dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -222,6 +222,13 @@ def _check_record(where: str, d: dict[str, Any], cls: type) -> list[str]:
     known = {f.name for f in fields(cls)}
     problems = [f"{where}.{k}: not a field of {cls.__name__}" for k in sorted(set(d) - known)]
     for f in fields(cls):
+        # A record in a list is nothing without the fields it cannot be
+        # built without (a board's kind, an adapter's MAC). The summary's own
+        # are different: any of them may be missing, and missing() says
+        # which label that costs.
+        if cls is not Summary and f.default is MISSING and d.get(f.name) is None:
+            problems.append(f"{where}.{f.name}: required in every {cls.__name__}")
+            continue
         if f.name not in d:
             continue
         problems += _check_value(f"{where}.{f.name}", d[f.name], hints[f.name], f.name)
@@ -290,8 +297,17 @@ def _json_type(hint: Any, name: str) -> dict[str, Any]:
 
 def _record_schema(cls: type) -> dict[str, Any]:
     hints = typing.get_type_hints(cls)
-    return {"type": "object", "additionalProperties": False,
-            "properties": {f.name: _json_type(hints[f.name], f.name) for f in fields(cls)}}
+    out: dict[str, Any] = {
+        "type": "object", "additionalProperties": False,
+        "properties": {f.name: _json_type(hints[f.name], f.name) for f in fields(cls)}}
+    # a list's records need the fields they cannot be built without (check())
+    required = [f.name for f in fields(cls) if cls is not Summary and f.default is MISSING]
+    for name in required:
+        out["properties"][name]["type"] = [
+            t for t in out["properties"][name]["type"] if t != "null"]
+    if required:
+        out["required"] = required
+    return out
 
 
 def json_schema() -> dict[str, Any]:
@@ -315,3 +331,109 @@ def json_schema() -> dict[str, Any]:
                         "properties": {k: {"enum": list(SOURCES)} for k in PI_FIELDS}},
         },
     }
+
+
+# --- what each label needs ------------------------------------------------------
+#
+# docs/LABEL-INPUT.md has these as a table: change the two together.
+
+# The FPGA boards keyed on a Xilinx Device DNA, whose die the IDCODE names.
+XILINX_KINDS = ("netv2", "arty", "acorn", "pcileech", "jtag", "unknown-fpga")
+TT_NEEDS = ("usb_serial", "mcu", "chip", "demoboard")
+
+
+def missing(doc: dict[str, Any] | str | bytes) -> dict[str, list[str]]:
+    """Every label this document describes, each with the fields it still
+    needs: ``{"board": [], "fpga[0]": ["dna", "flash_uid"], ...}``.
+
+    The keys are ``board`` (the Pi's, or the Orange Pi's, RISC-V board's or
+    PC's own label), and ``fpga[i]``, ``tinytapeout[i]`` and ``usb_net[i]``
+    by position in those lists; field names are the record's own. A label
+    whose list is empty can be made. A list that is null describes no
+    labels at all, so a document of the Pi's facts alone has no ``fpga[i]``
+    keys until the FPGA's are added. A summary that names no board this
+    package labels has no ``board`` key.
+
+    The labels refuse what this reports (``rpi-hwid labels``, and the
+    rendering calls): a label is never made with a field missing.
+    """
+    d = load(doc)
+    s = d["summary"]
+    out: dict[str, list[str]] = {}
+    board = _board_needs(s, to_probe_document(d).summary)
+    if board is not None:
+        out["board"] = board
+    for i, b in enumerate(s["fpga"] or ()):
+        out[f"fpga[{i}]"] = _fpga_needs(b)
+    for i, t in enumerate(s["tinytapeout"] or ()):
+        need = [k for k in TT_NEEDS if t[k] is None]
+        if t["chip"] == "asic" and t["shuttle"] is None:
+            need.append("shuttle")       # an ASIC is named by its shuttle
+        out[f"tinytapeout[{i}]"] = need
+    for i in range(len(s["usb_net"] or ())):
+        out[f"usb_net[{i}]"] = []        # its required fields are the record's own
+    return out
+
+
+def _board_needs(s: dict[str, Any], record: Summary) -> list[str] | None:
+    """What the board label still needs, or None when there is no such label."""
+    from rpi_hwid import boards
+    from rpi_hwid.revision import decode_revision
+
+    if not s["model"] and not s["compatible"] and not s["dmi"] and not s["riscv"]:
+        return ["model"]                 # nothing says what the board is
+    kind = boards.board_kind(record)     # the probe's own classifier
+    if kind == "other":
+        return None
+    need = []
+    # a PC's firmware may carry no serial at all, which its label says
+    if kind != "x86" and not s["serial"]:
+        need.append("serial")
+    if s["macs"] is None:
+        need.append("macs")
+    if kind == "rpi":
+        pi5 = "Pi 5" in (s["model"] or "")
+        try:
+            pi5 = decode_revision(s["revision"]).is_pi5 or pi5
+        except (TypeError, ValueError):
+            need.append("revision")      # absent, or no board this code names
+        if s["header"] is None:
+            need.append("header")        # [] is a header read as bare; null is unread
+        if pi5:
+            need += [k for k in ("fan", "rtc_battery") if s[k] is None]
+    elif kind == "opi":
+        need += [k for k in ("compatible", "memory") if not s[k]]
+        if s["header"] is None:
+            need.append("header")
+    elif kind == "riscv":
+        need += [] if s["riscv"] else ["riscv"]
+    elif kind == "x86":
+        need += [] if s["dmi"] else ["dmi"]
+    return need
+
+
+def _fpga_needs(b: dict[str, Any]) -> list[str]:
+    """What one FPGA board's label still needs."""
+    kind = b["kind"]
+    need: list[str] = []
+    if kind == "cynthion":
+        # named by its die's TraceID; its flash from its revision's BOM, and
+        # its flash uid is its USB serial
+        need += [k for k in ("trace_id", "hw_rev", "serial") if b[k] is None]
+        return need
+    if kind in XILINX_KINDS:
+        need += [k for k in ("dna", "idcode") if b[k] is None]
+    if kind == "arty" and b["serial"] is None:
+        need.append("serial")            # the FT2232's, which names an Arty
+    if b["flash_jedec"] is None:
+        need.append("flash_jedec")
+    state = b["flash_uid_state"]
+    if state is None or state == "blank":
+        need.append("flash_uid_state")   # never read, or read as all ones/zeroes
+    elif state == "read" and not b["flash_uid"]:
+        need.append("flash_uid")
+    elif state == "none" and not b["flash_uid_note"]:
+        # "none" alone is the reading tool knowing no command for the part,
+        # not the part saying it has no id
+        need.append("flash_uid_note")
+    return need
