@@ -1442,6 +1442,10 @@ def read_flash(res, harness, board, part):
 FPGAS_VERIFY = "fpgas-verify"
 IDENTITY_SCHEMA = "fpgas-verify/identity"
 IDENTITY_VERSION = 1
+# How long --identify may take. fpgas-verify waits at most 30 s for a board's
+# lock and leaves a board it could not get out, "board busy" (contract 23),
+# so twice that is time enough, and a probe never hangs on a held board.
+IDENTITY_TIMEOUT_S = 60
 # The fields a board takes from the document: FpgaBoard's.
 IDENTITY_FIELDS = ("kind", "serial", "dna", "idcode", "flash", "flash_jedec",
                    "flash_extended_id", "flash_sfdp", "flash_uid", "flash_uid_bits",
@@ -1455,10 +1459,14 @@ def identity_parse(out):
     try:
         doc = json.loads(out)
     except ValueError:
-        return {}, "%s printed no document: %s" % (FPGAS_VERIFY, out.strip()[-200:])
+        text = out.strip()
+        return {}, "%s printed %s" % (
+            FPGAS_VERIFY, "no document: " + text[-200:] if text else "nothing")
     if not isinstance(doc, dict) or doc.get("schema") != IDENTITY_SCHEMA:
         return {}, "%s printed something other than %s" % (FPGAS_VERIFY, IDENTITY_SCHEMA)
-    if doc.get("identity_version") != IDENTITY_VERSION:
+    # the integer 1: not true, not 1.0, which compare equal to it
+    version = doc.get("identity_version")
+    if type(version) is not int or version != IDENTITY_VERSION:
         return {}, "%s wrote identity_version %r, and this reads %d" % (
             FPGAS_VERIFY, doc.get("identity_version"), IDENTITY_VERSION)
     read, why = {}, []
@@ -1479,18 +1487,27 @@ def identity_parse(out):
 
 
 def identity_probe():
-    """What fpgas-verify read of each board, and why any were not, or None
-    when it is not installed."""
+    """What fpgas-verify read of each board, and why any were not, with the
+    document it printed kept whole as evidence (its own fields, and boards
+    with no FPGA label here); None when it is not installed."""
     if not sh(["which", FPGAS_VERIFY]):
         return None
     argv = [FPGAS_VERIFY, "--identify"]
     if os.geteuid() != 0:
         argv = ["sudo", "-n"] + argv
-    out, err = sh_split(argv, timeout=120)
+    out, err = sh_split(argv, timeout=IDENTITY_TIMEOUT_S)
     read, why = identity_parse(out)
-    if why and err.strip():
-        why += "; stderr: " + err.strip()[-200:]
-    return {"read": read, "error": why}
+    err = err.strip()
+    if "timed out" in err.lower() or "timeout" in err.lower():
+        why = "%s did not answer within %d s (a board busy?)" % (
+            FPGAS_VERIFY, IDENTITY_TIMEOUT_S)
+    elif why and err:
+        why += " (stderr: %s)" % err[-200:]
+    try:
+        document = json.loads(out)
+    except ValueError:
+        document = None
+    return {"read": read, "error": why, "document": document}
 
 
 def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):

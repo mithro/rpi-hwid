@@ -206,7 +206,7 @@ is safe while the board is in use: an Acorn's IDCODE, Device DNA, and its
 configuration flash through the board's own SoC, all six RDID bytes included.
 What it reads is put on the board at that PCIe slot, and wins over the chain's;
 a flash it read is not read again over JTAG, which would replace the running
-design. Its document is kept under `fpga.fpgas_verify`. Without fpgas-verify,
+design. The document it printed is kept whole under `fpga.fpgas_verify.document`, as evidence; it is given 60 s, fpgas-verify bounding its own wait for a busy board at 30. Without fpgas-verify,
 nothing here changes.
 
 ```

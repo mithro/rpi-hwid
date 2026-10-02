@@ -807,6 +807,8 @@ def test_fpgas_verifys_own_fields_stay_in_the_evidence():
     (_identity(bdf=None), "acorn: not on PCIe"),
     (dict(_identity(), boards=[]), "no board found"),
     (dict(_identity(), identity_version=2), "identity_version 2, and this reads 1"),
+    (dict(_identity(), identity_version=True), "identity_version True, and this reads 1"),
+    (dict(_identity(), identity_version=1.0), "identity_version 1.0, and this reads 1"),
     (dict(_identity(), schema="fpgas-verify/report"), "something other than"),
 ])
 def test_what_fpgas_verify_could_not_read_says_why(doc, because):
@@ -2117,3 +2119,38 @@ def test_a_summary_saying_where_its_flash_was_read_loads():
     (entry,) = fpga.fpga_summary([{"kind": "acorn", "flash_source": "pcie",
                                    "flash_jedec": "0x010219"}])
     assert FpgaBoard(**entry).flash_source == "pcie"
+
+
+def _probe_with(monkeypatch, out, err):
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/fpgas-verify")
+    monkeypatch.setattr(fpga, "sh_split", lambda args, timeout=15: (out, err))
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: 0)
+    return fpga.identity_probe()
+
+
+def test_nothing_printed_says_so_with_stderr(monkeypatch):
+    res = _probe_with(monkeypatch, "", "fpgas-verify: no board configured\n")
+    assert res["error"] == ("fpgas-verify printed nothing "
+                            "(stderr: fpgas-verify: no board configured)")
+    assert res["document"] is None
+
+
+def test_a_timeout_is_a_board_busy(monkeypatch):
+    res = _probe_with(monkeypatch, "", "Command '...' timed out after 60 seconds")
+    assert res["error"] == "fpgas-verify did not answer within 60 s (a board busy?)"
+
+
+def test_the_document_is_kept_whole_as_evidence(monkeypatch):
+    res = _probe_with(monkeypatch, IDENTITY_P48.read_text(), "")
+    assert res["document"] == json.loads(IDENTITY_P48.read_text())
+    assert res["document"]["boards"][0]["variant"] == "cle-215+"
+
+
+def test_identify_is_given_sixty_seconds(monkeypatch):
+    seen = []
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/fpgas-verify")
+    monkeypatch.setattr(fpga, "sh_split",
+                        lambda args, timeout=15: (seen.append(timeout), ("", ""))[1])
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: 0)
+    fpga.identity_probe()
+    assert seen == [60]
