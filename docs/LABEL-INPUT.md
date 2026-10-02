@@ -102,7 +102,7 @@ $ rpi-hwid label-input --from pi-sw2-p48.json > labels/pi-sw2-p48.json
 ## The Pi alone: `--pi-only`
 
 ```
-$ sudo rpi-hwid label-input --pi-only [--host NAME]
+$ sudo rpi-hwid label-input --pi-only [--user-bus] [--host NAME]
 ```
 
 The Pi's facts (model, serial, revision, memory, MACs, the HAT, the power
@@ -147,13 +147,22 @@ What it does, and puts back:
 
 What it never does:
 
-* **Touch the header's user bus** (pins 3/5, GPIO2/3): no enable, no open, no
-  scan. An Acorn's J5 is on GPIO3, and a Pmod HAT's lines are on the header.
-  A HAT known only by the devices it puts there (a Waveshare PoE HAT (B))
-  therefore goes unseen, and when nothing at all is found on the header,
-  `header` is null (not read) rather than `[]`: no label says "HAT none" of a
-  HAT that was never looked for.
+* **Touch the header's user bus** (pins 3/5, GPIO2/3), unless `--user-bus`
+  asks: no enable, no open, no scan. An Acorn's J5 is on GPIO3, and a Pmod
+  HAT's lines are on the header. A HAT known only by the devices it puts
+  there (a Waveshare PoE HAT (B)) therefore goes unseen, and when nothing at
+  all is found on the header, `header` is null (not read) rather than `[]`:
+  no label says "HAT none" of a HAT that was never looked for.
 * Probe an FPGA board, a Tiny Tapeout board or an ESP32, or stop a service.
+
+`--user-bus` (contract 18) scans the user bus too, the same way the ID bus is
+read: where it is not already up, `modprobe i2c-dev` and `dtparam
+i2c_arm=on`, a quick-write scan of the addresses, then its own dtparam
+removed and the module unloaded, so the host is left as it was found. With
+it read, a header with nothing on it is `[]`, and the Pi label can be made.
+It drives GPIO2/3, so it is for when nothing else may be using them:
+fpgas-verify passes it only at boot, before any test, and only where the
+setup's wiring says those pins are safe for I2C then.
 
 ## From Python
 

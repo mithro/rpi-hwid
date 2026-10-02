@@ -13,7 +13,7 @@
     rpi-hwid tasmota --sheet CSV --site NAME=OCTET --out DIR
                                                           over HTTP, read-only: Tasmota plugs
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
-    rpi-hwid label-input --from PROBE_JSON | --pi-only [--host NAME]
+    rpi-hwid label-input --from PROBE_JSON | --pi-only [--user-bus] [--host NAME]
                                                           the labels' versioned input document
     rpi-hwid name --netv2 DNA… | --arty SERIAL… | --cynthion UID…
                                                           the derived board names
@@ -191,13 +191,14 @@ def cmd_name(args: argparse.Namespace) -> int:
     return 0
 
 
-def pi_only_label_input(host: str) -> dict[str, Any]:
+def pi_only_label_input(host: str, user_bus: bool = False) -> dict[str, Any]:
     """This host's label input from the Pi alone: no FPGA, no Tiny Tapeout,
-    and the header's user bus (GPIO2/3) left untouched (docs/LABEL-INPUT.md
-    lists what it does do, and undoes)."""
+    and the header's user bus (GPIO2/3) left untouched unless `user_bus`
+    (``--user-bus``) asks for it to be scanned too (docs/LABEL-INPUT.md
+    lists what each does, and undoes)."""
     from rpi_hwid import label_input, probe
 
-    d = probe.collect(user_bus=False)
+    d = probe.collect(user_bus=user_bus)
     d["verdict"] = probe.verdict(d)
     summary = dict(d["verdict"]["summary"])
     # With the user bus unread, an empty header is not a header read as
@@ -212,8 +213,11 @@ def cmd_label_input(args: argparse.Namespace) -> int:
     from rpi_hwid import label_input
     from rpi_hwid.model import ProbeDocument
 
+    if args.user_bus and not args.pi_only:
+        print("label-input: --user-bus goes with --pi-only", file=sys.stderr)
+        return 2
     if args.pi_only:
-        doc = pi_only_label_input(args.host or socket.gethostname())
+        doc = pi_only_label_input(args.host or socket.gethostname(), args.user_bus)
         sys.stdout.write(label_input.dumps(doc))
         return 0
     path = Path(args.from_probe)
@@ -330,6 +334,10 @@ def main(argv: list[str] | None = None) -> int:
     what.add_argument("--pi-only", action="store_true",
                       help="probe this host's Pi facts only, never touching the FPGA, a "
                            "Tiny Tapeout board or the header's user bus (run on the Pi)")
+    p.add_argument("--user-bus", action="store_true",
+                   help="with --pi-only: also scan the header's user bus (GPIO2/3), and put "
+                        "back what that brings up; only when nothing else may be using "
+                        "those pins")
     p.add_argument("--host", help="the host it describes (default: the file's name, or "
                                   "this host's name with --pi-only)")
     p.set_defaults(func=cmd_label_input)
