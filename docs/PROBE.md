@@ -190,7 +190,34 @@ its own FT2232 with a `210319…` serial. BAR sizes come from sysfs and a BAR is
 never mapped, because that wedges a host.
 
 With `--jtag`, openFPGALoader reads the IDCODE and Device DNA over the Arty's
-FT2232 or the host's GPIO harness (libgpiod, pins 27:22:4:17). A GPIO chain that
+FT2232 or the host's GPIO harness (libgpiod). The IDCODE is the whole 32 bits,
+from the raw scan `--verbose-level 2` prints (`- 0 -> 0x13636093`): plain
+`--detect` prints its part table's key, the version bits masked off. The
+harness is the board's: an Acorn's P1 where an Acorn is on PCIe (10:9:11:8 on
+a Pi 5 or 500, 2:3:4:14 on a Compute Module, 4 or 5), the NeTV2's 27:22:4:17
+otherwise, `--pins` naming any other; `collect` chooses it the same way. Its
+pins are put back afterwards as `pinctrl get` found them, even when the read
+fails -- the JTAG tools leave TCK, TMS and TDI driven, and an Acorn's are the
+Pi's SPI0 pins -- and read again: any that did not come back are listed as
+`pins_not_restored`, as all of them are where pinctrl could not read them.
+With `--soc`, an endpoint whose memory decoding is off (no driver bound,
+`Mem-`) has that one bit turned on with `setpci` for the BAR read, and off
+again after.
+
+Every SoC, BAR or JTAG access holds the fpgas-verify lock of the board it
+touches (`/run/lock/fpgas-acorn.lock` for an Acorn, `/run/fpgas-online/netv2.lock`
+and `arty.lock`), chosen by what the board is -- and, for a flash read, the
+lock of each PCIe endpoint it takes off the bus as well -- so it never lands in
+the middle of fpgas-verify's own; a lock held for 30 s makes that read `board
+busy`. A lock file is opened for reading only, and never created except by
+root: fpgas-verify's packages make them all at boot (tmpfiles.d, from the
+release with fpgas.online-test-designs#80; older releases make one only for a
+board fpgas-verify checked, so a non-root rpi-hwid refuses an unchecked board,
+which is the safe way to be wrong), and one a user made in `/run/lock` would
+be one root's own tools cannot open for writing (`fs.protected_regular`). A
+lock that cannot be taken (no such file, no permission) is recorded under the
+reading's `lock`; where fpgas-verify is installed, and so may be using the
+board, that board is then not read at all. A GPIO chain that
 answers on a host with no Arty is taken to be a NeTV2. With `--flash`, an Arty's
 SPI flash is identified by JEDEC id, which reloads the FPGA with openFPGALoader's
 bridge bitstream. The id is reported with the RDID bytes after it and the SFDP
