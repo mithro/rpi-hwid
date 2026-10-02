@@ -210,7 +210,10 @@ and `arty.lock`), chosen by what the board is -- and, for a flash read, the
 lock of each PCIe endpoint it takes off the bus as well -- so it never lands in
 the middle of fpgas-verify's own; a lock held for 30 s makes that read `board
 busy`. A lock file is opened for reading only, and never created except by
-root: fpgas-verify makes them at boot, and one a user made in `/run/lock` would
+root: fpgas-verify's packages make them all at boot (tmpfiles.d, from the
+release with fpgas.online-test-designs#80; older releases make one only for a
+board fpgas-verify checked, so a non-root rpi-hwid refuses an unchecked board,
+which is the safe way to be wrong), and one a user made in `/run/lock` would
 be one root's own tools cannot open for writing (`fs.protected_regular`). A
 lock that cannot be taken (no such file, no permission) is recorded under the
 reading's `lock`; where fpgas-verify is installed, and so may be using the

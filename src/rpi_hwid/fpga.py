@@ -557,8 +557,11 @@ def take_lock(board, wait=None):
     not taken), or (None, None) for a board with no lock. Raises
     BoardBusyError when it stays held for `wait` seconds.
 
-    A lock file is never created by anyone but root: fpgas-verify makes them
-    at boot, and one a user made in /run/lock (sticky, world-writable) is
+    A lock file is never created by anyone but root: fpgas-verify's packages
+    make them at boot (tmpfiles.d, from the release with
+    fpgas.online-test-designs#80; older ones only for a board fpgas-verify
+    checked, so a non-root rpi-hwid refuses an unchecked board -- the safe
+    way to be wrong), and one a user made in /run/lock (sticky, world-writable) is
     one root's own open(path, "w") is refused under fs.protected_regular,
     which breaks fpgas-verify and fpgas-acorn-flash until the next boot. An
     existing one is opened for reading, which is all flock needs."""
@@ -622,14 +625,15 @@ def release_locks(held):
 
 
 def pcie_board(pc):
-    """The board kind a PCIe endpoint is, as fpga_verdict names it, for its
-    lock: a NeTV2's LitePCIe id, an Acorn's ids, BARs or SQRL subsystem."""
-    sizes = sorted(pc.get("bars") or (), reverse=True)
+    """The board whose lock covers a PCIe endpoint: the NeTV2's for its
+    LitePCIe id (10ee:7024), and the Acorn's for every other Xilinx or SQRL
+    function (10ee:, 1e24:) -- fpgas-verify's Acorn check spots each one,
+    and fpgas-acorn-flash takes the Acorn's lock for any --bdf, so a BAR read
+    or a detach of any of them under no lock could switch Memory Space off
+    under a flash write. None for an endpoint that is no FPGA's."""
     if pc["id"] == "10ee:7024":
         return "netv2"
-    if pc["id"] in ("1e24:021f", "10ee:7011") and sizes == [128 << 10, 64 << 10]:
-        return "acorn"
-    if pc.get("subsystem") in ACORN_SUBSYSTEM or pc["id"] == "1e24:0101":
+    if pc["id"].startswith(("10ee:", "1e24:")):
         return "acorn"
     return None
 
@@ -830,7 +834,8 @@ def sh_split_timed(args, timeout=15):
                         pipe.close()
                     except (AttributeError, OSError):
                         pass
-                words = [a for a in args if a != "sudo" and not a.startswith("-")]
+                words = [a for a in args
+                         if a not in ("sudo", "env") and not a.startswith("-") and "=" not in a]
                 return "", "%s did not exit after SIGKILL%s" % (
                     words[0] if words else args[0],
                     " to sudo" if args[0] == "sudo" else ""), True

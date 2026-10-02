@@ -198,8 +198,12 @@ def test_with_fpgas_verify_a_lock_not_taken_means_no_read(locks, monkeypatch):
     ({"id": "1e24:021f", "subsystem": "1e24:021f", "bars": [128 << 10, 64 << 10]}, "acorn"),
     ({"id": "10ee:7011", "subsystem": "", "bars": [128 << 10, 64 << 10]}, "acorn"),
     ({"id": "10ee:7024", "subsystem": "", "bars": [1 << 20]}, "netv2"),
-    ({"id": "10ee:7011", "subsystem": "", "bars": [1 << 20]}, None),
-    ({"id": "10ee:0666", "subsystem": "", "bars": [4 << 10]}, None),
+    # every other Xilinx or SQRL function is under the Acorn's lock
+    ({"id": "10ee:7021", "subsystem": "10ee:0007", "bars": [1 << 20]}, "acorn"),
+    ({"id": "1e24:021f", "subsystem": "0000:0000", "bars": [1 << 20]}, "acorn"),
+    ({"id": "10ee:7011", "subsystem": "", "bars": [1 << 20]}, "acorn"),
+    ({"id": "10ee:0666", "subsystem": "", "bars": [4 << 10]}, "acorn"),
+    ({"id": "1de4:0001", "subsystem": "", "bars": [16 << 10]}, None),     # the RP1
 ])
 def test_an_endpoints_lock_is_its_boards(pc, board):
     assert fpga.pcie_board(pc) == board
@@ -386,3 +390,43 @@ def test_an_all_zero_raw_idcode_is_no_idcode(monkeypatch):
 def test_without_the_raw_scan_the_masked_one_stands(monkeypatch):
     _chain(monkeypatch, "index 0:\n\tidcode 0x3636093\n\tfamily artix a7 200t\n")
     assert fpga.jtag_probe_chain(pins="10:9:11:8")["idcode"] == "0x3636093"
+
+
+
+def test_every_fpga_endpoint_read_takes_a_lock(tmp_path, monkeypatch):
+    """No endpoint collect reads over BAR0 goes unlocked: a stub of the
+    locking sees a board for each."""
+    seen = []
+    monkeypatch.setattr(fpga, "ROOT", str(tmp_path))
+    monkeypatch.setattr(fpga, "pcie_devices", lambda: [
+        {"slot": "0000:01:00.0", "id": pid, "subsystem": sub, "bars": [1 << 20]}
+        for pid, sub in (("10ee:7021", "10ee:0007"),)] + [
+        {"slot": "0000:02:00.0", "id": "1e24:021f", "subsystem": "0000:0000", "bars": []},
+        {"slot": "0000:03:00.0", "id": "10ee:0666", "subsystem": "", "bars": [4 << 10]}])
+    monkeypatch.setattr(fpga, "ftdi_devices", list)
+    monkeypatch.setattr(fpga, "cynthion_devices", list)
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: None)
+    monkeypatch.setattr(fpga, "soc_probe", lambda slot, board=None: seen.append(board) or {})
+    fpga.collect_fpga(soc=True)
+    assert seen == ["acorn", "acorn", "acorn"]
+
+
+def test_sudo_env_names_the_command_not_env(monkeypatch):
+    class Clinging:
+        stdout = stderr = None
+
+        def __init__(self, args, **kw):
+            pass
+
+        def communicate(self, timeout=None):
+            raise fpga.subprocess.TimeoutExpired("x", timeout)
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+    monkeypatch.setattr(fpga.subprocess, "Popen", Clinging)
+    _, err, _ = fpga.sh_split_timed(
+        ["sudo", "-n", "env", "FPGAS_VERIFY_IDENTITY=/x", "fpgas-verify", "--identify"], 1)
+    assert err == "fpgas-verify did not exit after SIGKILL to sudo"
