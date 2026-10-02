@@ -22,13 +22,17 @@ def pi5(tmp_path, monkeypatch):
     _w(tmp_path, "/dev/i2c-1", "")          # the user bus is up: tempting
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
     monkeypatch.setattr(probe, "BUS_SETTLE_S", 0.0)
-    calls, buses = [], []
+    calls, buses, overlays = [], [], []
 
     def fake_sh(args, timeout=15):
         calls.append(args)
         if args == ["sudo", "dtparam", "i2c_vc=on"]:
             _w(tmp_path, "/dev/i2c-0", "")
-        elif args == ["sudo", "dtparam", "-r"]:
+            overlays.append("dtparam i2c_vc=on")
+        elif args == ["sudo", "dtparam", "-l"]:
+            return "\n".join(f"{i}:  {o}" for i, o in enumerate(overlays))
+        elif args[:3] == ["sudo", "dtparam", "-r"]:
+            overlays.pop(int(args[3]))
             (tmp_path / "dev/i2c-0").unlink()
         elif args[:2] == ["sudo", "vcgencmd"]:
             return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
@@ -59,7 +63,8 @@ def test_the_user_bus_is_never_opened_enabled_or_scanned(pi5):
 def test_what_it_brings_up_on_the_id_bus_it_puts_back(pi5):
     root, calls, _ = pi5
     cli.pi_only_label_input("p48")
-    assert calls.index(["sudo", "dtparam", "i2c_vc=on"]) < calls.index(["sudo", "dtparam", "-r"])
+    assert calls.index(["sudo", "dtparam", "i2c_vc=on"]) < \
+        calls.index(["sudo", "dtparam", "-r", "0"])
     assert not (root / "dev/i2c-0").exists(), "left as it was found"
 
 
@@ -72,8 +77,9 @@ def test_it_writes_the_pi_facts_and_nothing_of_the_boards(pi5):
     assert s["rtc_battery"] is True
     assert s["power_class"] == "ambiguous"
     assert s["macs"] == [{"kind": "eth", "mac": "98:fe:54:13:f5:75", "signal": "driver"}]
-    assert s["fpga"] is None
-    assert s["tinytapeout"] is None
+    # not probed, so none listed: no FPGA or Tiny Tapeout label comes of it
+    assert s["fpga"] == []
+    assert s["tinytapeout"] == []
     assert set(doc["sources"].values()) == {"rpi-hwid"}
 
 
@@ -110,14 +116,17 @@ def test_from_and_pi_only_are_one_or_the_other(capsys):
 #
 # fpgas-verify sends this document's summary as flat k=v strings and the
 # site rebuilds it. These are that encoding's two halves, as the contract
-# gives them, to show the Pi's document survives the trip byte for byte.
+# gives them (sections 13 and 17), to show the Pi's document survives the
+# trip byte for byte. A field that was not read (null) is left out; "-" is
+# only ever read-and-none, which a label input's summary has no way to say,
+# so this side never sends it.
 
 def encode(summary):
     out = {}
     for key, value in summary.items():
         if value is None:
-            out[key] = "-"
-        elif isinstance(value, (list, dict)):
+            continue
+        if isinstance(value, (list, dict)):
             out[key] = json.dumps(value, separators=(",", ":"), sort_keys=True)
         elif isinstance(value, bool):
             out[key] = "true" if value else "false"
@@ -154,13 +163,19 @@ def test_the_document_survives_the_event_encoding(pi5):
     pi = cli.pi_only_label_input("p48")
     details = encode(pi["summary"])
     assert details["macs"] == '[{"kind":"eth","mac":"98:fe:54:13:f5:75","signal":"driver"}]'
-    assert details["fpga"] == "-"
+    assert details["fpga"] == "[]"
+    assert "-" not in details.values()
     site = label_input.build("p48", decode(details), {"serial": "registration"})
     assert label_input.comparable(site) == label_input.comparable(pi)
 
 
 def test_a_document_whose_header_is_unread_survives_it_too(pi5):
+    """An unread header is left out of the event, not sent as "-", and the
+    label input the site builds without it has it as not read."""
     pi = cli.pi_only_label_input("p48")
     assert pi["summary"]["header"] is None
-    site = label_input.build("p48", decode(encode(pi["summary"])))
+    details = encode(pi["summary"])
+    assert "header" not in details
+    site = label_input.build("p48", decode(details))
+    assert site["summary"]["header"] is None
     assert label_input.comparable(site) == label_input.comparable(pi)
