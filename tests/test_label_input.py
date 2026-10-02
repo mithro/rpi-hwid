@@ -11,6 +11,7 @@ from pathlib import Path
 
 import jsonschema
 import pytest
+from reportlab.pdfgen import canvas
 
 from conftest import RAW
 from rpi_hwid import cli, label_input, labels
@@ -59,24 +60,52 @@ def test_dumps_is_sorted_one_space_ascii_with_a_trailing_newline():
     assert text.isascii()
 
 
-def test_dumps_writes_every_field_and_null_for_what_was_not_sent():
+def test_dumps_writes_every_field_filling_what_was_not_sent_with_its_default():
     doc = label_input.build("h", {"model": "Raspberry Pi 4 Model B Rev 1.5",
                                   "fpga": [{"kind": "acorn", "dna": "0x0054b48664b04854"}]})
     out = json.loads(label_input.dumps(doc))
-    assert set(out["summary"]) == set(label_input.PI_FIELDS)
-    assert out["summary"]["header"] is None          # not read, which is not "none"
-    assert out["summary"]["serial"] is None
-    assert set(out["summary"]["fpga"][0]) == set(label_input.FPGA_FIELDS)
-    assert out["summary"]["fpga"][0]["flash_uid"] is None
+    s = out["summary"]
+    assert set(s) == set(label_input.PI_FIELDS)
+    # absent: the default the probe writes
+    assert s["macs"] == s["usb_net"] == s["tinytapeout"] == []
+    assert s["compatible"] == ""
+    assert s["fan"] is None
+    assert set(s["fpga"][0]) == set(label_input.FPGA_FIELDS)
+    assert s["fpga"][0]["dna_sources"] == []
+    assert s["fpga"][0]["flash_uid"] is None
+    # no default: not read
+    assert s["serial"] is None
+    # and the one field whose default is itself a reading: not read
+    assert s["header"] is None
+
+
+def test_an_explicit_null_stays_not_read():
+    out = json.loads(label_input.dumps(label_input.build("h", {"macs": None, "header": None})))
+    assert out["summary"]["macs"] is None
+    assert out["summary"]["header"] is None
+    out = json.loads(label_input.dumps(label_input.build("h", {"header": []})))
+    assert out["summary"]["header"] == []           # read, and bare
+
+
+def _sent(value):
+    """`value` as a builder that sends only what it has would: no nulls, no
+    empty lists, no empty strings, at any depth."""
+    if isinstance(value, dict):
+        return {k: _sent(v) for k, v in value.items() if v not in (None, [], "")}
+    if isinstance(value, list):
+        return [_sent(v) for v in value]
+    return value
 
 
 def test_a_document_of_only_the_sent_fields_is_byte_identical_to_the_pis():
-    """The site builds from the fields a Pi sent; the Pi writes every field,
-    null where it read nothing. The two must be the same text."""
+    """The site builds from the fields a Pi sent, leaving out what it did not
+    get -- nulls, and empty lists such as a board's dna_sources, which
+    fpgas-verify never sends; the Pi writes every field. The two must be
+    the same text."""
     pi = pi_doc()
-    sent = {k: v for k, v in pi["summary"].items() if v is not None}
-    sent["fpga"] = [{k: v for k, v in b.items() if v is not None} for b in sent["fpga"]]
-    sent["macs"] = [{k: v for k, v in m.items() if v is not None} for m in sent["macs"]]
+    sent = _sent(pi["summary"])
+    assert "dna_sources" not in sent["fpga"][0]
+    assert "usb_net" not in sent
     site = label_input.build("pi-sw2-p48", sent, dict.fromkeys(sent, "fpgas-verify"))
     assert label_input.comparable(site) == label_input.comparable(pi)
     # and sources are provenance: they differ, and dumps says so
@@ -120,6 +149,9 @@ def test_load_does_not_change_its_argument():
     ([], "not a JSON object"),
     ({"schema": "rpi-hwid/probe"}, "schema is 'rpi-hwid/probe'"),
     ({"schema": "rpi-hwid/label-input", "version": 2}, "version 2: this rpi-hwid reads version 1"),
+    ({"schema": "rpi-hwid/label-input", "version": True}, "version True: this rpi-hwid"),
+    ({"schema": "rpi-hwid/label-input", "version": 1.0}, "version 1.0: this rpi-hwid"),
+    ({"schema": "rpi-hwid/label-input", "version": "1"}, "version '1': this rpi-hwid"),
     ({"schema": "rpi-hwid/label-input", "version": 1, "summary": {}, "sources": {}},
      "host: a non-empty string is required"),
     ({"schema": "rpi-hwid/label-input", "version": 1, "host": "h", "sources": {}},
@@ -140,7 +172,15 @@ def test_what_is_not_a_label_input_is_refused(doc, problem):
     ({"serial": 1234}, {}, "summary.serial: a string is required"),
     ({"fan": "yes"}, {}, "summary.fan: true or false is required"),
     ({"max_current_ma": True}, {}, "summary.max_current_ma: an integer is required"),
-    ({"ext5v_v": "5.1"}, {}, "summary.ext5v_v: a number is required"),
+    ({"ext5v_v": "5.1"}, {}, "summary.ext5v_v: a finite number is required"),
+    ({"ext5v_v": float("nan")}, {}, "summary.ext5v_v: a finite number is required"),
+    ({"ext5v_v": float("inf")}, {}, "summary.ext5v_v: a finite number is required"),
+    ({"macs": [{"kind": "eth"}]}, {}, r"summary.macs\[0\].mac: required in every Mac"),
+    ({"fpga": [{"dna": "0x0054b48664b04854"}]}, {},
+     r"summary.fpga\[0\].kind: required in every FpgaBoard"),
+    ({"usb_net": [{"iface": "eth1", "mac": "00:e0:4c:68:01:03", "kind": "ethernet",
+                   "vidpid": None}]}, {},
+     r"summary.usb_net\[0\].vidpid: required in every UsbNetAdapter"),
     ({"header": "Pmod HAT"}, {}, "summary.header: a list is required"),
     ({"header": [1]}, {}, r"summary.header\[0\]: a string is required"),
     ({"dmi": []}, {}, "summary.dmi: an object is required"),
@@ -234,3 +274,74 @@ def test_the_documented_example_is_a_label_input():
     example = json.loads(re.search(r"```json\n(.*?)```", text, re.S).group(1))
     record = label_input.to_probe_document(example)
     assert record.summary.fpga[0].flash_extended_id == "0x4d0180"
+
+
+def test_a_nan_in_a_free_form_object_is_refused_when_written():
+    doc = label_input.build("h", {"dmi": {"x": float("nan")}})
+    with pytest.raises(label_input.InputError, match="not writable as JSON"):
+        label_input.dumps(doc)
+    with pytest.raises(label_input.InputError, match="not writable as JSON"):
+        label_input.comparable(doc)
+
+
+def test_the_schema_refuses_what_check_refuses():
+    schema = json.loads(label_input.schema_path().read_text())
+    good = json.loads(label_input.dumps(pi_doc()))
+    jsonschema.validate(good, schema)
+    for bad in ({"fpga": [{"kind": None}]}, {"macs": [{"kind": "eth"}]}):
+        doc = copy.deepcopy(good)
+        doc["summary"].update(bad)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(doc, schema)
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(dict(good, version=True), schema)
+
+
+def test_load_collected_refuses_a_record_without_its_fields_by_name(tmp_path):
+    raw = json.loads(label_input.dumps(pi_doc()))
+    raw["summary"]["fpga"][0]["kind"] = None
+    (tmp_path / "h.json").write_text(json.dumps(raw))
+    with pytest.raises(ValueError, match=r"h\.json: summary.fpga\[0\].kind: required"):
+        load_collected(tmp_path)
+
+
+def test_a_probe_document_still_needs_its_model_serial_revision_and_power_class():
+    raw = copy.deepcopy(RAW["pi-sw2-p48"])
+    del raw["verdict"]["summary"]["power_class"]
+    with pytest.raises(ValueError, match="summary is missing"):
+        ProbeDocument.from_dict("h", raw)
+
+
+def test_a_label_inputs_summary_may_leave_them_out():
+    record = label_input.to_probe_document(label_input.build("h", {"header": []}))
+    assert (record.summary.model, record.summary.power_class) == ("", None)
+
+
+# --- a header nobody read is never "HAT none" ------------------------------------
+
+def _record(header):
+    s = copy.deepcopy(RAW["pi-sw2-p48"]["verdict"]["summary"])
+    s["header"] = header
+    return label_input.to_probe_document(label_input.build("pi-sw2-p48", s))
+
+
+def test_a_header_read_as_bare_prints_none(tmp_path, monkeypatch):
+    drawn = []
+    real = labels.Label.captioned
+
+    def captioned(self, x_cap, x_val, y, cap, val, *a, **k):
+        drawn.append((cap, val))
+        return real(self, x_cap, x_val, y, cap, val, *a, **k)
+    monkeypatch.setattr(labels.Label, "captioned", captioned)
+    labels.register_fonts()
+    lab = labels.Label(canvas.Canvas(str(tmp_path / "x.pdf")), 0, 0)
+    labels.draw_board(lab, labels.board_record(_record([])))
+    assert ("HAT", "none") in drawn
+
+
+def test_a_header_nobody_read_is_refused_not_printed_as_none():
+    assert _record(None).summary.header is None
+    with pytest.raises(labels.HeaderNotReadError, match="nothing read the 40-pin header"):
+        labels.board_record(_record(None))
+    with pytest.raises(labels.HeaderNotReadError):
+        list(labels.all_labels({"pi-sw2-p48": _record(None)}, labels.KINDS))

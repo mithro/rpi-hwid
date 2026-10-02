@@ -160,8 +160,9 @@ def cmd_collect(args: argparse.Namespace) -> int:
             tts = ", ".join(b.shuttle or b.chip or "?" for b in s.tinytapeout)
             esps = ", ".join(d.get("mac") or "?" for d in
                              r.doc.evidence.get("verdict", {}).get("esp32") or ())
-            print(f"  {r.host}: {s.model}; header {list(s.header) or 'bare'}; "
-                  f"power {s.power_class}" + (f"; fpga {boards}" if boards else "")
+            header = "not read" if s.header is None else list(s.header) or "bare"
+            print(f"  {r.host}: {s.model}; header {header}; "
+                  f"power {s.power_class or 'not read'}" + (f"; fpga {boards}" if boards else "")
                   + (f"; tinytapeout {tts}" if tts else "")
                   + (f"; esp32 {esps}" if esps else ""))
             problem = offline_read_problem(r.doc) if r.host in offline else None
