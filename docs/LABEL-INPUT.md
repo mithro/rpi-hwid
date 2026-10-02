@@ -65,7 +65,12 @@ The rules:
   others) keeps only `label_input.PI_FIELDS`, `FPGA_FIELDS` and `TT_FIELDS`.
 * **Types are checked**: strings are strings, booleans are JSON booleans,
   integers are JSON numbers. A whole number in a float field (`ext5v_v`) is
-  written as a float, so `5` and `5.0` are one text.
+  written as a float, so `5` and `5.0` are one text. A list never holds a
+  null: it lists what was read. `dmi` (a PC's) and `riscv` (a RISC-V
+  board's) are checked against the keys and types the probe writes in them,
+  and `dna_conflict` maps each method to the DNA it read, as strings.
+* **The version** is checked by the reader. The schema says `integer`, but
+  JSON Schema counts `1.0` as an integer, so only the reader refuses it.
 * **Hex identifiers are lower case and `0x`-prefixed**, as the probe writes
   them.
 * **A record in a list needs the fields it is built from**: an FPGA board its
@@ -151,9 +156,12 @@ Pi facts plus fpgas-verify's identity of each board -- what `rpi-hwid labels
 --this-host` builds -- and not `label-input --from` a full probe, which can
 also read the user bus and so can differ by design.
 
-In the event, a field that was not read (null here) is left out, never sent
-as `-`; the site leaves it out of what it builds too, and an absent `header`
-is read back as not read.
+In the event (contract 13 and 17), a field that was not read is left out --
+here that is `header`, when nothing the probe may look at named a HAT -- and
+the site leaves it out of what it builds, an absent `header` reading back as
+not read. A scalar that was read and is none (a Pi 4's `fan` and
+`rtc_battery`, a HAT with no `hat_uuid`) is sent as `-`, and a list read
+empty as `[]`.
 
 What it does, and puts back:
 

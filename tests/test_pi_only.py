@@ -117,14 +117,21 @@ def test_from_and_pi_only_are_one_or_the_other(capsys):
 # fpgas-verify sends this document's summary as flat k=v strings and the
 # site rebuilds it. These are that encoding's two halves, as the contract
 # gives them (sections 13 and 17), to show the Pi's document survives the
-# trip byte for byte. A field that was not read (null) is left out; "-" is
-# only ever read-and-none, which a label input's summary has no way to say,
-# so this side never sends it.
+# trip byte for byte:
+#   a field that was not read      left out (the Pi-only probe's header,
+#                                  when nothing it may look at named one)
+#   a scalar read, and none        "-" (a Pi 4's fan, a HAT with no uuid)
+#   a list read, and empty         "[]"
+
+UNREAD = ("header",)       # the one field --pi-only writes as null for "not read"
+
 
 def encode(summary):
     out = {}
     for key, value in summary.items():
         if value is None:
+            if key not in UNREAD:
+                out[key] = "-"
             continue
         if isinstance(value, (list, dict)):
             out[key] = json.dumps(value, separators=(",", ":"), sort_keys=True)
@@ -164,7 +171,7 @@ def test_the_document_survives_the_event_encoding(pi5):
     details = encode(pi["summary"])
     assert details["macs"] == '[{"kind":"eth","mac":"98:fe:54:13:f5:75","signal":"driver"}]'
     assert details["fpga"] == "[]"
-    assert "-" not in details.values()
+    assert details["hat_uuid"] == "-"          # this HAT has none
     site = label_input.build("p48", decode(details), {"serial": "registration"})
     assert label_input.comparable(site) == label_input.comparable(pi)
 
@@ -179,3 +186,18 @@ def test_a_document_whose_header_is_unread_survives_it_too(pi5):
     site = label_input.build("p48", decode(details))
     assert site["summary"]["header"] is None
     assert label_input.comparable(site) == label_input.comparable(pi)
+
+
+def test_a_pi_4s_fan_is_sent_as_read_and_none():
+    """No fan header on a Pi 4: the probe says so with null, which goes out
+    as "-" and comes back as null."""
+    import copy
+
+    from conftest import RAW
+
+    pi4 = label_input.from_probe("rpi4-tt", copy.deepcopy(RAW["rpi4-tt"]))
+    details = encode(pi4["summary"])
+    assert details["fan"] == details["rtc_battery"] == "-"
+    site = label_input.build("rpi4-tt", decode(details))
+    assert site["summary"]["fan"] is None
+    assert label_input.comparable(site) == label_input.comparable(pi4)
