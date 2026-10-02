@@ -322,8 +322,7 @@
        },
        "kind": {
         "type": [
-         "string",
-         "null"
+         "string"
         ]
        },
        "mode": {
@@ -351,6 +350,9 @@
         ]
        }
       },
+      "required": [
+       "kind"
+      ],
       "type": "object"
      },
      "type": [
@@ -382,14 +384,12 @@
       "properties": {
        "kind": {
         "type": [
-         "string",
-         "null"
+         "string"
         ]
        },
        "mac": {
         "type": [
-         "string",
-         "null"
+         "string"
         ]
        },
        "signal": {
@@ -399,6 +399,10 @@
         ]
        }
       },
+      "required": [
+       "kind",
+       "mac"
+      ],
       "type": "object"
      },
      "type": [
@@ -538,20 +542,17 @@
        },
        "iface": {
         "type": [
-         "string",
-         "null"
+         "string"
         ]
        },
        "kind": {
         "type": [
-         "string",
-         "null"
+         "string"
         ]
        },
        "mac": {
         "type": [
-         "string",
-         "null"
+         "string"
         ]
        },
        "manufacturer": {
@@ -586,11 +587,16 @@
        },
        "vidpid": {
         "type": [
-         "string",
-         "null"
+         "string"
         ]
        }
       },
+      "required": [
+       "iface",
+       "mac",
+       "vidpid",
+       "kind"
+      ],
       "type": "object"
      },
      "type": [
@@ -602,7 +608,8 @@
    "type": "object"
   },
   "version": {
-   "const": 1
+   "const": 1,
+   "type": "integer"
   }
  },
  "required": [

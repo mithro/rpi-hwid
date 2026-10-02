@@ -6,10 +6,13 @@ versioned shape that something other than rpi-hwid's own probe can write.
 
 ``summary`` uses the field names of ``rpi_hwid.model.Summary`` (and, in its
 ``fpga`` and ``tinytapeout`` lists, of ``FpgaBoard`` and
-``TinyTapeoutBoard``) verbatim. A field that was not read is ``null``, and
-one that was not sent is the same: ``load`` fills every field in, so a
-reader never has to tell the two apart. ``sources`` says, per top-level
-summary field, who read it.
+``TinyTapeoutBoard``) verbatim. ``null`` is "not read". A field that is
+absent is filled in with the record's default -- the value rpi-hwid's own
+probe writes for it, ``[]`` for a list and ``""`` for ``compatible`` -- so a
+document built from only the fields that were sent reads, and writes, the
+same as the Pi's. The one exception is ``header``, whose ``[]`` means "read,
+and nothing is on the header": an absent ``header`` is ``null``, not read.
+``sources`` says, per top-level summary field, who read it.
 docs/LABEL-INPUT.md is the reference; the JSON Schema ships beside this
 module (``schema_path()``).
 
@@ -25,9 +28,10 @@ its web workers.
 from __future__ import annotations
 
 import json
+import math
 import types
 import typing
-from dataclasses import fields, is_dataclass
+from dataclasses import MISSING, fields, is_dataclass
 from importlib import resources
 from pathlib import Path
 from typing import Any
@@ -51,6 +55,11 @@ PI_FIELDS = tuple(f.name for f in fields(Summary))
 FPGA_FIELDS = tuple(f.name for f in fields(FpgaBoard))
 TT_FIELDS = tuple(f.name for f in fields(TinyTapeoutBoard))
 
+# Summary fields for which an absent key is "not read" rather than the
+# default: an empty header is a reading ("HAT none"), so it cannot also be
+# what a builder that never read the header leaves out.
+ABSENT_IS_UNREAD = ("header",)
+
 # The records each list in `summary` holds.
 ITEM_TYPES: dict[str, type] = {
     "fpga": FpgaBoard, "tinytapeout": TinyTapeoutBoard, "macs": Mac, "usb_net": UsbNetAdapter,
@@ -71,15 +80,24 @@ def schema_path() -> Path:
     return Path(str(resources.files("rpi_hwid").joinpath(SCHEMA_FILE)))
 
 
+def _default(f: Any, cls: type) -> Any:
+    """What an absent field of `cls` is: its default, as JSON; null where it
+    has none, or where absence means not read (ABSENT_IS_UNREAD)."""
+    if f.default is MISSING or (cls is Summary and f.name in ABSENT_IS_UNREAD):
+        return None
+    return list(f.default) if isinstance(f.default, tuple) else f.default
+
+
 def _record(d: dict[str, Any], cls: type) -> dict[str, Any]:
-    """`d` with every field of `cls` present, in no particular order: what
-    was not sent is null, a tuple is a list, and a whole number in a float
-    field is a float (5 and 5.0 are one value, and must be one text).
-    Unknown keys are kept, for check() to name."""
+    """`d` with every field of `cls` present, in no particular order: an
+    absent one is its default (``_default``), an explicit null stays null, a
+    tuple is a list, and a whole number in a float field is a float (5 and
+    5.0 are one value, and must be one text). Unknown keys are kept, for
+    check() to name."""
     hints = typing.get_type_hints(cls)
     out: dict[str, Any] = {}
     for f in fields(cls):
-        v = d.get(f.name)
+        v = d[f.name] if f.name in d else _default(f, cls)
         if isinstance(v, tuple):
             v = list(v)
         elif (isinstance(v, int) and not isinstance(v, bool)
@@ -93,10 +111,10 @@ def _record(d: dict[str, Any], cls: type) -> dict[str, Any]:
 
 def normalise(doc: dict[str, Any]) -> dict[str, Any]:
     """`doc` with its summary filled out to every field of Summary, and each
-    record in its lists to every field of that record, null where nothing
-    was sent; tuples as lists. A free-form object (`dmi`, `riscv`) is left as
-    it is. Two documents that say the same thing normalise to the same dict,
-    whichever fields their builders happened to write out as null."""
+    record in its lists to every field of that record (``_record``). A
+    free-form object (`dmi`, `riscv`) is left as it is. Two documents that
+    say the same thing normalise to the same dict, whether their builders
+    wrote a default out or left it to be filled in."""
     out = dict(doc)
     summary = doc.get("summary")
     if isinstance(summary, dict):
@@ -133,8 +151,8 @@ def load(doc: dict[str, Any] | str | bytes) -> dict[str, Any]:
 def build(host: str, summary: dict[str, Any],
           sources: dict[str, str] | None = None) -> dict[str, Any]:
     """A version-1 label input for `host` from a summary dict, checked and
-    normalised. Nothing is defaulted: a field the builder did not have is
-    null, and ``missing`` says which label needs it."""
+    normalised: what the builder left out is filled in as ``normalise``
+    says, and an explicit null stays "not read"."""
     return load({"schema": SCHEMA, "version": VERSION, "host": host,
                  "summary": dict(summary), "sources": dict(sources or {})})
 
@@ -152,10 +170,18 @@ def from_probe(host: str, probe_doc: dict[str, Any]) -> dict[str, Any]:
     return build(host, summary, dict.fromkeys(summary, "rpi-hwid"))
 
 
+def _text(d: dict[str, Any]) -> str:
+    try:
+        return json.dumps(d, sort_keys=True, indent=1, ensure_ascii=True,
+                          allow_nan=False) + "\n"
+    except ValueError as exc:     # a NaN or an infinity in a free-form object
+        raise InputError([f"not writable as JSON: {exc}"]) from exc
+
+
 def dumps(doc: dict[str, Any]) -> str:
     """The one serialisation of a label input: checked, normalised, sorted
     keys, one-space indent, ASCII, a trailing newline."""
-    return json.dumps(load(doc), sort_keys=True, indent=1, ensure_ascii=True) + "\n"
+    return _text(load(doc))
 
 
 def comparable(doc: dict[str, Any]) -> str:
@@ -164,7 +190,7 @@ def comparable(doc: dict[str, Any]) -> str:
     data, and a Pi and the site legitimately differ on it."""
     out = load(doc)
     del out["sources"]
-    return json.dumps(out, sort_keys=True, indent=1, ensure_ascii=True) + "\n"
+    return _text(out)
 
 
 def is_label_input(doc: Any) -> bool:
@@ -176,12 +202,15 @@ def to_probe_document(doc: dict[str, Any] | str | bytes) -> ProbeDocument:
     """The record the label code reads, from a label input."""
     d = load(doc)
     summary = d["summary"]
-    kept = {k: v for k, v in summary.items() if v is not None}
+    # not read is None on the record too, header included: a header nobody
+    # read must never be drawn as a bare one
+    kept = {k: v for k, v in summary.items() if v is not None or k in ABSENT_IS_UNREAD}
     for key in ITEM_TYPES:
-        if key in kept:
+        if kept.get(key) is not None:
             kept[key] = [{k: v for k, v in item.items() if v is not None}
                          for item in kept[key]]
-    return ProbeDocument(host=d["host"], summary=Summary.from_dict(kept), evidence=d)
+    return ProbeDocument(host=d["host"], summary=Summary.from_dict(kept, partial=True),
+                         evidence=d)
 
 
 def check(doc: Any) -> list[str]:
@@ -190,7 +219,7 @@ def check(doc: Any) -> list[str]:
         return ["not a JSON object"]
     if doc.get("schema") != SCHEMA:
         return [f"schema is {doc.get('schema')!r}, not {SCHEMA!r}"]
-    if doc.get("version") != VERSION:
+    if type(doc.get("version")) is not int or doc.get("version") != VERSION:
         # a version this code was not taught is refused, not read hopefully
         return [f"version {doc.get('version')!r}: this rpi-hwid reads version {VERSION} only"]
     problems = []
@@ -222,6 +251,13 @@ def _check_record(where: str, d: dict[str, Any], cls: type) -> list[str]:
     known = {f.name for f in fields(cls)}
     problems = [f"{where}.{k}: not a field of {cls.__name__}" for k in sorted(set(d) - known)]
     for f in fields(cls):
+        # A record in a list is nothing without the fields it cannot be
+        # built without (a board's kind, an adapter's MAC). The summary's own
+        # are different: any of them may be missing, and the label that
+        # needs one says so.
+        if cls is not Summary and f.default is MISSING and d.get(f.name) is None:
+            problems.append(f"{where}.{f.name}: required in every {cls.__name__}")
+            continue
         if f.name not in d:
             continue
         problems += _check_value(f"{where}.{f.name}", d[f.name], hints[f.name], f.name)
@@ -262,8 +298,9 @@ def _check_value(where: str, value: Any, hint: Any, name: str) -> list[str]:
         ok = isinstance(value, int) and not isinstance(value, bool)
         return [] if ok else [f"{where}: an integer is required"]
     if hint is float:
-        ok = isinstance(value, (int, float)) and not isinstance(value, bool)
-        return [] if ok else [f"{where}: a number is required"]
+        ok = (isinstance(value, (int, float)) and not isinstance(value, bool)
+              and math.isfinite(value))
+        return [] if ok else [f"{where}: a finite number is required"]
     if hint is str:
         return [] if isinstance(value, str) else [f"{where}: a string is required"]
     raise TypeError(f"{where}: no checker for {hint}")
@@ -290,8 +327,17 @@ def _json_type(hint: Any, name: str) -> dict[str, Any]:
 
 def _record_schema(cls: type) -> dict[str, Any]:
     hints = typing.get_type_hints(cls)
-    return {"type": "object", "additionalProperties": False,
-            "properties": {f.name: _json_type(hints[f.name], f.name) for f in fields(cls)}}
+    out: dict[str, Any] = {
+        "type": "object", "additionalProperties": False,
+        "properties": {f.name: _json_type(hints[f.name], f.name) for f in fields(cls)}}
+    # a list's records need the fields they cannot be built without (check())
+    required = [f.name for f in fields(cls) if cls is not Summary and f.default is MISSING]
+    for name in required:
+        out["properties"][name]["type"] = [
+            t for t in out["properties"][name]["type"] if t != "null"]
+    if required:
+        out["required"] = required
+    return out
 
 
 def json_schema() -> dict[str, Any]:
@@ -308,7 +354,7 @@ def json_schema() -> dict[str, Any]:
         "required": ["schema", "version", "host", "summary", "sources"],
         "properties": {
             "schema": {"const": SCHEMA},
-            "version": {"const": VERSION},
+            "version": {"type": "integer", "const": VERSION},
             "host": {"type": "string", "minLength": 1},
             "summary": _record_schema(Summary),
             "sources": {"type": "object", "additionalProperties": False,
