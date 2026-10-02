@@ -215,8 +215,11 @@ label yet.
 The chain is then read only for what fpgas-verify did not give: when every
 board it read came with its DNA and IDCODE, and its flash where `--flash` asks
 for one, `--jtag` reads nothing, and a flash it read is never read again over
-JTAG, which would replace the running design. Its document is kept under
-`fpga.fpgas_verify`. Without fpgas-verify, nothing here changes.
+JTAG, which would replace the running design. The document it printed is kept
+whole under `fpga.fpgas_verify.document`, as evidence, its own fields and
+the boards with no label here included; it is given 60 s, fpgas-verify
+bounding its own wait for a busy board at 30. Without fpgas-verify, nothing
+here changes.
 
 ```
 $ rpi-hwid fpga --jtag          # a Pi 4 with an Arty A7-35T on USB
