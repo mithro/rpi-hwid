@@ -198,10 +198,11 @@ def cmd_label_input(args: argparse.Namespace) -> int:
         # skips a login banner before it, as load_collected does
         raw = ProbeDocument.from_json(path.stem, path.read_text()).evidence
         doc = label_input.from_probe(args.host or path.stem, raw)
-    except ValueError as exc:  # InputError is one
+        text = label_input.dumps(doc)
+    except (ValueError, OverflowError) as exc:  # InputError is a ValueError
         print(f"{path}: {exc}", file=sys.stderr)
         return 1
-    sys.stdout.write(label_input.dumps(doc))
+    sys.stdout.write(text)
     return 0
 
 
