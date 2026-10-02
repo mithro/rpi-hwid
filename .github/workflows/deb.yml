@@ -10,10 +10,12 @@ name: Debian packages
 # bookworm is built because the NeTV2's host (rpi5-netv2) runs Raspberry Pi
 # OS bookworm.
 #
-# python3-rpi-hwid Depends on python3-spiflash, which is not in Debian. Each
-# build-deb job fetches it from spiflash's own signed repository and puts it
-# beside python3-rpi-hwid, so the install test and the published repository
-# both carry it: installing python3-rpi-hwid needs this repository alone.
+# python3-rpi-hwid Depends on python3-spiflash, which is not in Debian.
+# spiflash's own repository is bundled (.github/apt-packaging.toml): publish-apt
+# copies the python3-spiflash ours needs into each suite here, verified against
+# spiflash's signed index and re-signed with this repository's key, so
+# installing python3-rpi-hwid needs this repository alone. refresh-bundled.yml
+# starts this workflow when spiflash publishes a newer one.
 #
 # A green run of this workflow on main is also what publishes to PyPI:
 # publish-pypi.yml is triggered by it completing (workflow_run), so renaming
@@ -124,52 +126,62 @@ jobs:
           suite: ${{ matrix.suite }}
           arch: ${{ matrix.arch }}
 
-      # python3-spiflash, republished here (see the top of this file). The
-      # newest version spiflash's repository has for the suite: both are
-      # rolling releases, and a pin here would only hold rpi-hwid's users back
-      # from parts spiflash has added since. The repository is the
-      # [[depends]] in .github/apt-packaging.toml, which build-deb resolved
-      # into steps.build.outputs.apt-sources: its key, fetched over https from
-      # https://mith.ro/spiflash/spiflash.gpg, is checked here against the
-      # fingerprint spiflash publishes, and apt then checks the suite's
-      # InRelease against that key and the .deb against the SHA256 in the
-      # Packages index InRelease signs. The version and checksum go in the log.
-      - name: Fetch python3-spiflash to republish
+      # spiflash's repository is bundled (.github/apt-packaging.toml): the
+      # python3-spiflash ours needs is served from our own suites. So the
+      # install test takes it from the bundle, not from spiflash's
+      # repository, which proves a user needs only ours (apt-repo-action
+      # docs/packaging.md, "Bundling a dependency repository"). Dependency
+      # repositories that aren't bundled (none today) are still added.
+      - name: Check out apt-repo-action's scripts
+        uses: actions/checkout@v5
+        with:
+          repository: mithro/apt-repo-action
+          ref: main
+          path: .apt-repo-action
+          sparse-checkout: scripts
+
+      # The newest python3-spiflash spiflash's repository has for the suite
+      # (both are rolling releases), verified as publish-apt verifies it
+      # before publishing: the suite's InRelease against spiflash's key, its
+      # Packages against InRelease, and the .deb against its Packages stanza
+      # and its own control file. The version goes in the log.
+      - name: The bundled packages, and the other dependency repositories
+        id: bundle
         env:
           SUITE: ${{ matrix.suite }}
-          APT_SOURCES: ${{ steps.build.outputs.apt-sources }}
-          SPIFLASH_KEY: B5286C61A99A9E6A5B8A8E5B6B2D7683DE01081D
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          keyring="$APT_SOURCES/keyrings/spiflash.gpg"
-          got=$(gpg --show-keys --with-colons "$keyring" | awk -F: '$1 == "fpr" {print $10}')
-          if [ "$got" != "$SPIFLASH_KEY" ]; then
-            echo "::error::spiflash's apt key is $got, not the pinned $SPIFLASH_KEY: refusing to republish its packages"
-            exit 1
-          fi
-          docker run --rm \
-            -v "$APT_SOURCES:/apt-sources:ro" \
-            -v "${PWD}/built-debs:/debs" \
-            docker.io/library/debian:${SUITE} \
-            sh -ec 'sh /apt-sources/install.sh
-                    apt-cache policy python3-spiflash
-                    cd /debs
-                    apt-get download python3-spiflash
-                    for deb in python3-spiflash_*.deb; do
-                      echo "::notice title=python3-spiflash::republishing $(dpkg-deb -f "$deb" Package) $(dpkg-deb -f "$deb" Version) for '"$SUITE"', sha256 $(sha256sum "$deb" | cut -d" " -f1)"
-                    done'
-          ls -l built-debs
+          mkdir -p bundled-debs
+          python3 .apt-repo-action/scripts/bundle-depends.py fetch \
+            --suite "$SUITE" --debs built-debs --dest bundled-debs --index
+          python3 .apt-repo-action/scripts/apt-sources.py write --unbundled \
+            --suite "$SUITE" --dest "$RUNNER_TEMP/apt-sources-unbundled" > /dev/null
+          echo "apt-sources=$RUNNER_TEMP/apt-sources-unbundled" >> "$GITHUB_OUTPUT"
+          ls -l bundled-debs
 
       # Install what was just built into a clean container of the same suite,
       # with its dependencies from the Debian archive and python3-spiflash
-      # from beside it -- as a machine with only this repository configured
-      # would -- and run it.
+      # from the bundle, offered to apt as a local source -- as a machine with
+      # only this repository configured would -- and run it. trusted=yes is
+      # for this throwaway container only: bundle-depends.py verified every
+      # bundled file above.
       - name: Install test
+        env:
+          SUITE: ${{ matrix.suite }}
+          APT_SOURCES: ${{ steps.bundle.outputs.apt-sources }}
         run: |
-          docker run --rm \
-            -v "${PWD}/built-debs:/debs:ro" \
-            docker.io/library/debian:${{ matrix.suite }} \
-            sh -ec 'apt-get update -q && apt-get install -y -q --no-install-recommends /debs/*.deb
+          # --platform: an Architecture: all build runs on this runner's own
+          # architecture, and an earlier pull may have pointed the tag elsewhere.
+          docker run --rm --platform linux/amd64 \
+            -v "$APT_SOURCES:/apt-sources:ro" \
+            -v "$PWD/built-debs:/debs:ro" \
+            -v "$PWD/bundled-debs:/bundled:ro" \
+            "docker.io/library/debian:$SUITE" \
+            sh -ec 'sh /apt-sources/install.sh
+                    echo "deb [trusted=yes] file:/bundled ./" > /etc/apt/sources.list.d/bundled.list
+                    apt-get update -q && apt-get install -y -q --no-install-recommends /debs/*.deb
+                    apt-cache policy python3-spiflash
                     rpi-hwid revision c04170
                     rpi-hwid name --netv2 0x00742c4e63b9085c
                     python3 -c "import rpi_hwid.probe, rpi_hwid.fpga, rpi_hwid.model"
