@@ -82,6 +82,40 @@ $ rpi-hwid probe --json > pi-sw2-p48.json
 $ rpi-hwid label-input --from pi-sw2-p48.json > labels/pi-sw2-p48.json
 ```
 
+## The Pi alone: `--pi-only`
+
+```
+$ sudo rpi-hwid label-input --pi-only [--host NAME]
+```
+
+The Pi's facts (model, serial, revision, memory, MACs, the HAT, the power
+class, and on a Pi 5 the fan, the RTC battery and the PMIC's readings) as a
+label input on stdout, with `fpga` and `tinytapeout` null. fpgas-verify runs
+it once at boot, before it takes any board's lock, and sends the summary to
+the fpgas.online site, so it is made to be safe while a board under test is
+wired to the header. `--host` defaults to this host's name.
+
+What it does, and puts back:
+
+* **The HAT ID bus** (pins 27/28, GPIO0/1, i2c-0 on a Pi): where it is not
+  already up, `modprobe i2c-dev` and `dtparam i2c_vc=on`; then a read of the
+  HAT EEPROM addresses 0x50-0x57; then `dtparam -r` and `modprobe -r i2c-dev`,
+  so the host is left as it was found. The firmware's own reading of the HAT
+  comes from `/proc/device-tree/hat`.
+* `vcgencmd get_throttled`, and on a Pi 5 `sudo vcgencmd pmic_read_adc`: reads.
+* sysfs, procfs and the device tree: reads. On a PC (no device tree), the
+  root-only DMI serials through `sudo -n cat`.
+
+What it never does:
+
+* **Touch the header's user bus** (pins 3/5, GPIO2/3): no enable, no open, no
+  scan. An Acorn's J5 is on GPIO3, and a Pmod HAT's lines are on the header.
+  A HAT known only by the devices it puts there (a Waveshare PoE HAT (B))
+  therefore goes unseen, and when nothing at all is found on the header,
+  `header` is null (not read) rather than `[]`: no label says "HAT none" of a
+  HAT that was never looked for.
+* Probe an FPGA board, a Tiny Tapeout board or an ESP32, or stop a service.
+
 ## From Python
 
 Everything takes and returns plain dicts, touches no hardware and starts no
