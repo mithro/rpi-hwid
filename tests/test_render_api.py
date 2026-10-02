@@ -118,3 +118,47 @@ def test_the_artwork_directory_is_the_calls_alone(inputs, tmp_path):
     assert str(tmp_path / "raspberry-pi.svg") in seen
     assert labels.ARTWORK_DIR.get() is None, "nothing set outlives the call"
     assert labels.artwork("raspberry-pi.svg").startswith(labels.PACKAGE_ARTWORK)
+
+
+def test_render_label_requires_only_the_label_it_renders(inputs):
+    """The Acorn's label from a host whose Pi header nobody read: the Pi
+    label cannot be made, and is not being made."""
+    short = copy.deepcopy(inputs)
+    p48 = next(d for d in short if d["host"] == "pi-sw2-p48")
+    p48["summary"]["header"] = None
+    (acorn,) = labels.list_labels(short, only=["acorn"])
+    assert labels.render_label(short, acorn["id"]).startswith(b"%PDF")
+    (pi,) = [r for r in labels.list_labels(inputs, only=["rpi"])
+             if r["host"] == "pi-sw2-p48"]
+    with pytest.raises(labels.MissingFieldsError, match="board label needs header"):
+        labels.render_label(short, pi["id"])
+
+
+def test_another_hosts_short_label_does_not_stop_this_one(inputs):
+    short = copy.deepcopy(inputs)
+    other = next(d for d in short if d["host"] == "pi3")
+    other["summary"]["fpga"][0]["dna"] = None
+    (acorn,) = labels.list_labels(inputs, only=["acorn"])
+    assert labels.render_label(short, acorn["id"]) == labels.render_label(inputs, acorn["id"])
+
+
+def test_render_label_finds_a_micro_label_and_a_numbered_twin(inputs):
+    rows = labels.list_labels(inputs)
+    for row in rows:
+        assert labels.render_label(inputs, row["id"]).startswith(b"%PDF")
+
+
+def test_main_with_artwork_uses_it_for_that_run_alone(data_dir, tmp_path, monkeypatch):
+    mark = Path(labels.PACKAGE_ARTWORK) / "raspberry-pi.svg"
+    art = tmp_path / "art"
+    art.mkdir()
+    (art / "raspberry-pi.svg").write_bytes(mark.read_bytes())
+    seen = []
+    real = labels.artwork
+    monkeypatch.setattr(labels, "artwork", lambda name: seen.append(real(name)) or real(name))
+    out = tmp_path / "l.pdf"
+    assert labels.main(["--data", str(data_dir), "--out", str(out), "--artwork", str(art),
+                        "--only", "rpi"]) == 0
+    assert out.read_bytes().startswith(b"%PDF")
+    assert str(art / "raspberry-pi.svg") in seen
+    assert labels.ARTWORK_DIR.get() is None

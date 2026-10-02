@@ -97,13 +97,17 @@ def unique_ids(ids: list[str]) -> list[str]:
     return out
 
 
-def entries(docs: Any, only: set[str], pinned_names: Any = None) -> list[Entry]:
+def entries(docs: Any, only: set[str], pinned_names: Any = None,
+            hosts: set[str] | None = None) -> list[Entry]:
     """Every label the documents make for the kinds in `only`, one by one:
-    the whole labels in ``labels.all_labels`` order, then each micro label."""
+    the whole labels in ``labels.all_labels`` order, then each micro label;
+    only the `hosts` named, where they are."""
     raw: list[tuple[str, str, str, str, Any, Any]] = []
-    for host, kind, title, draw, record in labels.whole_labels(docs, only, pinned_names):
+    for host, kind, title, draw, record in labels.whole_labels(docs, only, pinned_names,
+                                                              hosts=hosts):
         raw.append((host, kind, title, "sticker", draw, record))
-    for kind, m in micro.selected(docs, only):
+    mine = docs if hosts is None else {h: d for h, d in docs.items() if h in hosts}
+    for kind, m in micro.selected(mine, only):
         raw.append((m.host, kind, m.listing_title, "quarter", None, m))
     ids = unique_ids([f"{host}/{kind}/{title}" for host, kind, title, *_ in raw])
     return [Entry(i, *r) for i, r in zip(ids, raw, strict=True)]

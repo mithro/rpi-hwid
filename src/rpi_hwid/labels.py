@@ -1853,9 +1853,10 @@ def all_labels(docs, only, pinned_names=None, order=None):
 LIST_OF = {"fpga": "fpga", "tt": "tinytapeout", "usb": "usb_net"}
 
 
-def whole_labels(docs, only, pinned_names=None, order=None):
+def whole_labels(docs, only, pinned_names=None, order=None, hosts=None):
     """Every whole-sticker label as (host, kind, title, draw, record), host
-    by host.
+    by host -- of the `hosts` named, where they are, the others still read
+    for what names a board (an Arty's name depends on every Arty).
 
     A machine's labels come out together and in the order someone works
     through it: the board itself, then what is plugged into it -- FPGA, Tiny
@@ -1892,6 +1893,8 @@ def whole_labels(docs, only, pinned_names=None, order=None):
             n = position.get((record_kind, r.host), 0)
             position[(record_kind, r.host)] = n + 1
             if record_kind == "fpga" and wanted_fpga and r.kind not in wanted_fpga:
+                continue
+            if hosts is not None and r.host not in hosts:
                 continue
             at = fpga_at[r.host][n] if record_kind == "fpga" else n
             refuse_missing(r.host, "%s[%d]" % (LIST_OF[record_kind], at), needs[r.host])
@@ -1932,6 +1935,8 @@ def whole_labels(docs, only, pinned_names=None, order=None):
 
     rank = {host: i for i, host in enumerate(order or ())}
     for host in sorted(sorted(docs), key=lambda h: rank.get(h, len(rank))):
+        if hosts is not None and host not in hosts:
+            continue
         # Only a label being made is checked or built: --only x86 makes no
         # Pi's, so a Pi's unread header or revision is no reason to stop.
         kind = boards.board_kind(docs[host].summary)
@@ -2078,7 +2083,14 @@ def render_label(inputs, label_id, outline=False, pinned_names=None, artwork=Non
     of the label: 63.5 x 38.1 mm, or a quarter of that for a micro label."""
     from rpi_hwid import micro, placement
     docs = documents(inputs)
-    by_id = dict((e.id, e) for e in placement.entries(docs, _only(None), pinned_names))
+    # Only this label is made, so only this label's fields are required: the
+    # id is host/kind/title, and the kind and host select it.
+    host, _, rest = label_id.partition("/")
+    kind = rest.partition("/")[0]
+    by_id = {}
+    if host in docs and kind in _only(None) | set(FPGA_KINDS):
+        by_id = dict((e.id, e) for e in placement.entries(docs, {kind}, pinned_names,
+                                                          hosts={host}))
     if label_id not in by_id:
         raise KeyError("%s: no such label in these documents" % label_id)
     e = by_id[label_id]
@@ -2128,8 +2140,12 @@ def main(argv=None):
     ap.add_argument("--check", action="store_true",
                     help="say which fields each label still needs, and exit 1 if any does")
     args = ap.parse_args(argv)
+    # the artwork directory for this run alone, put back when it is done
+    with _artwork(args.artwork):
+        return _main(ap, args, micro_kinds)
 
-    ARTWORK_DIR.set(str(args.artwork) if args.artwork else None)
+
+def _main(ap, args, micro_kinds):
     docs = load_collected(args.data)
     pinned = json.loads(args.names.read_text()) if args.names else None
     only = args.only or list(KINDS) + micro_kinds
