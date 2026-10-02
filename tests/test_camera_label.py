@@ -3,10 +3,22 @@ in the corner beside the title."""
 
 from __future__ import annotations
 
+import copy
+from dataclasses import replace
+
 import pytest
 
 from rpi_hwid import labels
 from rpi_hwid.model import Camera
+
+HOST = "pi-sw2-p47"                     # a Pi 5 with a fan and an RTC cell
+
+
+def with_cameras(docs, cameras, host=HOST):
+    """`host`'s document, its summary saying `cameras`."""
+    doc = copy.deepcopy(docs[host])
+    doc.summary = replace(doc.summary, cameras=cameras)
+    return doc
 
 
 @pytest.mark.parametrize(("sensor", "generation"), [
@@ -53,3 +65,12 @@ def test_the_lens_driver_is_never_printed():
     said = " ".join(w for w in labels.camera_words(
         Camera("imx708", autofocus=True, lens="dw9807")) if w)
     assert "dw9807" not in said
+
+
+def test_board_record_carries_the_cameras(docs):
+    cameras = (Camera("ov5647", autofocus=True, lens="0x0c"),
+               Camera("imx708", variant="wide_noir", autofocus=True, lens="dw9807"))
+    assert labels.board_record(with_cameras(docs, cameras)).cameras == cameras
+    # looked and found none, and never looked: both carried as they came
+    assert labels.board_record(with_cameras(docs, ())).cameras == ()
+    assert labels.board_record(docs[HOST]).cameras is None

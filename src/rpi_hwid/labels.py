@@ -49,6 +49,7 @@ import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import segno
 from reportlab.lib.colors import HexColor, black
@@ -63,6 +64,9 @@ from rpi_hwid import names as naming
 from rpi_hwid import tinytapeout as tt_data
 from rpi_hwid.collect import load_collected
 from rpi_hwid.revision import derived_wlan_mac
+
+if TYPE_CHECKING:
+    from rpi_hwid.model import Camera
 
 PACKAGE_ARTWORK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artwork")
 # The caller's artwork directory, for the context this render runs in: a
@@ -1537,6 +1541,9 @@ class BoardLabel:
     # that cannot answer is never drawn as one that answered "no".
     fan: bool | None = None
     rtc_battery: bool | None = None
+    # The CSI cameras, as the summary has them: None where nobody looked,
+    # empty where somebody did and found none.
+    cameras: tuple[Camera, ...] | None = None
     # RISC-V only: the ISA string and the line under it (harts, MMU, the
     # board's PCB and BOM revisions), drawn where a Pi's HAT rows are.
     isa: str | None = None
@@ -1685,7 +1692,7 @@ def board_record(doc):
         eth_note="no wired port" if ident.wired is False
         else "none found" if ident.kind == "x86" else None,
         wlan_note=wlan_note,
-        fan=s.fan, rtc_battery=s.rtc_battery,
+        fan=s.fan, rtc_battery=s.rtc_battery, cameras=s.cameras,
         isa=rv.isa if rv else None, riscv_line=rv.line if rv else None,
         maker=ident.maker, maker_mark=ident.maker_mark,
     )
