@@ -200,14 +200,23 @@ apart. How the label names the part from them, and why an id that names no part
 stops label generation, is in [LABELS.md](LABELS.md#the-flash-part).
 
 Where [fpgas-verify](https://github.com/fpgas-online/fpgas.online-test-designs)
-is installed (an fpgas.online host), an FPGA on PCIe is asked about first with
-`fpgas-verify --identify` (directly as root, else `sudo -n`). It reads only what
-is safe while the board is in use: an Acorn's IDCODE, Device DNA, and its
-configuration flash through the board's own SoC, all six RDID bytes included.
-What it reads is put on the board at that PCIe slot, and wins over the chain's;
-a flash it read is not read again over JTAG, which would replace the running
-design. Its document is kept under `fpga.fpgas_verify`. Without fpgas-verify,
-nothing here changes.
+is installed (an fpgas.online host), it is asked about the boards first, with
+`fpgas-verify --identify` (directly as root, else `sudo -n`), whenever there is
+an FPGA on PCIe, a Digilent FT2232 on USB, or `--jtag`. It reads only what is
+safe while a board is in use: IDCODE, Device DNA, and an Acorn's configuration
+flash through the board's own SoC, all six RDID bytes included. What it reads
+wins over the chain's, and is put on the board it describes: by PCIe slot, an
+Arty by its FT2232's serial, otherwise the one board of that kind (a NeTV2 on
+its harness, which the chain alone lists as `jtag`); a board it describes
+that nothing else found is added. A Tiny Tapeout board or a Fomu it reports is
+left in the evidence: the first has its own module and label, the second no
+label yet.
+
+The chain is then read only for what fpgas-verify did not give: when every
+board it read came with its DNA and IDCODE, and its flash where `--flash` asks
+for one, `--jtag` reads nothing, and a flash it read is never read again over
+JTAG, which would replace the running design. Its document is kept under
+`fpga.fpgas_verify`. Without fpgas-verify, nothing here changes.
 
 ```
 $ rpi-hwid fpga --jtag          # a Pi 4 with an Arty A7-35T on USB
