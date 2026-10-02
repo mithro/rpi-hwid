@@ -4,6 +4,7 @@ without a Pi (and without sudo)."""
 
 from __future__ import annotations
 
+import dataclasses
 import errno
 import json
 import os
@@ -13,11 +14,13 @@ import struct
 import subprocess
 import termios
 import threading
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
 
 from rpi_hwid import fpga, probe, tinytapeout
+from rpi_hwid.model import FpgaBoard
 
 
 @pytest.fixture(autouse=True)
@@ -309,6 +312,8 @@ def fake_root(tmp_path, monkeypatch):
     # nor any fpgas-acorn-verify, which runs under sudo: a stub that says it
     # was not run, so no test reaches the real thing whatever `which` answers
     monkeypatch.setattr(fpga, "sh_split", lambda args, timeout=15: ("", "stub: not run"))
+    monkeypatch.setattr(fpga, "sh_split_timed",
+                        lambda args, timeout=15: ("", "stub: not run", False))
     return tmp_path
 
 
@@ -763,66 +768,71 @@ def test_a_card_on_pcie_is_taken_off_the_bus_for_its_flash_read(fake_root, monke
     assert not [a for a in ran if a[-1].endswith(("/remove", "/rescan"))]
 
 
-# What `sudo fpgas-acorn-verify --identify` printed on pi-sw2-p48 (the Acorn
-# deployment, 2026-09-23); its unique id is the one the JTAG read gave.
-ACORN_IDENTIFY = {
-    "schema_version": 1, "result": "read", "boards": [{
-        "bdf": "0001:01:00.0", "ids": "10ee:7021", "subsystem": "1e24:021f",
-        "kind": "fpgas-online", "variant": "cle-215+",
-        "running": {"identifier": "fpgas-online Acorn PCIe SoC cle-215+ 2026-09-21 14:23:32",
-                    "build": "operational"},
-        "flash": {"part": "S25FL256S", "jedec": "0x010219",
-                  "unique_id": "edcbeececb2b2a88b04f914d2e46af90",
-                  "size_bytes": 33554432},
-        "result": "read"}]}
+# What `fpgas-verify --identify` prints for pi-sw2-p48's Acorn: a
+# byte-identical copy of fpgas.online-test-designs' own golden document
+# (tests/data/identity-v1-acorn-p48.json there), so a change of format on
+# either side shows up here.
+IDENTITY_P48 = Path(__file__).parent / "data" / "identity-v1-acorn-p48.json"
 
 
-def _acorn_board(**changes):
-    doc = json.loads(json.dumps(ACORN_IDENTIFY))
+def _identity(**changes):
+    doc = json.loads(IDENTITY_P48.read_text())
     doc["boards"][0].update(changes)
-    doc["result"] = doc["boards"][0]["result"]
+    for key in [k for k, v in doc["boards"][0].items() if v is None]:
+        del doc["boards"][0][key]
     return doc
 
 
-def test_an_acorns_flash_is_read_from_what_its_soc_reports():
-    read, why = fpga.acorn_flash_parse(json.dumps(ACORN_IDENTIFY))
+def test_the_golden_identity_document_is_read():
+    read, why = fpga.identity_parse(IDENTITY_P48.read_text())
     assert why is None
     assert read == {"0001:01:00.0": {
-        "flash_source": "pcie", "flash_jedec": "0x010219", "flash": "S25FL256S",
+        "kind": "acorn", "dna": "0x0054b48664b04854", "idcode": "0x13636093",
+        "soc_model": "cle-215+", "flash": "S25FL256S", "flash_source": "pcie",
+        "flash_jedec": "0x010219", "flash_extended_id": "0x4d0180",
         "flash_uid": "edcbeececb2b2a88b04f914d2e46af90", "flash_uid_bits": 128,
-        "flash_uid_state": "read", "flash_uid_note": None,
-        # nothing over PCIe reports these, so nothing is claimed for them
-        "flash_extended_id": None, "flash_sfdp": None}}
+        "flash_uid_state": "read"}}
+
+
+def test_fpgas_verifys_own_fields_stay_in_the_evidence():
+    """variant, build, flash_quad and the rest are fpgas-verify's: a board
+    takes only FpgaBoard's fields, so the summary never meets a field the
+    model refuses."""
+    read, _ = fpga.identity_parse(IDENTITY_P48.read_text())
+    assert set(read["0001:01:00.0"]) <= set(fpga.IDENTITY_FIELDS)
+    assert set(fpga.IDENTITY_FIELDS) <= {f.name for f in dataclasses.fields(FpgaBoard)}
 
 
 @pytest.mark.parametrize(("doc", "because"), [
-    # SQRL's factory image: its BAR is never opened
-    (_acorn_board(result="unconverted", kind="sqrl-factory", flash=None,
-                  reason="SQRL factory firmware"), "unconverted (SQRL factory firmware)"),
-    # someone else's design, or a build this release does not know
-    (_acorn_board(result="fail", flash=None, reason="not our SoC"), "fail (not our SoC)"),
-    # "read" but with no unique id in it is not a read of the flash's identity
-    (_acorn_board(flash={"part": "S25FL256S", "jedec": "0x010219", "unique_id": None}),
-     "read (no unique id)"),
-    ({"schema_version": 1, "result": "none", "boards": []}, "no board"),
-    ({"schema_version": 2, "result": "read", "boards": []}, "schema_version 2"),
+    (_identity(dna=None, dna_error="BAR0 could not be read"),
+     "acorn: dna_error: BAR0 could not be read"),
+    (_identity(bdf=None), "acorn: not on PCIe"),
+    (dict(_identity(), boards=[]), "no board found"),
+    (dict(_identity(), identity_version=2), "identity_version 2, and this reads 1"),
+    (dict(_identity(), identity_version=True), "identity_version True, and this reads 1"),
+    (dict(_identity(), identity_version=1.0), "identity_version 1.0, and this reads 1"),
+    (dict(_identity(), schema="fpgas-verify/report"), "something other than"),
 ])
-def test_an_acorn_the_soc_could_not_read_says_why(doc, because):
-    read, why = fpga.acorn_flash_parse(json.dumps(doc))
-    assert read == {}
+def test_what_fpgas_verify_could_not_read_says_why(doc, because):
+    _, why = fpga.identity_parse(json.dumps(doc))
     assert because in why
 
 
+def test_a_document_of_another_version_is_not_read():
+    read, _ = fpga.identity_parse(json.dumps(dict(_identity(), identity_version=2)))
+    assert read == {}
+
+
 def test_output_that_is_not_the_tools_document_is_not_read():
-    read, why = fpga.acorn_flash_parse("sudo: fpgas-acorn-verify: command not found")
+    read, why = fpga.identity_parse("sudo: fpgas-verify: command not found")
     assert read == {}
     assert "command not found" in why
 
 
 def _acorn_collect(fake_root, monkeypatch, identify, chain="idcode 0x3636093"):
     """collect_fpga(--jtag --flash) on a Pi 5 with an Acorn on PCIe and on
-    the GPIO harness, fpgas-acorn-verify answering `identify` (None: not
-    installed) and the chain answering --detect with `chain`."""
+    the GPIO harness, fpgas-verify answering `--identify` with `identify`
+    (None: not installed) and the chain answering --detect with `chain`."""
     slot = "0001:01:00.0"
     dev = fake_root / "sys/bus/pci/devices" / slot
     dev.mkdir(parents=True, exist_ok=True)
@@ -830,8 +840,8 @@ def _acorn_collect(fake_root, monkeypatch, identify, chain="idcode 0x3636093"):
 
     def sh(args, timeout=15):
         ran.append(args)
-        if args == ["which", "fpgas-acorn-verify"]:
-            return "/usr/bin/fpgas-acorn-verify" if identify is not None else ""
+        if args == ["which", "fpgas-verify"]:
+            return "/usr/bin/fpgas-verify" if identify is not None else ""
         if args[:1] == ["which"]:
             return "/usr/bin/openFPGALoader"
         if args[-1].endswith("/remove"):
@@ -842,9 +852,9 @@ def _acorn_collect(fake_root, monkeypatch, identify, chain="idcode 0x3636093"):
 
     def sh_split(args, timeout=15):
         ran.append(args)
-        return (json.dumps(identify), "")
+        return (json.dumps(identify), "", False)
     monkeypatch.setattr(fpga, "sh", sh)
-    monkeypatch.setattr(fpga, "sh_split", sh_split)
+    monkeypatch.setattr(fpga, "sh_split_timed", sh_split)
     monkeypatch.setattr(fpga, "digilent_cables", list)
     monkeypatch.setattr(fpga, "ch347_cables", list)
     monkeypatch.setattr(fpga, "gpiochips", list)
@@ -853,36 +863,53 @@ def _acorn_collect(fake_root, monkeypatch, identify, chain="idcode 0x3636093"):
     # the harness's openocd fallback, for a chain openFPGALoader cannot read
     monkeypatch.setattr(fpga, "openocd_probe", lambda serial=None, pins=None: None)
     monkeypatch.setattr(fpga, "PCIE_SETTLE_S", 0)
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: 1000)
     host_openfpgaloader(monkeypatch)
     f = fpga.collect_fpga(jtag=True, flash=True, pins="10:9:11:8")
     (board,) = [b for b in f["boards"] if b.get("slot") == slot]
     return f, board, [" ".join(a) for a in ran]
 
 
-def test_an_acorns_flash_is_asked_over_pcie_before_any_bridge_is_loaded(fake_root,
-                                                                         monkeypatch):
+def test_an_acorns_flash_is_asked_of_fpgas_verify_before_any_bridge_is_loaded(fake_root,
+                                                                              monkeypatch):
     """A JTAG flash read replaces the design the Acorn is running, which may
-    be someone's session; the SoC can read the same flash without that."""
-    f, board, ran = _acorn_collect(fake_root, monkeypatch, ACORN_IDENTIFY)
-    assert "sudo fpgas-acorn-verify --identify" in ran
+    be someone's session; its SoC can read the same flash without that."""
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, _identity())
+    assert "sudo -n fpgas-verify --identify" in ran
     assert not [a for a in ran if "--flash-info-json" in a or a.endswith("/remove")]
     assert board["flash_source"] == "pcie"
     assert board["flash_uid"] == "edcbeececb2b2a88b04f914d2e46af90"
     assert board["flash_jedec"] == "0x010219"
-    # the chain was still read: the die and the DNA come from JTAG either way
-    assert board["idcode"] == "0x3636093"
+    # bytes 4-6, which the old call dropped, name the part exactly
+    assert board["flash_extended_id"] == "0x4d0180"
+    # fpgas-verify's die and DNA win over the chain's
+    assert board["idcode"] == "0x13636093"
     assert board["dna"] == "0x0054b48664b04854"
+    assert board["soc_model"] == "cle-215+"
     (entry,) = [e for e in f["summary"] if e["kind"] == "acorn"]
     assert entry["flash_source"] == "pcie"
-    assert entry["flash_uid"] == "edcbeececb2b2a88b04f914d2e46af90"
+    assert entry["flash_extended_id"] == "0x4d0180"
+    assert f["fpgas_verify"]["error"] is None
 
 
-def test_an_acorns_flash_is_read_over_pcie_when_its_chain_does_not_answer(fake_root,
-                                                                          monkeypatch):
+def test_as_root_fpgas_verify_is_run_without_sudo(fake_root, monkeypatch):
+    def run(args, timeout=15):
+        ran.append(args)
+        return (IDENTITY_P48.read_text(), "", False)
+    ran = []
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/fpgas-verify")
+    monkeypatch.setattr(fpga, "sh_split_timed", run)
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: 0)
+    assert fpga.identity_probe()["read"]
+    assert ran == [["fpgas-verify", "--identify"]]
+
+
+def test_an_acorns_flash_is_read_by_fpgas_verify_when_its_chain_does_not_answer(
+        fake_root, monkeypatch):
     """pi-sw2-p48, 2026-09-25: its SoC read the flash while its harness gave
     "TDO is stuck at 0". The PCIe read needs no chain, and it is not skipped
     when there is none."""
-    f, board, ran = _acorn_collect(fake_root, monkeypatch, ACORN_IDENTIFY,
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, _identity(),
                                    chain="JTAG init failed with: TDO is stuck at 0")
     assert f["jtag"]["idcode"] is None
     assert not [a for a in ran if "--flash-info-json" in a or a.endswith("/remove")]
@@ -890,26 +917,31 @@ def test_an_acorns_flash_is_read_over_pcie_when_its_chain_does_not_answer(fake_r
     assert board["flash_uid"] == "edcbeececb2b2a88b04f914d2e46af90"
 
 
-def test_no_acorn_tool_is_run_where_no_fpga_is_on_pcie(fake_root, monkeypatch):
+def test_fpgas_verify_is_not_run_where_no_fpga_is_on_pcie(fake_root, monkeypatch):
     shutil.rmtree(fake_root / "sys/bus/pci/devices/0001:01:00.0")
     ran = []
     # installed, so only the absence of an FPGA keeps it from running
     monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/" + args[-1])
-    monkeypatch.setattr(fpga, "sh_split", lambda args, timeout=15: (ran.append(args), ("", ""))[1])
+    monkeypatch.setattr(fpga, "sh_split_timed",
+                        lambda args, timeout=15: (ran.append(args), ("", "", False))[1])
     fpga.collect_fpga(flash=True)
     assert ran == []
 
 
-@pytest.mark.parametrize(("identify", "because"), [
-    (None, "not installed"),
-    (_acorn_board(result="fail", flash=None, reason="not our SoC"), "fail (not our SoC)"),
-])
-def test_an_acorn_the_soc_cannot_read_falls_back_to_jtag(fake_root, monkeypatch,
-                                                         identify, because):
-    f, board, ran = _acorn_collect(fake_root, monkeypatch, identify)
+def test_without_fpgas_verify_nothing_is_asked_and_nothing_changes(fake_root, monkeypatch):
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, None)
+    assert f["fpgas_verify"] is None
+    assert not [a for a in ran if "fpgas-verify --identify" in a]
+    assert board["flash_source"] == "jtag"
+
+
+def test_an_acorn_fpgas_verify_could_not_read_falls_back_to_jtag(fake_root, monkeypatch):
+    doc = _identity(flash_uid=None, flash_uid_state=None, flash_jedec=None,
+                    flash_error="the flash did not answer")
+    f, board, ran = _acorn_collect(fake_root, monkeypatch, doc)
     assert [a for a in ran if "--flash-info-json" in a]
     assert board["flash_source"] == "jtag"
-    assert because in f["acorn_flash"]["error"]
+    assert "flash_error: the flash did not answer" in f["fpgas_verify"]["error"]
 
 
 def test_the_flash_source_reaches_the_summary():
@@ -2172,3 +2204,148 @@ def test_a_summary_saying_where_its_flash_was_read_loads():
     (entry,) = fpga.fpga_summary([{"kind": "acorn", "flash_source": "pcie",
                                    "flash_jedec": "0x010219"}])
     assert FpgaBoard(**entry).flash_source == "pcie"
+
+
+def _probe_with(monkeypatch, out, err, timed_out=False):
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/fpgas-verify")
+    monkeypatch.setattr(fpga, "sh_split_timed", lambda args, timeout=15: (out, err, timed_out))
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: 0)
+    return fpga.identity_probe()
+
+
+def test_nothing_printed_says_so_with_stderr(monkeypatch):
+    res = _probe_with(monkeypatch, "", "fpgas-verify: no board configured\n")
+    assert res["error"] == ("fpgas-verify printed nothing "
+                            "(stderr: fpgas-verify: no board configured)")
+    assert res["document"] is None
+
+
+def test_a_timeout_is_a_board_busy(monkeypatch):
+    res = _probe_with(monkeypatch, "", "", timed_out=True)
+    assert res["error"] == "fpgas-verify did not answer within 60 s (a board busy?)"
+
+
+def test_a_board_whose_stderr_says_timeout_is_not_a_timeout(monkeypatch):
+    """p47: a valid document, one board's flash read having timed out."""
+    res = _probe_with(monkeypatch, IDENTITY_P48.read_text(),
+                      "acorn: flash_uid: uartbone: timeout: no answer\n")
+    assert res["error"] is None
+    assert res["read"]
+
+
+def test_stderr_is_shown_in_whole_lines(monkeypatch):
+    err = ("usage: fpgas-verify [-h] [--list] [--board BOARD] [--no-probe] [--update]\n"
+           "                    [--variant VARIANT] [--port PORT] [--images DIR]\n"
+           "                    [--state FILE] [--report FILE] [--no-publish]\n"
+           "fpgas-verify: error: unrecognized arguments: --identify\n")
+    res = _probe_with(monkeypatch, "", err)
+    assert res["error"].startswith("fpgas-verify printed nothing (stderr: ")
+    shown = res["error"][len("fpgas-verify printed nothing (stderr: "):-1]
+    lines = [line.strip() for line in err.strip().splitlines()]
+    assert all(part in lines for part in shown.split(" | "))
+    assert shown.endswith("fpgas-verify: error: unrecognized arguments: --identify")
+
+
+@pytest.mark.parametrize(("boards", "seconds"), [(0, 60), (1, 60), (2, 90), (4, 150)])
+def test_identify_is_given_thirty_seconds_a_board(boards, seconds):
+    assert fpga.identity_timeout(boards) == seconds
+
+
+def test_out_of_time_it_is_asked_to_stop_before_it_is_killed(monkeypatch):
+    """SIGTERM first, so fpgas-verify's finally blocks put the pins back;
+    SIGKILL only after the grace."""
+    events = []
+
+    class Stubborn:
+        def __init__(self, args, **kw):
+            events.append(("start", args[0]))
+            self.calls = 0
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls < 3:
+                raise fpga.subprocess.TimeoutExpired("x", timeout)
+            return "", "killed"
+
+        def terminate(self):
+            events.append("TERM")
+
+        def kill(self):
+            events.append("KILL")
+    monkeypatch.setattr(fpga.subprocess, "Popen", Stubborn)
+    _, _, timed_out = fpga.sh_split_timed(["sudo", "-n", "fpgas-verify"], 1)
+    assert timed_out is True
+    assert events == [("start", "sudo"), "TERM", "KILL"]
+
+
+def test_one_that_stops_on_sigterm_is_not_killed(monkeypatch):
+    events = []
+
+    class Polite:
+        def __init__(self, args, **kw):
+            self.calls = 0
+
+        def communicate(self, timeout=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise fpga.subprocess.TimeoutExpired("x", timeout)
+            return "{}", "stopped"
+
+        def terminate(self):
+            events.append("TERM")
+
+        def kill(self):
+            events.append("KILL")
+    monkeypatch.setattr(fpga.subprocess, "Popen", Polite)
+    assert fpga.sh_split_timed(["fpgas-verify"], 1) == ("{}", "stopped", True)
+    assert events == ["TERM"]
+
+
+def test_the_document_is_kept_whole_as_evidence(monkeypatch):
+    res = _probe_with(monkeypatch, IDENTITY_P48.read_text(), "")
+    assert res["document"] == json.loads(IDENTITY_P48.read_text())
+    assert res["document"]["boards"][0]["variant"] == "cle-215+"
+
+
+def test_identify_is_given_sixty_seconds(monkeypatch):
+    seen = []
+    monkeypatch.setattr(fpga, "sh", lambda args, timeout=15: "/usr/bin/fpgas-verify")
+    monkeypatch.setattr(fpga, "sh_split_timed",
+                        lambda args, timeout=15: (seen.append(timeout), ("", "", False))[1])
+    monkeypatch.setattr(fpga.os, "geteuid", lambda: 0)
+    fpga.identity_probe()
+    fpga.identity_probe(3)
+    assert seen == [60, 120]
+
+
+
+def test_a_command_that_outlives_sudos_sigkill_is_let_go(monkeypatch):
+    """SIGKILL to sudo leaves its child running, the pipes held open: a
+    plain communicate() would wait for the child's own exit (17 s on p47)."""
+    events = []
+
+    class Pipe:
+        def close(self):
+            events.append("closed")
+
+    class Clinging:
+        stdout, stderr = Pipe(), Pipe()
+
+        def __init__(self, args, **kw):
+            pass
+
+        def communicate(self, timeout=None):
+            events.append(("wait", timeout))
+            raise fpga.subprocess.TimeoutExpired("x", timeout)
+
+        def terminate(self):
+            events.append("TERM")
+
+        def kill(self):
+            events.append("KILL")
+    monkeypatch.setattr(fpga.subprocess, "Popen", Clinging)
+    out, err, timed_out = fpga.sh_split_timed(["sudo", "-n", "fpgas-verify", "--identify"], 7)
+    assert (out, err, timed_out) == (
+        "", "fpgas-verify did not exit after SIGKILL to sudo", True)
+    assert events == [("wait", 7), "TERM", ("wait", 5), "KILL", ("wait", 5),
+                      "closed", "closed"]

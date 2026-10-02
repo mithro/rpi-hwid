@@ -634,12 +634,50 @@ def sh_rc(args, timeout=15):
 def sh_split(args, timeout=15):
     """stdout and stderr kept apart: a tool whose stdout is a JSON document
     and whose stderr says why cannot have the two run together."""
+    out, err, _ = sh_split_timed(args, timeout)
+    return out, err
+
+
+# How long a tool asked to stop is given to stop before it is killed: its
+# own clean-up (fpgas-verify's finally blocks put the board's pins back) runs
+# on SIGTERM, and never on SIGKILL.
+TERM_GRACE_S = 5
+
+
+def sh_split_timed(args, timeout=15):
+    """(stdout, stderr, whether it ran out of time). Out of time, it is sent
+    SIGTERM, given TERM_GRACE_S to finish, and only then SIGKILL. Under sudo
+    the signal goes to sudo, which passes it on to the command."""
     try:
-        r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                           universal_newlines=True, timeout=timeout)   # 3.5-safe
-        return r.stdout, r.stderr
-    except (subprocess.TimeoutExpired, OSError) as exc:
-        return "", str(exc)
+        p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             universal_newlines=True)
+    except OSError as exc:
+        return "", str(exc), False
+    try:
+        out, err = p.communicate(timeout=timeout)
+        return out, err, False
+    except subprocess.TimeoutExpired:
+        p.terminate()
+        try:
+            out, err = p.communicate(timeout=TERM_GRACE_S)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            try:
+                out, err = p.communicate(timeout=TERM_GRACE_S)
+            except subprocess.TimeoutExpired:
+                # Under sudo, SIGKILL reaches sudo alone, and the command it
+                # ran holds the pipes open while it finishes: stop waiting,
+                # and let go of them.
+                for pipe in (p.stdout, p.stderr):
+                    try:
+                        pipe.close()
+                    except (AttributeError, OSError):
+                        pass
+                words = [a for a in args if a != "sudo" and not a.startswith("-")]
+                return "", "%s did not exit after SIGKILL%s" % (
+                    words[0] if words else args[0],
+                    " to sudo" if args[0] == "sudo" else ""), True
+        return out or "", err or "", True
 
 
 def sh_all(args, timeout=15):
@@ -1423,64 +1461,111 @@ def read_flash(res, harness, board, part):
             res["flash_error"] = said or fl.strip()[-200:] or None
 
 
-# --- an Acorn's flash, read over PCIe by the fpgas.online SoC ------------------
+# --- what fpgas-verify read -----------------------------------------------------
 #
-# The SoC the Acorns now carry can read its own configuration flash, so an
-# Acorn's flash is asked there first: a JTAG read loads a bridge in place of
-# the running design, which may be someone's session. The Acorn deployment's
-# `fpgas-acorn-verify --identify` does the reading (fpgas-online-acorn-tools)
-# and prints one JSON document whatever its exit status -- exit 1 includes a
-# board still on SQRL's factory image -- so the document is what is read and
-# the status is not. Anything it cannot read falls back to JTAG.
-ACORN_VERIFY = "fpgas-acorn-verify"
-ACORN_VERIFY_SCHEMA = 1
+# fpgas-verify (fpgas.online-test-designs) checks each fpgas.online board at
+# boot and can say who a board is without disturbing it: `fpgas-verify
+# --identify` reads only what is safe to read while the board is in use --
+# the IDCODE, the Device DNA, an Acorn's flash through its own SoC over
+# PCIe -- and never loads a bridge or a design. What it read is asked
+# first, then: a JTAG flash read loads a bridge in place of the running
+# design, which may be someone's session.
+#
+# It prints one document whatever its exit status, so the document is what
+# is read and the status is not. Its fields are rpi-hwid's FpgaBoard names
+# (docs/identity.md in fpgas.online-test-designs); a document of another
+# identity_version is refused, not read hopefully, and fields this side does
+# not know are left in the evidence. Without fpgas-verify installed nothing
+# here changes.
+FPGAS_VERIFY = "fpgas-verify"
+IDENTITY_SCHEMA = "fpgas-verify/identity"
+IDENTITY_VERSION = 1
+# How long --identify may take. fpgas-verify waits at most 30 s for each
+# board's lock and leaves a board it could not get out, "board busy"
+# (contract 23): so 30 s a board, and 30 s for the rest, never under 60 s.
+IDENTITY_LOCK_S = 30
+IDENTITY_TIMEOUT_S = 60
 
 
-def acorn_flash_parse(out):
-    """({slot: flash facts}, why the rest were not read) from what
-    `fpgas-acorn-verify --identify` printed."""
+def identity_timeout(boards):
+    """The time --identify is given on a host with `boards` boards found."""
+    return max(IDENTITY_TIMEOUT_S, IDENTITY_LOCK_S * boards + IDENTITY_LOCK_S)
+
+
+def last_lines(text, limit=300):
+    """The end of `text` in whole lines, as many as fit in `limit`
+    characters -- at least the last line, whole."""
+    lines = [line for line in text.strip().splitlines() if line.strip()]
+    out = []
+    for line in reversed(lines):
+        if out and len(" | ".join([line] + out)) > limit:
+            break
+        out.insert(0, line.strip())
+    return " | ".join(out)
+# The fields a board takes from the document: FpgaBoard's.
+IDENTITY_FIELDS = ("kind", "serial", "dna", "idcode", "flash", "flash_jedec",
+                   "flash_extended_id", "flash_sfdp", "flash_uid", "flash_uid_bits",
+                   "flash_uid_state", "flash_uid_note", "flash_error", "flash_source",
+                   "soc_model")
+
+
+def identity_parse(out):
+    """({PCIe slot: the board's FpgaBoard fields}, why the rest were not
+    read) from what `fpgas-verify --identify` printed."""
     try:
         doc = json.loads(out)
     except ValueError:
-        return {}, "%s printed no document: %s" % (ACORN_VERIFY, out.strip()[-200:])
-    if not isinstance(doc, dict) or doc.get("schema_version") != ACORN_VERIFY_SCHEMA:
-        # a schema this code was not taught is refused, not read hopefully
-        return {}, "%s wrote schema_version %r" % (
-            ACORN_VERIFY, doc.get("schema_version") if isinstance(doc, dict) else None)
+        text = out.strip()
+        return {}, "%s printed %s" % (
+            FPGAS_VERIFY, "no document: " + text[-200:] if text else "nothing")
+    if not isinstance(doc, dict) or doc.get("schema") != IDENTITY_SCHEMA:
+        return {}, "%s printed something other than %s" % (FPGAS_VERIFY, IDENTITY_SCHEMA)
+    # the integer 1: not true, not 1.0, which compare equal to it
+    version = doc.get("identity_version")
+    if type(version) is not int or version != IDENTITY_VERSION:
+        return {}, "%s wrote identity_version %r, and this reads %d" % (
+            FPGAS_VERIFY, doc.get("identity_version"), IDENTITY_VERSION)
     read, why = {}, []
     for b in doc.get("boards") or ():
-        fl = b.get("flash") or {}
-        if b.get("result") == "read" and fl.get("jedec") and fl.get("unique_id"):
-            uid = fl["unique_id"].lower()
-            read[b.get("bdf")] = {
-                "flash_source": "pcie",
-                "flash_jedec": "0x%06x" % int(fl["jedec"], 16),
-                "flash": fl.get("part"),
-                "flash_uid": uid,
-                "flash_uid_bits": len(uid) * 4,
-                "flash_uid_state": "read",
-                "flash_uid_note": None,
-                # the tool reports neither, so neither is claimed
-                "flash_extended_id": None,
-                "flash_sfdp": None}
-        elif b.get("result") == "read":
-            why.append("%s: read (no unique id)" % b.get("bdf"))
+        if not isinstance(b, dict):
+            continue
+        fields = dict((k, b[k]) for k in IDENTITY_FIELDS if b.get(k) is not None)
+        errors = ["%s: %s" % (k, b[k]) for k in sorted(b) if k.endswith("_error")]
+        if b.get("bdf"):
+            read[b["bdf"]] = fields
         else:
-            why.append("%s: %s (%s)" % (b.get("bdf"), b.get("result"), b.get("reason")))
+            why.append("%s: not on PCIe" % (b.get("board") or b.get("kind")))
+        if errors:
+            why.append("%s: %s" % (b.get("board") or b.get("kind"), "; ".join(errors)))
     if not doc.get("boards"):
-        why.append("result %s: no board found" % doc.get("result"))
+        why.append("no board found")
     return read, "; ".join(why) or None
 
 
-def acorn_flash_probe():
-    """What the SoC read of each Acorn's flash, and why any were not."""
-    if not sh(["which", ACORN_VERIFY]):
-        return {}, ACORN_VERIFY + " not installed"
-    out, err = sh_split(["sudo", ACORN_VERIFY, "--identify"], timeout=120)
-    read, why = acorn_flash_parse(out)
-    if why and err.strip():
-        why += "; stderr: " + err.strip()[-200:]
-    return read, why
+def identity_probe(boards=1):
+    """What fpgas-verify read of each board, and why any were not, with the
+    document it printed kept whole as evidence (its own fields, and boards
+    with no FPGA label here); None when it is not installed. `boards` is
+    how many boards were found here, for the time it is given."""
+    if not sh(["which", FPGAS_VERIFY]):
+        return None
+    argv = [FPGAS_VERIFY, "--identify"]
+    if os.geteuid() != 0:
+        argv = ["sudo", "-n"] + argv
+    timeout = identity_timeout(boards)
+    out, err, timed_out = sh_split_timed(argv, timeout)
+    read, why = identity_parse(out)
+    if timed_out:
+        why = "%s did not answer within %d s (a board busy?)" % (FPGAS_VERIFY, timeout)
+        if "did not exit after SIGKILL" in err:
+            why += "; " + err
+    elif why and err.strip():
+        why += " (stderr: %s)" % last_lines(err)
+    try:
+        document = json.loads(out)
+    except ValueError:
+        document = None
+    return {"read": read, "error": why, "document": document}
 
 
 def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
@@ -2280,15 +2365,23 @@ def merge_soc(boards, soc):
     return boards
 
 
-def merge_acorn_flash(boards, read):
-    """Put each flash an Acorn's SoC read on the board at that PCIe address.
+def merge_identity(boards, read):
+    """Put what fpgas-verify read of each board on the board at that PCIe
+    address, its answer winning over the chain's.
 
     By slot, not through the chain: the chain belongs to whatever board its
     harness names, and on a Pi 4's default pins that is a NeTV2."""
     for board in boards:
         reading = read.get(board.get("slot") or "")
         if reading:
+            if reading.get("flash_uid_state") != "read" and (
+                    board.get("flash_jedec") or board.get("flash_source") == "jtag"):
+                # the chain read the flash fpgas-verify could not: its read
+                # stands, and none of fpgas-verify's flash fields join it
+                reading = dict((k, v) for k, v in reading.items()
+                               if not k.startswith("flash"))
             board.update(reading)
+            board["how"] = board.get("how", "") + "; %s --identify" % FPGAS_VERIFY
     return boards
 
 
@@ -2335,17 +2428,16 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
         for pc in f["pcie"]:
             if pc["id"].startswith(("10ee:", "1e24:")):
                 f["soc"][pc["slot"]] = soc_probe(pc["slot"])
-    # An Acorn's SoC reads its own flash without replacing itself, and needs
-    # no chain to do it: pi-sw2-p48's was read this way while its harness
-    # said "TDO is stuck at 0". So it is asked first, and on its own; only a
-    # board it could not read goes on to the bridge, which replaces whatever
-    # design is running -- possibly someone's session.
+    # fpgas-verify reads an Acorn's flash through its SoC without replacing
+    # it, and needs no chain to do it: pi-sw2-p48's was read this way while
+    # its harness said "TDO is stuck at 0". So it is asked first, and on its
+    # own; only a board it could not read goes on to the bridge, which
+    # replaces whatever design is running -- possibly someone's session.
     endpoints = fpga_endpoints(f["pcie"])
-    f["acorn_flash"] = None
-    if flash and endpoints:
-        read, why = acorn_flash_probe()
-        f["acorn_flash"] = {"read": read, "error": why}
-    unread = [s for s in endpoints if s not in (f["acorn_flash"] or {}).get("read", {})]
+    f["fpgas_verify"] = identity_probe(len(endpoints)) if endpoints else None
+    identified = (f["fpgas_verify"] or {}).get("read", {})
+    unread = [s for s in endpoints
+              if identified.get(s, {}).get("flash_uid_state") != "read"]
     f["jtag"] = jtag_probe(flash and (unread or not endpoints), pins,
                            gateware_parts(f["pcileech"]), endpoints) if jtag else None
     # The ECP5 TraceID, and only when asked for by name. This ends the
@@ -2354,8 +2446,7 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
     f["cynthion_jtag"] = None
     if force_offline and any(cynthion_flash_uid(c) for c in f["cynthion"]):
         f["cynthion_jtag"] = cynthion_offline_probe()
-    f["boards"] = merge_acorn_flash(merge_soc(fpga_verdict(f), f["soc"]),
-                                    (f["acorn_flash"] or {}).get("read", {}))
+    f["boards"] = merge_identity(merge_soc(fpga_verdict(f), f["soc"]), identified)
     f["summary"] = fpga_summary(f["boards"])
     return f
 
@@ -2363,7 +2454,7 @@ def collect_fpga(jtag=False, flash=False, force_offline=False, pins=None, soc=Fa
 def merge_fpga(doc, f):
     """Fold an fpga document into a Pi probe document (in place)."""
     doc["fpga"] = {k: f[k] for k in ("pcie", "ftdi", "jtag", "cynthion",
-                                     "cynthion_jtag", "soc", "acorn_flash")}
+                                     "cynthion_jtag", "soc", "fpgas_verify")}
     doc["verdict"]["fpga"] = f["boards"]
     doc["verdict"]["summary"]["fpga"] = f["summary"]
     return doc
