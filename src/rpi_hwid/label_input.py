@@ -280,11 +280,27 @@ def check(doc: Any) -> list[str]:
     else:
         # Provenance, free-form (contract 20): any keys, any JSON values. It
         # is not compared and no label reads it; only its JSON-ness counts.
-        try:
-            json.dumps(sources, allow_nan=False)
-        except (TypeError, ValueError) as exc:
-            problems.append(f"sources: not writable as JSON: {exc}")
+        problems += _check_json("sources", sources)
     return problems
+
+
+def _check_json(where: str, value: Any) -> list[str]:
+    """What keeps `value` from being JSON that dumps() writes: a key that is
+    not a string (JSON's keys are, and sort_keys cannot order mixed ones), a
+    NaN or infinity, a value no JSON type holds."""
+    if isinstance(value, dict):
+        out = [f"{where}: key {k!r} is not a string" for k in value if not isinstance(k, str)]
+        for k, v in value.items():
+            if isinstance(k, str):
+                out += _check_json(f"{where}.{k}", v)
+        return out
+    if isinstance(value, (list, tuple)):
+        return [p for i, v in enumerate(value) for p in _check_json(f"{where}[{i}]", v)]
+    if isinstance(value, float) and not math.isfinite(value):
+        return [f"{where}: not writable as JSON: {value!r}"]
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return []
+    return [f"{where}: not writable as JSON: a {type(value).__name__}"]
 
 
 def _check_record(where: str, d: dict[str, Any], cls: type) -> list[str]:
@@ -378,8 +394,12 @@ def _check_value(where: str, value: Any, hint: Any, name: str) -> list[str]:
         ok = isinstance(value, int) and not isinstance(value, bool)
         return [] if ok else [f"{where}: an integer is required"]
     if hint is float:
-        ok = (isinstance(value, (int, float)) and not isinstance(value, bool)
-              and math.isfinite(value))
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool)
+        try:
+            # an integer too big for a float (10**400) overflows here
+            ok = ok and math.isfinite(value)
+        except OverflowError:
+            ok = False
         return [] if ok else [f"{where}: a finite number is required"]
     if hint is str:
         return [] if isinstance(value, str) else [f"{where}: a string is required"]
