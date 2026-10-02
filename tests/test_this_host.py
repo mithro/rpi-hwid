@@ -241,3 +241,87 @@ def test_host_and_input_go_with_this_host(tmp_path):
         labels.main(["--data", str(tmp_path), "--host", "x"])
     with pytest.raises(SystemExit):
         labels.main(["--data", str(tmp_path), "--this-host"])
+
+
+# --- the Pi facts fpgas-verify read at boot (contract 29) -------------------------
+
+def _with_boot_pi(monkeypatch, pi):
+    doc = dict(json.loads(GOLDEN.read_text()), pi=pi)
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {
+        "read": fpga.identity_parse(json.dumps(doc))[0], "error": None, "document": doc})
+
+
+def test_the_boot_scans_header_fills_what_this_read_left_unread(host, monkeypatch):
+    """At boot the user bus was scanned and the header read bare, with a PoE
+    HAT (B) powering it; on demand it was not, so the header is null and the
+    power class undetermined. The boot reading settles both, and the Pi's
+    document then matches the site's, which has the same boot event."""
+    import shutil
+
+    shutil.rmtree(host / "proc/device-tree/hat")        # nothing the ID bus names
+    boot = _boot_reading(host)
+    boot.update(header=["Waveshare PoE HAT (B)"], power_class="gpio-poe-hat")
+    _with_boot_pi(monkeypatch, dict(
+        {k: v for k, v in boot.items() if v is not None and k not in ("fpga", "tinytapeout")},
+        read_at="2026-10-03T00:00:00+00:00"))
+    doc = this_host.label_input_document("pi-sw2-p48")
+    assert doc["summary"]["header"] == ["Waveshare PoE HAT (B)"]
+    assert doc["summary"]["power_class"] == "gpio-poe-hat"
+    assert doc["sources"]["pi_from_boot"] == {
+        "fields": ["power_class", "header"], "read_at": "2026-10-03T00:00:00+00:00"}
+    assert label_input.missing(doc)["board"] == []
+    assert label_input.comparable(_site(boot, SITE_PI_FIELDS)) == label_input.comparable(doc)
+
+
+def test_a_value_read_here_is_never_replaced_by_the_boots(host, monkeypatch):
+    _with_boot_pi(monkeypatch, {"header": ["Something Else"], "serial": "0000000000000000",
+                                "power_class": "usbc-supply", "read_at": "x"})
+    doc = this_host.label_input_document("pi-sw2-p48")
+    assert doc["summary"]["header"] == ["Waveshare PoE M.2 HAT+ (B)"]
+    assert doc["summary"]["serial"] == "c36b093f773d46b8"
+    assert "pi_from_boot" not in doc["sources"]
+
+
+def test_no_boot_pi_is_todays_behaviour(host):
+    doc = this_host.label_input_document("pi-sw2-p48")
+    assert "pi_from_boot" not in doc["sources"]
+
+
+# --- fpgas-verify installed, and failing (contract 30) ----------------------------
+
+FAILED = "fpgas-verify printed nothing (stderr: sudo: a password is required)"
+
+
+@pytest.fixture
+def failing(host, monkeypatch):
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {
+        "read": [], "error": FAILED, "document": None})
+    return host
+
+
+def test_a_failing_fpgas_verify_leaves_the_boards_unknown_not_empty(failing):
+    doc = this_host.label_input_document("pi-sw2-p48")
+    assert doc["summary"]["fpga"] is None
+    assert doc["summary"]["tinytapeout"] is None
+    assert doc["sources"]["fpgas_verify_error"] == FAILED
+    assert doc["sources"]["fpga_sysfs"] == ["acorn"]    # passive facts, recorded only
+    need = label_input.missing(doc)
+    assert need["fpga"] == ["fpga"]
+    assert need["tinytapeout"] == ["tinytapeout"]
+
+
+def test_labels_this_host_refuses_the_fpga_labels_and_says_why(failing, capsys):
+    assert labels.main(["--this-host", "--host", "pi-sw2-p48", "--list", "--only", "fpga"]) == 1
+    err = capsys.readouterr().err
+    assert "the FPGA and Tiny Tapeout boards are not known" in err
+    assert FAILED in err
+    # the Pi's own label still comes out
+    assert labels.main(["--this-host", "--host", "pi-sw2-p48", "--list", "--only", "rpi"]) == 0
+
+
+def test_a_document_with_its_boards_unknown_is_refused_from_data_too(failing, tmp_path):
+    (tmp_path / "pi-sw2-p48.json").write_text(
+        label_input.dumps(this_host.label_input_document("pi-sw2-p48")))
+    with pytest.raises(labels.MissingFieldsError, match="the fpga label needs fpga"):
+        labels.main(["--data", str(tmp_path), "--list", "--only", "fpga"])
+    assert labels.main(["--data", str(tmp_path), "--check", "--only", "fpga"]) == 1
