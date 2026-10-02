@@ -154,6 +154,34 @@ so its wired MAC sits on the Pi's own label and not on a dongle's — the port i
 recognised by carrying a MAC the board derives from its own serial, which a real
 removable adapter never does.
 
+### The camera mark
+
+A board with a camera on a CSI port carries a small camera in the corner beside
+the title, next to the fan and clock marks, one for each camera:
+
+| On the mark | Means |
+|---|---|
+| the letters on the camera's body | which camera: `v1` (ov5647), `v2` (imx219), `v3` (imx708), `HQ` (imx477), `GS` (imx296, global shutter), `AI` (imx500). Any other sensor is called by its driver's name, `imx290` |
+| `AF`, upper line beside it | a lens driver chip was found: the camera focuses itself |
+| `fixed`, in the same place | one was looked for and is not there |
+| neither word | nobody could look. A missing word is not `fixed` |
+| `wide`, `NoIR`, `wide NoIR`, lower line | what a Camera Module 3 says of its own lens and filter; no other camera can say |
+| `65°`, `120°`, `160°`, lower line | the lens's field of view, where a person supplied it. Nothing on a camera reports it, so the probe never does |
+
+A second camera goes under the first, on the subtitle's line, and the subtitle
+shrinks to leave it room; a third and fourth start another column. One camera
+beside a name already too long for its line (a Compute Module) drops to the
+subtitle's line as well, so the name is never cut short for it. A board with no
+camera, or one nobody looked at, carries no mark and no words about it.
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/camera-icons-zoom.png" alt="The title band of labels for fake boards, one for each thing a camera mark can say" width="98%">
+</p>
+
+The boards in that picture do not exist, and their labels say so (`uv run
+docs/examples/render_cameras.py` draws it, and `camera-icons.png`, the same
+labels whole).
+
 ## Orange Pi
 
 The same layout, band for band, with the Orange Pi orange in the raspberry's box.
