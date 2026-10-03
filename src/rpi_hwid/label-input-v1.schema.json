@@ -18,6 +18,50 @@
   "summary": {
    "additionalProperties": false,
    "properties": {
+    "cameras": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "autofocus": {
+        "type": [
+         "boolean",
+         "null"
+        ]
+       },
+       "fov": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "lens": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "sensor": {
+        "type": [
+         "string"
+        ]
+       },
+       "variant": {
+        "type": [
+         "string",
+         "null"
+        ]
+       }
+      },
+      "required": [
+       "sensor"
+      ],
+      "type": "object"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
     "compatible": {
      "type": [
       "string",
