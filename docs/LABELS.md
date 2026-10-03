@@ -170,7 +170,10 @@ the title, next to the fan and clock marks, one for each camera:
 A second camera goes under the first, on the subtitle's line, and the subtitle
 shrinks to leave it room; a third and fourth start another column. One camera
 beside a name already too long for its line (a Compute Module) drops to the
-subtitle's line as well, so the name is never cut short for it. A board with no
+subtitle's line as well, so the name is never cut short for it. Marks that
+would still cut the title or the subtitle short (wordy marks on a Compute
+Module, two marks with a supplied angle, three wordy marks) refuse the label
+(`CameraMarkDoesNotFitError`) rather than print it with an ellipsis. A board with no
 camera, or whose cameras nobody looked for (the `--pi-only` read), carries no
 mark and no words about it.
 
