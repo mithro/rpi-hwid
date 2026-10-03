@@ -263,6 +263,14 @@ def test_two_cameras_are_listed_in_bus_order(host):
         "ov5647", "imx219"]
 
 
+def test_bus_order_is_by_number_not_by_name(host):
+    a = client(host.root, "10-001a", "imx708", "imx708")
+    b = client(host.root, "4-0010", "imx219", "imx219")
+    subdev(host.root, 2, "imx708 10-001a", a)
+    subdev(host.root, 5, "imx219 4-0010", b)
+    assert [c["bus"] for c in probe.collect_cameras()] == [4, 10]
+
+
 def test_a_board_with_no_camera_has_an_empty_list_and_runs_nothing(host):
     assert probe.collect_cameras() == []
     assert probe.camera_summary([]) == []

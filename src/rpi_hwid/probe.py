@@ -750,8 +750,12 @@ finally:
 def i2c_clients():
     """Every I2C client the kernel knows, by slot ("10-0036"), with the
     driver bound to it."""
+    def slot_order(path):           # bus number, then address: 4-0010 before 10-001a
+        bus, addr = os.path.basename(path).split("-")
+        return int(bus), int(addr, 16)
     out = []
-    for path in sorted(glob.glob(ROOT + "/sys/bus/i2c/devices/*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]")):
+    for path in sorted(glob.glob(ROOT + "/sys/bus/i2c/devices/*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]"),
+                       key=slot_order):
         try:
             driver = os.path.basename(os.readlink(path + "/driver"))
         except OSError:
