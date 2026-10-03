@@ -41,7 +41,7 @@ ZERO_W = ("Raspberry Pi Zero W Rev 1.1", "9000c1")
 CM5 = ("Raspberry Pi Compute Module 5 Rev 1.0", "c04180")
 
 
-def cam(sensor, autofocus=None, variant=None, fov=None):
+def cam(sensor, autofocus=False, variant=None, fov=None):
     return {"sensor": sensor, "variant": variant, "autofocus": autofocus, "lens": None,
             "fov": fov}
 
@@ -54,7 +54,6 @@ SAMPLES = [
     ("v1, no lens driver: fixed focus is not printed", PI5, False, False,
      [cam("ov5647", False)]),
     ("v1, autofocus", PI5, False, False, [cam("ov5647", True)]),
-    ("v1, autofocus not known: same as fixed", PI5, False, False, [cam("ov5647")]),
     ("v1, 65° lens supplied", PI5, False, False, [cam("ov5647", False, fov=65)]),
     ("v1, 120° lens supplied", PI5, False, False, [cam("ov5647", False, fov=120)]),
     ("v1, 160° lens supplied", PI5, False, False, [cam("ov5647", False, fov=160)]),
