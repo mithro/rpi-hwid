@@ -32,7 +32,8 @@ def identity_board(b: dict[str, Any]) -> dict[str, Any]:
     fpga-board-identified event: the FpgaBoard fields fpgas-verify fills
     (fpga.IDENTITY_FIELDS), and a DNA it read recorded as its reading
     (dna_sources, fpga.merge_dna; contract 32)."""
-    board = {k: b[k] for k in fpga.IDENTITY_FIELDS if b.get(k) is not None}
+    # as fpga_summary: an empty string is not a reading
+    board = {k: b[k] for k in fpga.IDENTITY_FIELDS if b.get(k) not in (None, "")}
     if board.get("dna"):
         fpga.merge_dna(board, board.pop("dna"))
     return board
