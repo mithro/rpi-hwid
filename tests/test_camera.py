@@ -168,6 +168,39 @@ def test_a_read_that_could_not_be_made_settles_nothing(host):
     assert cam["lens_probe"]["result"].startswith("unread")
 
 
+def run_reader(monkeypatch, capsys, error):
+    """The root reader itself, with the read failing with `error`."""
+    import errno
+    import fcntl
+
+    def ioctl(fd, request, arg):
+        raise OSError(getattr(errno, error), os.strerror(getattr(errno, error)))
+    monkeypatch.setattr(os, "open", lambda path, flags: 99)
+    monkeypatch.setattr(os, "close", lambda fd: None)
+    monkeypatch.setattr(fcntl, "ioctl", ioctl)
+    monkeypatch.setattr("sys.argv", ["-c", "10", "0x0c"])
+    exec(probe.LENS_READER, {})
+    return capsys.readouterr().out.strip()
+
+
+@pytest.mark.parametrize("error", ["ENXIO", "EREMOTEIO"])
+def test_only_an_address_nak_is_silence(monkeypatch, capsys, error):
+    assert run_reader(monkeypatch, capsys, error) == "LENS=nak"
+
+
+@pytest.mark.parametrize("error", ["ETIMEDOUT", "EAGAIN", "EIO"])
+def test_a_bus_fault_is_not_silence(monkeypatch, capsys, error):
+    """A timeout or a stuck bus says nothing about the lens: unread, so a
+    powered camera's autofocus stays unknown rather than false."""
+    out = run_reader(monkeypatch, capsys, error)
+    assert out.startswith("ERROR=")
+    assert os.strerror(getattr(__import__("errno"), error)) in out
+
+
+def test_an_owned_address_is_not_silence(monkeypatch, capsys):
+    assert run_reader(monkeypatch, capsys, "EBUSY") == "ERROR=address owned by a kernel driver"
+
+
 def test_the_module_that_makes_the_bus_readable_is_put_back(host):
     v1(host)
     probe.collect_cameras()

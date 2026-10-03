@@ -734,7 +734,14 @@ try:
     os.read(fd, 1)
     print("LENS=ack")
 except (OSError, IOError) as e:
-    print("ERROR=address owned by a kernel driver" if e.errno == 16 else "LENS=nak")
+    # only a NAK (ENXIO, EREMOTEIO) is silence; a timeout or a stuck bus
+    # says nothing about the lens
+    if e.errno in (6, 121):
+        print("LENS=nak")
+    elif e.errno == 16:
+        print("ERROR=address owned by a kernel driver")
+    else:
+        print("ERROR=%s" % e.strerror)
 finally:
     os.close(fd)
 '''
