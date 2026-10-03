@@ -130,6 +130,23 @@ def _boot_reading(host):
     return boot["summary"]
 
 
+# site #42's FPGA_FIELDS: the FpgaBoard fields fpgas-verify fills
+SITE_FPGA_FIELDS = ("kind", "serial", "dna", "idcode", "flash", "flash_jedec",
+                    "flash_extended_id", "flash_sfdp", "flash_uid", "flash_uid_bits",
+                    "flash_uid_state", "flash_uid_note", "flash_error", "flash_source",
+                    "soc_model")
+
+
+def _site_board(b):
+    """An fpga-board-identified event's board as the site records it: its
+    FPGA_FIELDS, none left out, and a DNA recorded as fpgas-verify's reading
+    (contract 32)."""
+    record = {k: b[k] for k in SITE_FPGA_FIELDS if k in b and b[k] is not None}
+    if record.get("dna"):
+        record["dna_sources"] = ["fpgas-verify"]
+    return record
+
+
 def _site(boot, fields):
     summary = {k: boot[k] for k in REGISTRATION if boot.get(k)}
     summary["macs"] = [{"kind": m["kind"], "mac": m["mac"], "signal": None}
@@ -137,8 +154,7 @@ def _site(boot, fields):
     details = _event(boot, fields)
     summary.update({k: _typed(v, fields[k]) for k, v in details.items()})
     summary.setdefault("header", None)
-    summary["fpga"] = [{k: v for k, v in b.items() if k in label_input.FPGA_FIELDS}
-                       for b in json.loads(GOLDEN.read_text())["boards"]
+    summary["fpga"] = [_site_board(b) for b in json.loads(GOLDEN.read_text())["boards"]
                        if b["kind"] != "tt"]
     sources = {"collected_by": "fpgas.online-site", "registration": "fp",
                "pi-identified": "boot 2026-10-02T00:00:00Z", "fpga-board-identified": "boot"}
@@ -193,7 +209,8 @@ def test_a_netv2_only_host_asks_fpgas_verify(host, monkeypatch):
 
 def test_fpgas_verifys_boards_alone_and_as_it_gave_them(host, monkeypatch):
     """A board only sysfs sees here (a Cynthion on USB) is one the site
-    cannot see; and no merge here adds a field fpgas-verify did not send."""
+    cannot see; and no merge here adds a field fpgas-verify did not send --
+    only who read its DNA (contract 32)."""
     monkeypatch.setattr(fpga, "cynthion_devices", lambda: [
         {"path": "1-1.1", "id": "1d50:615b", "serial": "267125df30c460de",
          "bcd_device": "0104", "product": "Cynthion"}])
@@ -201,7 +218,22 @@ def test_fpgas_verifys_boards_alone_and_as_it_gave_them(host, monkeypatch):
     (board,) = doc["summary"]["fpga"]
     golden = json.loads(GOLDEN.read_text())["boards"][0]
     assert board == label_input.load(label_input.build("h", {"fpga": [
-        {k: v for k, v in golden.items() if k in label_input.FPGA_FIELDS}]}))["summary"]["fpga"][0]
+        dict({k: v for k, v in golden.items() if k in label_input.FPGA_FIELDS},
+             dna_sources=["fpgas-verify"])]}))["summary"]["fpga"][0]
+
+
+def test_fields_fpgas_verify_does_not_fill_are_not_taken(host, monkeypatch):
+    """FpgaBoard fields outside fpga.IDENTITY_FIELDS are not taken from the
+    document: identity_parse drops them, and so does the site."""
+    acorn = json.loads(GOLDEN.read_text())["boards"][0]
+    doc = json.loads(GOLDEN.read_text())
+    doc["boards"] = [dict(acorn, dna_sources=["jtag"], dna_agree=True, gateware="4.14",
+                          mode="analyzer")]
+    monkeypatch.setattr(fpga, "identity_probe", lambda boards=1: {
+        "read": fpga.identity_parse(json.dumps(doc))[0], "error": None, "document": doc})
+    (board,) = this_host.label_input_document("pi-sw2-p48")["summary"]["fpga"]
+    assert board["dna_sources"] == ["fpgas-verify"]
+    assert [board[k] for k in ("dna_agree", "gateware", "mode")] == [None, None, None]
 
 
 def test_without_fpgas_verify_the_fpga_module_says_what_is_there(host, monkeypatch):
@@ -384,3 +416,36 @@ def test_a_document_with_its_boards_unknown_is_refused_from_data_too(failing, tm
     with pytest.raises(labels.MissingFieldsError, match="the fpga label needs fpga"):
         labels.main(["--data", str(tmp_path), "--list", "--only", "fpga"])
     assert labels.main(["--data", str(tmp_path), "--check", "--only", "fpga"]) == 1
+
+
+# --- the same boards as the merge path builds them (contract 32) ----------------
+
+NETV2_NO_DNA = {"board": "netv2", "kind": "netv2", "variant": "a7-100", "idcode": "0x13631093"}
+
+
+def _merged(doc):
+    """fpgas-verify's boards as rpi-hwid's merge path puts them in a summary
+    (identity_parse, merge_identity, fpga_summary) -- how the site's
+    comparison test (fpgas.online-site tests/test_fleet_hwid_compare.py)
+    builds its Pi side. A board on PCIe is one sysfs shows there."""
+    read, _ = fpga.identity_parse(json.dumps(doc))
+    boards = [{"kind": r["kind"], "slot": r["bdf"]} for r in read if r.get("bdf")]
+    assert fpga.merge_identity(boards, read) == []
+    return fpga.fpga_summary(boards)
+
+
+@pytest.mark.parametrize("extra", [(), (NETV2_NO_DNA,)], ids=["acorn-with-dna", "no-dna"])
+def test_this_host_and_the_merge_path_give_the_same_boards(host, monkeypatch, extra):
+    """A board whose DNA fpgas-verify read has dna_sources ["fpgas-verify"]
+    both ways, as merge_dna records it and the site sets it (contract 32);
+    one without a DNA has none either way."""
+    doc = json.loads(GOLDEN.read_text())
+    if extra:
+        _identity_only(monkeypatch, host, *extra)
+        doc["boards"] = list(extra)
+    pi_doc = this_host.label_input_document("pi-sw2-p48")
+    merged = label_input.build("pi-sw2-p48", dict(pi_doc["summary"], fpga=_merged(doc)),
+                               pi_doc["sources"])
+    assert label_input.comparable(pi_doc) == label_input.comparable(merged)
+    want = [] if extra else ["fpgas-verify"]
+    assert [b["dna_sources"] for b in label_input.load(pi_doc)["summary"]["fpga"]] == [want]

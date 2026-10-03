@@ -26,10 +26,23 @@ from typing import Any
 from rpi_hwid import cli, fpga, label_input, tinytapeout
 
 
+def identity_board(b: dict[str, Any]) -> dict[str, Any]:
+    """One board of fpgas-verify's document as the merge path puts it in a
+    summary (fpga.merge_identity, fpga_summary) and the site does from its
+    fpga-board-identified event: the FpgaBoard fields fpgas-verify fills
+    (fpga.IDENTITY_FIELDS), and a DNA it read recorded as its reading
+    (dna_sources, fpga.merge_dna; contract 32)."""
+    # as fpga_summary: an empty string is not a reading
+    board = {k: b[k] for k in fpga.IDENTITY_FIELDS if b.get(k) not in (None, "")}
+    if board.get("dna"):
+        fpga.merge_dna(board, board.pop("dna"))
+    return board
+
+
 def identity_boards(found: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """fpgas-verify's FPGA boards as its document gave them, reduced to
-    FpgaBoard's fields; None when it is not installed or did not answer
-    with a document this reads."""
+    """fpgas-verify's FPGA boards as its document gave them (identity_board);
+    None when it is not installed or did not answer with a document this
+    reads."""
     fv = found.get("fpgas_verify") or {}
     doc = fv.get("document")
     if not isinstance(doc, dict) or doc.get("schema") != fpga.IDENTITY_SCHEMA:
@@ -37,8 +50,7 @@ def identity_boards(found: dict[str, Any]) -> list[dict[str, Any]] | None:
     version = doc.get("identity_version")
     if type(version) is not int or version != fpga.IDENTITY_VERSION:
         return None
-    return [{k: b[k] for k in label_input.FPGA_FIELDS if b.get(k) is not None}
-            for b in doc.get("boards") or ()
+    return [identity_board(b) for b in doc.get("boards") or ()
             if isinstance(b, dict) and b.get("kind") in fpga.IDENTITY_KINDS]
 
 
