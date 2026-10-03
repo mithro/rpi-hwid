@@ -49,6 +49,7 @@ import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import segno
 from reportlab.lib.colors import HexColor, black
@@ -63,6 +64,9 @@ from rpi_hwid import names as naming
 from rpi_hwid import tinytapeout as tt_data
 from rpi_hwid.collect import load_collected
 from rpi_hwid.revision import derived_wlan_mac
+
+if TYPE_CHECKING:
+    from rpi_hwid.model import Camera
 
 PACKAGE_ARTWORK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "artwork")
 # The caller's artwork directory, for the context this render runs in: a
@@ -490,6 +494,99 @@ def mark_clock(lab, x, y, size):
     c.setLineWidth(1)
 
 
+# What Raspberry Pi calls the camera module each sensor is sold in. Third
+# parties put the same sensors on their own boards (an Arducam ov5647 is a
+# "v1" with a different lens), and the name still says what software sees.
+CAMERA_GENERATION = {"ov5647": "v1", "imx219": "v2", "imx708": "v3",
+                     "imx477": "HQ", "imx296": "GS", "imx500": "AI"}
+# A Camera Module 3 says which of its four builds it is; "NoIR" is cased as
+# it is on the module's own box.
+CAMERA_VARIANT = {"wide": "wide", "noir": "NoIR", "wide_noir": "wide NoIR"}
+
+
+def camera_generation(sensor):
+    """The name a person knows a camera by: "v1", "HQ". A sensor that is in
+    no Raspberry Pi module keeps its driver's name, which can be looked up."""
+    return CAMERA_GENERATION.get(sensor, sensor)
+
+
+def camera_words(cam):
+    """What a camera's mark says, as (generation, focus, optics).
+
+    Focus is "AF" where a lens driver was found, and None otherwise. Fixed
+    focus is what a camera is assumed to have, so it is not said, and the
+    mark claims a motor only where one answered. A camera nobody could ask
+    never gets here: board_record refuses it (CameraNotReadError). Optics
+    is the Camera Module 3's own account of its lens and filter, then the
+    lens angle a person supplied; None when there is neither. The lens
+    driver's name is evidence for the document and is never printed.
+    """
+    focus = "AF" if cam.autofocus else None
+    optics = []
+    if cam.variant:
+        optics.append(CAMERA_VARIANT.get(cam.variant, cam.variant.replace("_", " ")))
+    if cam.fov:
+        optics.append("%d°" % cam.fov)
+    return camera_generation(cam.sensor), focus, " ".join(optics) or None
+
+
+def camera_layout(lab, cam, size):
+    """The measurements `mark_camera` and `camera_width` share for a mark
+    `size` high: the generation's type size and the body's width, then the
+    words' type size and the width of the longer of their two lines."""
+    gen, focus, optics = camera_words(cam)
+    gen_size, word_size = size * 0.68, size * 0.58
+    pad, lens = size * 0.16, size * 0.27
+    body_w = pad + 2 * lens + pad + lab.width(gen, SANS_BOLD, gen_size) + pad
+    words_w = max(lab.width(w, SANS_BOLD, word_size) for w in (focus or "", optics or ""))
+    return gen_size, body_w, word_size, words_w
+
+
+def camera_width(lab, cam, size):
+    """The width `mark_camera` takes for `cam`: the title is told to leave
+    it, so it is measured before anything is drawn."""
+    _gen_size, body_w, _word_size, words_w = camera_layout(lab, cam, size)
+    return body_w + (size * 0.22 + words_w if words_w else 0)
+
+
+def mark_camera(lab, cam, x, y, size):
+    """A camera with its generation lettered on its body, and beside it what
+    else is known: the focus on the upper line, the optics on the lower.
+
+    The outline is a pocket camera, a lens in a body with a shutter button,
+    because that is the picture that means "camera" at two millimetres; a
+    drawing of the module itself is a square with a dot in it. The
+    generation is the one thing every camera has, so it is inside the
+    outline and black, and the mark is whole without the words beside it.
+    Each word keeps its own line whether or not the other is there, so
+    "AF" is never found where "wide" would be.
+    """
+    c = lab.c
+    gen, focus, optics = camera_words(cam)
+    gen_size, body_w, word_size, _words_w = camera_layout(lab, cam, size)
+    pad, lens = size * 0.16, size * 0.27
+    body_h = size * 0.86
+    px, py = lab.pt(x, y + size)
+    c.setStrokeColor(GREY)
+    c.setFillColor(GREY)
+    c.setLineWidth(size * 0.07)
+    c.roundRect(px, py, body_w, body_h, size * 0.12, stroke=1, fill=0)
+    c.rect(px + pad, py + body_h, lens * 1.2, size * 0.12, stroke=0, fill=1)   # shutter button
+    cx, cy = px + pad + lens, py + body_h / 2
+    c.circle(cx, cy, lens, stroke=1, fill=0)
+    c.circle(cx, cy, size * 0.09, stroke=0, fill=1)
+    c.setStrokeColor(black)
+    c.setFillColor(black)
+    c.setLineWidth(1)
+    lab.text(x + pad + 2 * lens + pad, y + size - body_h / 2 - gen_size * 0.36, gen,
+             SANS_BOLD, gen_size)
+    wx = x + body_w + size * 0.22
+    if focus:
+        lab.text(wx, y, focus, SANS_BOLD, word_size, color=GREY)
+    if optics:
+        lab.text(wx, y + size - word_size * 0.72, optics, SANS_BOLD, word_size, color=GREY)
+
+
 def mark_rj45(lab, x, y, height):
     """An 8P8C jack outline: the body, the latch tab, eight contacts."""
     c = lab.c
@@ -730,17 +827,58 @@ def draw_board_columns(lab, b, x):
     icons = [m for m, on in ((mark_fan, b.fan), (mark_clock, b.rtc_battery)) if on]
     icon, icon_gap = 2.6 * mm, 1.1 * mm
     icons_w = len(icons) * icon + max(0, len(icons) - 1) * icon_gap
-    ix = LABEL_W - PAD - icons_w
+
+    # The cameras on the CSI ports go in the same corner, right of those
+    # two, one mark each at the icons' height. A mark with its words is
+    # several icons wide, so a second camera (a Pi 5 has two ports) goes
+    # under the first and not beside it: the title band is two marks deep,
+    # and that room comes out of the subtitle's line and not the title's.
+    # Cameras past two start another column, for a multiplexer board.
+    # Nothing is drawn for no cameras, found or never looked for.
+    cams = b.cameras or ()
+    cam_cols = [cams[i:i + 2] for i in range(0, len(cams), 2)]
+    col_ws = [max(camera_width(lab, cam, icon) for cam in col) for col in cam_cols]
+    cams_w = sum(col_ws) + max(0, len(col_ws) - 1) * icon_gap
+    corner_w = cams_w + (icon_gap if cams and icons else 0) + icons_w
+
+    # A lone camera beside a name that is already long ("Raspberry Pi
+    # Compute Module 5") would shrink it past reading or cut it short, so
+    # there it drops to the subtitle's line, under the fan and clock, and the
+    # title keeps the room it has on a board with no camera.
+    cam_row = 0
+    if len(cams) == 1 and lab.fitted_size(b.title, SANS_BOLD, 11,
+                                          head_w - corner_w - 1.5 * mm) < 7:
+        cam_row, corner_w = 1, icons_w
+
+    # the title gives up the room the icons take, rather than running under
+    # them. The subtitle gives up room only to a camera on the second row,
+    # which is all that reaches down to its line; it may then go a point
+    # smaller than elsewhere. A mark that would still cut either short is
+    # refused: an ellipsis there is a label with a fact missing.
+    title_w = head_w - (corner_w + 1.5 * mm if corner_w else 0)
+    sub_w, sub_min = head_w, 5.5
+    if cam_row or len(cams) > 1:
+        sub_w, sub_min = head_w - cams_w - 1.5 * mm, 4.5
+    if cams and (lab.width(b.title, SANS_BOLD, 5.5) > title_w
+                 or lab.width(b.subtitle, SANS, sub_min) > sub_w):
+        raise CameraMarkDoesNotFitError(
+            "%s: the camera marks (%s) leave the %s no room for its name or "
+            "revision code, which would be cut short" % (
+                b.host, ", ".join(" ".join(w for w in camera_words(c) if w) for c in cams),
+                b.title))
+
+    ix = LABEL_W - PAD - corner_w
     for draw in icons:
         draw(lab, ix, y + 0.2 * mm, icon)
         ix += icon + icon_gap
+    cx = LABEL_W - PAD - cams_w
+    for cam_col, cam_col_w in zip(cam_cols, col_ws, strict=True):
+        for row, cam in enumerate(cam_col, cam_row):
+            mark_camera(lab, cam, cx, y + 0.2 * mm + row * (icon + 0.6 * mm), icon)
+        cx += cam_col_w + icon_gap
 
-    # the title gives up the room the icons take, rather than running under
-    # them: lab.fit shrinks and then ellipsises, so a long name degrades
-    # gracefully instead of colliding.
-    title_w = head_w - (icons_w + 1.5 * mm if icons else 0)
     lab.fit(head_x, y, b.title, SANS_BOLD, 11, title_w)
-    lab.fit(head_x, y + 4.6 * mm, b.subtitle, SANS, 6.5, head_w)
+    lab.fit(head_x, y + 4.6 * mm, b.subtitle, SANS, 6.5, sub_w, min_size=sub_min)
 
     # HAT band: the HAT line, then the uuid line centred in the rest of the
     # band (regular weight: bold mono at 6 pt fills in under toner). Every
@@ -1369,6 +1507,20 @@ def refuse_missing(host, key, needs):
                 host, key, ", ".join(fields)))
 
 
+class CameraNotReadError(Exception):
+    """A camera reached the label generator with its autofocus unsettled.
+
+    The same rule as HeaderNotReadError: the mark prints "AF" only for a
+    motor that answered, so a camera nobody could ask would be drawn as fixed
+    focus, a reading that was never made.
+    """
+
+
+class CameraMarkDoesNotFitError(Exception):
+    """A board's camera marks would leave its title or subtitle too little
+    room, so one of them would be printed cut short."""
+
+
 class FlashNotReadError(Exception):
     """A board reached the label generator without its flash facts.
 
@@ -1501,6 +1653,9 @@ class BoardLabel:
     # that cannot answer is never drawn as one that answered "no".
     fan: bool | None = None
     rtc_battery: bool | None = None
+    # The CSI cameras, as the summary has them: None where nobody looked,
+    # empty where somebody did and found none.
+    cameras: tuple[Camera, ...] | None = None
     # RISC-V only: the ISA string and the line under it (harts, MMU, the
     # board's PCB and BOM revisions), drawn where a Pi's HAT rows are.
     isa: str | None = None
@@ -1509,6 +1664,7 @@ class BoardLabel:
     # PC has no HAT header to report on.
     maker: str | None = None
     maker_mark: str | None = None
+    host: str | None = None          # for a refusal's message
 
 
 @dataclass(frozen=True)
@@ -1604,6 +1760,14 @@ def board_record(doc):
             "HAT the board wears, or that it wears none. Read it with "
             "`rpi-hwid probe` on that host (a label input's `header` is null: "
             "not read)." % doc.host)
+    unsettled = [c.sensor for c in s.cameras or () if c.autofocus is None]
+    if unsettled:
+        # A mark without "AF" says fixed focus, and nobody could look.
+        raise CameraNotReadError(
+            "%s: the probe could not tell whether the %s camera has a focus motor, "
+            "so the label would claim it has none. Collect again with the camera "
+            "powered (streaming) and passwordless sudo for the lens read." % (
+                doc.host, ", ".join(unsettled)))
     macs = [(m.kind, m.mac) for m in s.macs if m.kind in ("eth", "wlan")]
     rv = None
     if ident.kind == "riscv":
@@ -1643,13 +1807,14 @@ def board_record(doc):
     order = {"eth": 0, "wlan": 1}
     macs.sort(key=lambda m: order[m[0]])
     return BoardLabel(
+        host=doc.host,
         kind=ident.kind, short=ident.short, title=ident.title, subtitle=ident.subtitle,
         mark=ident.mark, serial=s.serial, memory=ident.memory, macs=tuple(macs),
         header=tuple(s.header or ()), hat_uuid=s.hat_uuid,
         eth_note="no wired port" if ident.wired is False
         else "none found" if ident.kind == "x86" else None,
         wlan_note=wlan_note,
-        fan=s.fan, rtc_battery=s.rtc_battery,
+        fan=s.fan, rtc_battery=s.rtc_battery, cameras=s.cameras,
         isa=rv.isa if rv else None, riscv_line=rv.line if rv else None,
         maker=ident.maker, maker_mark=ident.maker_mark,
     )
