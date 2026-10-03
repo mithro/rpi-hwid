@@ -68,6 +68,13 @@ def test_what_it_brings_up_on_the_id_bus_it_puts_back(pi5):
     assert not (root / "dev/i2c-0").exists(), "left as it was found"
 
 
+def test_the_cameras_are_not_looked_for(pi5, monkeypatch):
+    """The site's pi-identified event carries no cameras (contract 13), so
+    the two documents agree only if this one has none either: not read."""
+    monkeypatch.setattr(probe, "collect_cameras", lambda: pytest.fail("cameras probed"))
+    assert cli.pi_only_label_input("p48")["summary"]["cameras"] is None
+
+
 def test_it_writes_the_pi_facts_and_nothing_of_the_boards(pi5):
     doc = cli.pi_only_label_input("p48")
     s = doc["summary"]

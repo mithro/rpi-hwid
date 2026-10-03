@@ -15,6 +15,7 @@ modules for boards attached to the Pi. For installing and running it, see the
 | Pi 5 `max_current` | the firmware's USB-C verdict: 5000 after a PD contract, **3000 both for a 3 A resistor source and for no USB-C source at all** (a HAT on the GPIO 5 V pins), 1500 or 900 for a resistor source advertising that much, so 900/1500 proves an external USB-C supply |
 | Pi 5 PMIC ADC | 5 V input (GPIO-fed HATs 5.1–5.4 V, splitters 4.8–5.0 V) and the RTC cell (about 3 V fitted, under 0.01 V not) |
 | Pi 5 `cooling_fan` node | a fan on the Pi's own header |
+| camera sensor drivers | the CSI cameras the kernel bound, and whether a lens driver sits beside each: see [Cameras](#cameras) |
 | interface drivers | soldered-down (SoC Ethernet, SDIO radio, the 3B+'s LAN7800) versus removable USB adapters, which are listed with their descriptors |
 | a MAC the board derives from its own serial | the port is the board's own and which one it is, whatever bus it sits on. Every Pi up to the 3B reaches Ethernet through a soldered USB chip (LAN9512/9514, `smsc95xx`) that also serves removable dongles, so the driver cannot say and the MAC can |
 | throttle flags | under-voltage now or since boot: all a 3B+, Zero or Pi 4 can say about its supply |
@@ -67,6 +68,57 @@ does not:
 The switch-side 802.3af class narrows the ambiguous cases (the bonnet is class 3,
 the M.2 HAT+ (B) class 4, an af-only HAT is never class 4), but that is read from
 the switch, not the Pi, so it is outside this package.
+
+## Cameras
+
+A CSI camera is known by the sensor driver the kernel bound to it, and by
+nothing else. The summary's `cameras` lists each one:
+
+| field | from | values |
+|---|---|---|
+| `sensor` | the driver bound to the sensor's I2C address | `ov5647` (the v1 camera), `imx219` (v2), `imx708` (Camera Module 3), `imx477` (HQ), `imx296` (Global Shutter), … |
+| `variant` | the name the driver gives its subdevice | `wide`, `noir`, `wide_noir` on a Camera Module 3, whose driver reads the module's own memory; `null` on every other sensor |
+| `autofocus` | a lens driver chip on the sensor's bus | `true`, `false`, or `null` where it could not be settled |
+| `lens` | what showed the lens driver | the kernel driver's name (`ad5398`, `dw9807`), or `0x0c` where a chip answers with no driver |
+
+`cameras` is `[]` when no sensor is bound, and `null` in the summary of
+evidence collected before the probe looked. A camera the firmware did not detect at boot
+(`camera_auto_detect=1`), or one with no overlay, has no driver and is not seen.
+A USB camera is not a CSI camera and is not listed.
+
+What the lens is cannot be read. A wide-angle or fisheye lens, or a missing IR
+filter, on a v1, v2, HQ or Global Shutter camera is optics: the sensor is the
+same part and nothing on the bus differs. Only the Camera Module 3 says, and
+only where its memory was programmed, so a plain `imx708` is the standard lens
+or an unprogrammed module.
+
+Autofocus is settled in this order:
+
+1. **A lens driver the kernel bound** on the sensor's bus (a Camera Module 3
+   always; a third-party module with `dtoverlay=ov5647,vcm`). Nothing is read:
+   the address belongs to the driver. The `ad5398` driver binds without talking
+   to the chip, so this shows what the boot config says, not that a chip
+   answered.
+2. **A chip answering at `0x0c`** with no driver, which is where every lens
+   driver the Pi overlays know sits. One byte is read, as root, never written;
+   `i2c-dev` is loaded for the read where it is not loaded, and unloaded after.
+   An answer is `autofocus: true`.
+3. **Silence at `0x0c`** is `autofocus: false` only while the sensor is powered
+   (its runtime status is `active`, as it is while a stream runs). A lens
+   driver fed from the sensor's supply is off when the sensor is, so silence
+   from an idle camera is `null`.
+
+Which lens driver chip it is cannot be read either: the common ones (AD5398,
+DW9714) have no ID register.
+
+Four cameras at Welland, 2026-10-02:
+
+```
+  evidence: camera: ov5647 on i2c-10; a lens driver chip answers at 0x0c, with no kernel driver
+  evidence: camera: ov5647 on i2c-10; no lens driver at 0x0c
+  evidence: camera: ov5647 on i2c-10; lens driver ad5398 bound
+  evidence: camera: none bound
+```
 
 ## Orange Pi
 

@@ -696,6 +696,185 @@ def user_bus_scan(bus, enable=None):
         close_bus(undo)
 
 
+# --- CSI cameras ----------------------------------------------------------------
+#
+# A camera is known to software by its sensor and nothing else: the driver
+# the kernel bound to the sensor's I2C address. That names the generation
+# (ov5647 the v1, imx219 the v2, imx708 the Camera Module 3, imx477 the HQ)
+# and says nothing of the lens in front of it, with one exception: the imx708
+# driver reads the module's own memory and names its subdevice after what it
+# finds (imx708_wide, imx708_noir, imx708_wide_noir). A wide or fisheye lens,
+# or a missing IR filter, on any other sensor is optics, and is on no bus.
+#
+# Autofocus is a second chip, the lens's driver, on the sensor's bus. Where
+# the device tree names it (a Camera Module 3 always; a third-party module
+# with dtoverlay=<sensor>,vcm) the kernel binds a driver to it and that is
+# the answer. Where it does not -- pi-sw2-p47's autofocus v1 under
+# camera_auto_detect=1, 2026-10-02 -- nothing in the kernel knows the lens is
+# there, but the chip still answers a read at its address, 0x0c, which is
+# where every lens driver the Pi overlays know sits. Which chip it is cannot
+# be read: the common ones have no id register.
+SENSOR_DRIVER = re.compile(r"^(arducam|(ov|imx|s5k|gc|hm|og|ar|mt9[a-z])[0-9])")
+LENS_DRIVER = re.compile(r"^(ad5398|dw97|dw98|ak73|lc898)")
+LENS_ADDR = 0x0C
+
+# Run as root, like the other readers that need a device node a login cannot
+# open: one byte read from one address, which is what `i2cdetect -r` does and
+# cannot disturb a lens driver, whose only register is the position it is
+# already holding. Never a write, and never an address a driver owns.
+LENS_READER = r'''
+import fcntl, os, sys
+bus, addr = int(sys.argv[1]), int(sys.argv[2], 16)
+try:
+    fd = os.open("/dev/i2c-%d" % bus, os.O_RDWR)
+except OSError as e:
+    print("ERROR=cannot open /dev/i2c-%d: %s" % (bus, e.strerror)); sys.exit(0)
+try:
+    fcntl.ioctl(fd, 0x0703, addr)
+    os.read(fd, 1)
+    print("LENS=ack")
+except (OSError, IOError) as e:
+    # only a NAK (ENXIO, EREMOTEIO) is silence; a timeout or a stuck bus
+    # says nothing about the lens
+    if e.errno in (6, 121):
+        print("LENS=nak")
+    elif e.errno == 16:
+        print("ERROR=address owned by a kernel driver")
+    else:
+        print("ERROR=%s" % e.strerror)
+finally:
+    os.close(fd)
+'''
+
+
+def i2c_clients():
+    """Every I2C client the kernel knows, by slot ("10-0036"), with the
+    driver bound to it."""
+    def slot_order(path):           # bus number, then address: 4-0010 before 10-001a
+        bus, addr = os.path.basename(path).split("-")
+        return int(bus), int(addr, 16)
+    out = []
+    for path in sorted(glob.glob(ROOT + "/sys/bus/i2c/devices/*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f]"),
+                       key=slot_order):
+        try:
+            driver = os.path.basename(os.readlink(path + "/driver"))
+        except OSError:
+            driver = None
+        out.append({"slot": os.path.basename(path), "name": read(path + "/name"),
+                    "driver": driver,
+                    "lens_focus": os.path.exists(path + "/of_node/lens-focus"),
+                    "power": read(path + "/power/runtime_status")})
+    return out
+
+
+def v4l_subdevs():
+    """{slot: name} for each V4L subdevice an I2C client registered."""
+    names = {}
+    for path in glob.glob(ROOT + "/sys/class/video4linux/v4l-subdev*"):
+        try:
+            slot = os.path.basename(os.readlink(path + "/device"))
+        except OSError:
+            continue
+        names[slot] = read(path + "/name")
+    return names
+
+
+def lens_chip_probe(bus):
+    """Whether anything answers at the lens address on `bus`: "ack", "nak",
+    or "unread: why". Loads i2c-dev for the read where it is not loaded, and
+    takes it out again."""
+    loaded = os.path.exists(ROOT + "/sys/module/i2c_dev")
+    if not loaded:
+        sh(I2C_DEV_LOAD)
+        # the module makes the node through udev, which is slow; only worth
+        # waiting for where the adapter is there to get one (as open_bus)
+        adapter = os.path.exists(ROOT + "/sys/bus/i2c/devices/i2c-%d" % bus)
+        wait_for(ROOT + "/dev/i2c-%d" % bus, BUS_SETTLE_S if adapter else 0)
+    out = sh(["sudo", sys.executable or "python3", "-c", LENS_READER,
+              str(bus), "0x%02x" % LENS_ADDR])
+    if not loaded:
+        sh(I2C_DEV_UNLOAD)
+    m = re.search(r"LENS=(ack|nak)", out)
+    if m:
+        return m.group(1)
+    err = re.search(r"ERROR=(.*)", out)
+    return "unread: " + (err.group(1).strip() if err else "the reader printed nothing")
+
+
+def collect_cameras():
+    """The CSI cameras the kernel bound, in bus order, each with the lens
+    driver beside it where there is one."""
+    clients = i2c_clients()
+    subdevs = v4l_subdevs()
+    cams = []
+    for c in clients:
+        if not c["driver"] or not SENSOR_DRIVER.match(c["driver"]):
+            continue
+        bus = int(c["slot"].split("-")[0])
+        # the driver's own name for the module, where it has one to give
+        named = (subdevs.get(c["slot"]) or "").split(" ")[0]
+        variant = named[len(c["driver"]) + 1:] if named.startswith(c["driver"] + "_") else None
+        lens = [o["driver"] for o in clients
+                if o["slot"].startswith("%d-" % bus) and o["driver"]
+                and LENS_DRIVER.match(o["driver"])]
+        cam = {"slot": c["slot"], "bus": bus, "sensor": c["driver"], "subdev": named or None,
+               "variant": variant or None, "power": c["power"],
+               "lens_focus": c["lens_focus"], "lens_driver": lens[0] if lens else None,
+               "lens_probe": None}
+        if not lens:
+            # no driver owns the lens address, so it can be asked directly
+            cam["lens_probe"] = {"addr": "0x%02x" % LENS_ADDR, "result": lens_chip_probe(bus)}
+        cams.append(cam)
+    return cams
+
+
+def camera_autofocus(cam):
+    """(autofocus, lens) for one camera: True with the driver or the address
+    that shows it, False only where a powered camera's bus was read and was
+    silent, None where nothing settles it."""
+    if cam["lens_driver"]:
+        return True, cam["lens_driver"]
+    result = (cam["lens_probe"] or {}).get("result")
+    if result == "ack":
+        return True, cam["lens_probe"]["addr"]
+    # A lens driver fed from the sensor's supply is off while the sensor is,
+    # so silence means "no lens driver" only on a sensor that is running.
+    if result == "nak" and cam["power"] == "active":
+        return False, None
+    return None, None
+
+
+def camera_evidence(cam):
+    """One line for the verdict: the camera, and what settled its autofocus."""
+    lens = cam["lens_probe"] or {}
+    result = lens.get("result")
+    if cam["lens_driver"]:
+        why = "lens driver %s bound" % cam["lens_driver"]
+    elif result == "ack":
+        why = "a lens driver chip answers at %s, with no kernel driver" % lens["addr"]
+    elif result == "nak" and cam["power"] == "active":
+        why = "no lens driver at %s" % lens["addr"]
+    elif result == "nak":
+        why = ("nothing at %s, but the sensor is not powered (%s), so a lens driver "
+               "could not have answered" % (lens["addr"], cam["power"]))
+    else:
+        why = "lens address %s" % result
+    return "camera: %s on i2c-%d; %s" % (cam["subdev"] or cam["sensor"], cam["bus"], why)
+
+
+def camera_summary(cams):
+    """The cameras in the summary's shape, or None for evidence gathered
+    before the probe looked for any."""
+    if cams is None:
+        return None
+    out = []
+    for cam in cams:
+        autofocus, lens = camera_autofocus(cam)
+        out.append({"sensor": cam["sensor"], "variant": cam["variant"],
+                    "autofocus": autofocus, "lens": lens})
+    return out
+
+
 # Soldered-down wired ports: the Pi's own controllers (macb on a Pi 5,
 # bcmgenet on a Pi 4, the 3B+'s LAN7800), the Allwinner H3's dwmac-sun8i,
 # and stmmaceth, the name the generic DesignWare MAC platform driver
@@ -1013,7 +1192,7 @@ def riscv_summary(rv):
 
 # --- collect ------------------------------------------------------------------
 
-def collect(user_bus=True):
+def collect(user_bus=True, cameras=True):
     """Everything the probe reads, as the evidence document.
 
     `user_bus=False` leaves the header's user bus (pins 3/5, GPIO2/3 on a
@@ -1022,7 +1201,10 @@ def collect(user_bus=True):
     Acorn's J5 is on GPIO3, a Pmod HAT's lines are on the header), so a
     probe made while that board may be in use must not drive them. A HAT
     known only by the devices it puts there then goes unseen, and the
-    evidence says that bus was not read."""
+    evidence says that bus was not read.
+
+    `cameras=False` does not look for the CSI cameras, which the summary
+    then gives as not read (null)."""
     d = {}
     d["model"] = read(ROOT + "/proc/device-tree/model") or ""
     compatible = dt_strings(ROOT + "/proc/device-tree/compatible")
@@ -1105,6 +1287,8 @@ def collect(user_bus=True):
     d["undervoltage_since_boot"] = bool(t & 0x10000) if t is not None else None
     d["interfaces"] = net_interfaces(d["serial"], pci_onboard=d["board"] == "x86")
     d["usb_net"] = usb_net_adapters(d["interfaces"])
+    if cameras:
+        d["cameras"] = collect_cameras()
     pi5 = "Pi 5" in d["model"]
     d["pi5"] = pi5
     if pi5:
@@ -1240,6 +1424,12 @@ def verdict(d):
         ev.append("power port: throttled=%s%s%s" % (
             d["throttled"], ", under-voltage NOW" if d["undervoltage_now"] else "",
             ", under-voltage since boot" if d["undervoltage_since_boot"] else ""))
+    if d.get("cameras") is not None:
+        ev.extend(camera_evidence(cam) for cam in d["cameras"])
+        if not d["cameras"]:
+            # only what the kernel bound: a camera its firmware did not
+            # detect, or one with no overlay, is not seen here at all
+            ev.append("camera: none bound")
     # "Nothing on the header" and "the header could not be read" are
     # different answers and only one of them rules a HAT out, so a bus that
     # stayed shut is said out loud rather than passed off as an empty one.
@@ -1342,6 +1532,9 @@ def summary(d, header, power):
         # on a device-tree board, which carries its identity in the fields above.
         "dmi": d.get("dmi"),
         "cpu": (d.get("cpu") or {}).get("model") if d.get("dmi") else None,
+        # The CSI cameras the kernel bound; None on evidence from before the
+        # probe looked for any.
+        "cameras": camera_summary(d.get("cameras")),
     }
 
 

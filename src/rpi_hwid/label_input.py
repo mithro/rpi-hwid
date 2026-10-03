@@ -36,7 +36,15 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from rpi_hwid.model import FpgaBoard, Mac, ProbeDocument, Summary, TinyTapeoutBoard, UsbNetAdapter
+from rpi_hwid.model import (
+    Camera,
+    FpgaBoard,
+    Mac,
+    ProbeDocument,
+    Summary,
+    TinyTapeoutBoard,
+    UsbNetAdapter,
+)
 
 SCHEMA = "rpi-hwid/label-input"
 VERSION = 1
@@ -88,6 +96,7 @@ ABSENT_IS_UNREAD = ("header",)
 # The records each list in `summary` holds.
 ITEM_TYPES: dict[str, type] = {
     "fpga": FpgaBoard, "tinytapeout": TinyTapeoutBoard, "macs": Mac, "usb_net": UsbNetAdapter,
+    "cameras": Camera,
 }
 
 

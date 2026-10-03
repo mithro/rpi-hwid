@@ -134,6 +134,28 @@ class TinyTapeoutBoard:
 
 
 @dataclass(frozen=True)
+class Camera:
+    """A CSI camera the board's kernel bound, by its sensor."""
+
+    sensor: str                    # the sensor chip, as its driver names it: "ov5647"
+    # What the module's own memory says of its optics: "wide", "noir" or
+    # "wide_noir" on a Camera Module 3. None on every sensor that cannot say,
+    # which is not a claim that the lens is the standard one.
+    variant: str | None = None
+    # Whether a lens driver chip sits beside the sensor. None when it could
+    # not be looked for: an unbound chip answers only while the sensor is
+    # powered.
+    autofocus: bool | None = None
+    # The lens driver: its kernel driver's name where one is bound
+    # ("dw9807"), the address a chip answered at where none is ("0x0c").
+    lens: str | None = None
+    # The lens's field of view in degrees (65, 120 and 160 are the common
+    # lenses on a v1 module). Nothing on the camera reports it, so the probe
+    # never sets it: it is there for a value a person supplies.
+    fov: int | None = None
+
+
+@dataclass(frozen=True)
 class Summary:
     """The probe's fixed-shape verdict for one board: a Raspberry Pi, or
     another single-board computer the probe knows (an Orange Pi PC), which
@@ -168,6 +190,9 @@ class Summary:
     # name. None on every device-tree board.
     dmi: dict[str, Any] | None = None
     cpu: str | None = None
+    # The CSI cameras the kernel bound. None where nobody looked (a document
+    # from before the probe did); empty where it looked and found none.
+    cameras: tuple[Camera, ...] | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any], partial: bool = False) -> Summary:
@@ -200,6 +225,8 @@ class Summary:
             max_current_ma=d.get("max_current_ma"), ext5v_v=d.get("ext5v_v"),
             riscv=d.get("riscv"),
             dmi=d.get("dmi"), cpu=d.get("cpu"),
+            cameras=(None if d.get("cameras") is None
+                     else tuple(Camera(**c) for c in d["cameras"])),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -209,6 +236,8 @@ class Summary:
         # nested tuples too, or the document does not round-trip through JSON
         for board in d["fpga"]:
             board["dna_sources"] = list(board["dna_sources"])
+        if d["cameras"] is not None:
+            d["cameras"] = list(d["cameras"])
         return d
 
 

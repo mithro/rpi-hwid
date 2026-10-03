@@ -105,6 +105,7 @@ fixed-shape `summary` everything else in the package consumes.
                {"kind": "wlan", "mac": "b8:27:eb:02:a3:24"}],
       "usb_net": [],
       "rtc_battery": null, "fan": null, "max_current_ma": null, "ext5v_v": null,
+      "cameras": [],
       "fpga": []
     }
   }
@@ -117,9 +118,12 @@ removable adapters with their descriptors, `fpga` the boards the FPGA module
 found, `tinytapeout` the demo boards the Tiny Tapeout module found (present only
 when that module ran), `hat_uuid` the EEPROM's UUID when one was read,
 `compatible` the device tree's compatible list and `memory` the fitted RAM
-(MemTotal rounded up to the size that was soldered on). The Pi 5-only fields are
-`null` elsewhere. Everything outside `verdict` is evidence, kept so a wrong
-verdict can be argued with.
+(MemTotal rounded up to the size that was soldered on). `cameras` is the CSI
+cameras the kernel bound, each with its `sensor`, `variant`, `autofocus` and
+`lens` (see [PROBE.md](PROBE.md#cameras)); a document collected before the probe
+looked for them has `"cameras": null`. The Pi 5-only fields are `null`
+elsewhere. Everything outside `verdict` is evidence, kept so a wrong verdict
+can be argued with.
 
 `rpi-hwid labels --data` also reads [label input documents](LABEL-INPUT.md):
 the same `summary`, versioned and checked, for a builder other than the probe.

@@ -45,7 +45,7 @@ filled in, as the rules below say.)
 | `schema` | always `"rpi-hwid/label-input"` |
 | `version` | the integer `1`. A reader refuses anything else (`2`, `1.0`, `true`, `"1"`): a version it was not taught is not read hopefully. |
 | `host` | the host the labels are for, a non-empty string |
-| `summary` | the facts, under the field names of `rpi_hwid.model.Summary` verbatim; its `fpga`, `tinytapeout`, `macs` and `usb_net` lists hold `FpgaBoard`, `TinyTapeoutBoard`, `Mac` and `UsbNetAdapter` records, again by their field names. [COLLECT.md](COLLECT.md#the-document) describes each field. |
+| `summary` | the facts, under the field names of `rpi_hwid.model.Summary` verbatim; its `fpga`, `tinytapeout`, `macs`, `usb_net` and `cameras` lists hold `FpgaBoard`, `TinyTapeoutBoard`, `Mac`, `UsbNetAdapter` and `Camera` records, again by their field names. [COLLECT.md](COLLECT.md#the-document) describes each field. |
 | `sources` | provenance, free-form: any keys, any JSON values, not compared and read by no label. rpi-hwid writes, per summary field, who read it (`rpi-hwid`, or `fpgas-verify` for the FPGA boards); the site writes its own (its event names, say). |
 
 The rules:
@@ -156,7 +156,8 @@ $ sudo rpi-hwid label-input --pi-only [--user-bus] [--host NAME]
 The Pi's facts (model, serial, revision, memory, MACs, the HAT, the power
 class, and on a Pi 5 the fan, the RTC battery and the PMIC's readings) as a
 label input on stdout, with `fpga` and `tinytapeout` empty: nothing probed
-them. fpgas-verify runs it once at boot, before it takes any board's lock,
+them. `cameras` is null, not looked for: the `pi-identified` event carries
+no cameras, and the two documents must agree. fpgas-verify runs it once at boot, before it takes any board's lock,
 and sends the summary to the fpgas.online site in its `pi-identified` event,
 so it is made to be safe while a board under test is wired to the header.
 `--host` defaults to this host's name.

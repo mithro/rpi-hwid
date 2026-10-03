@@ -331,6 +331,7 @@ def test_collect_walks_the_tree(fake_root):
     assert d["rtc_batt_v"] == pytest.approx(3.26)
     assert d["fan_dt"] == "okay"
     assert d["fan_rpm"] == 2471
+    assert d["cameras"] == []           # looked, and this tree has none
     assert d["hat_fw"] is None
     assert d["hat_eeproms"] == {}
     assert d["header_i2c"] is None
