@@ -514,9 +514,9 @@ def camera_words(cam):
     """What a camera's mark says, as (generation, focus, optics).
 
     Focus is "AF" where a lens driver was found, and None otherwise. Fixed
-    focus is what a camera is assumed to have, so it is not said: a lens
-    driver looked for and not there, and one nobody could look for, print the
-    same nothing, and the mark claims a motor only where one answered. Optics
+    focus is what a camera is assumed to have, so it is not said, and the
+    mark claims a motor only where one answered. A camera nobody could ask
+    never gets here: board_record refuses it (CameraNotReadError). Optics
     is the Camera Module 3's own account of its lens and filter, then the
     lens angle a person supplied; None when there is neither. The lens
     driver's name is evidence for the document and is never printed.
@@ -1501,6 +1501,15 @@ def refuse_missing(host, key, needs):
                 host, key, ", ".join(fields)))
 
 
+class CameraNotReadError(Exception):
+    """A camera reached the label generator with its autofocus unsettled.
+
+    The same rule as HeaderNotReadError: the mark prints "AF" only for a
+    motor that answered, so a camera nobody could ask would be drawn as fixed
+    focus, a reading that was never made.
+    """
+
+
 class FlashNotReadError(Exception):
     """A board reached the label generator without its flash facts.
 
@@ -1739,6 +1748,14 @@ def board_record(doc):
             "HAT the board wears, or that it wears none. Read it with "
             "`rpi-hwid probe` on that host (a label input's `header` is null: "
             "not read)." % doc.host)
+    unsettled = [c.sensor for c in s.cameras or () if c.autofocus is None]
+    if unsettled:
+        # A mark without "AF" says fixed focus, and nobody could look.
+        raise CameraNotReadError(
+            "%s: the probe could not tell whether the %s camera has a focus motor, "
+            "so the label would claim it has none. Collect again with the camera "
+            "powered (streaming) and passwordless sudo for the lens read." % (
+                doc.host, ", ".join(unsettled)))
     macs = [(m.kind, m.mac) for m in s.macs if m.kind in ("eth", "wlan")]
     rv = None
     if ident.kind == "riscv":

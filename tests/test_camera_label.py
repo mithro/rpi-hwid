@@ -47,7 +47,8 @@ def test_a_sensor_is_named_by_its_camera_generation(sensor, generation):
     # fixed focus is what a camera is assumed to have, so it is not said
     (Camera("ov5647", autofocus=False), ("v1", None, None)),
     (Camera("ov5647", autofocus=True, lens="0x0c"), ("v1", "AF", None)),
-    # nobody could look for a lens driver: the same assumption, the same mark
+    # nobody could look for a lens driver: the same words (board_record
+    # refuses such a camera before any are drawn)
     (Camera("ov5647"), ("v1", None, None)),
     (Camera("ov5647", autofocus=False, fov=65), ("v1", None, "65°")),
     (Camera("ov5647", autofocus=False, fov=120), ("v1", None, "120°")),
@@ -72,7 +73,7 @@ def test_fixed_focus_is_never_printed(docs, tmp_path, monkeypatch):
     real_text = labels.Label.text
     monkeypatch.setattr(labels.Label, "text", lambda self, x, y, s, *a, **k: (
         said.append(s), real_text(self, x, y, s, *a, **k))[1])
-    render(docs, tmp_path, (Camera("ov5647", autofocus=False), Camera("imx477")))
+    render(docs, tmp_path, (Camera("ov5647", autofocus=False), Camera("imx477", autofocus=False)))
     assert {"v1", "HQ"} <= set(said)
     assert not [s for s in said if "fixed" in s.lower() or "AF" in s]
 
@@ -97,7 +98,7 @@ def test_board_record_carries_the_cameras(docs):
 @pytest.mark.parametrize("cameras", [
     (Camera("ov5647", autofocus=False),),
     (Camera("imx708", variant="wide", autofocus=True),),
-    (Camera("imx708", variant="noir", autofocus=True), Camera("ov5647", fov=160)),
+    (Camera("imx708", variant="noir", autofocus=True), Camera("ov5647", autofocus=False, fov=160)),
 ])
 def test_one_mark_is_drawn_for_each_camera(docs, tmp_path, monkeypatch, cameras):
     drawn = []
@@ -301,9 +302,9 @@ def test_a_mark_is_as_wide_as_what_it_says(docs, tmp_path):
 def test_every_kind_of_camera_renders(docs, tmp_path):
     """The real drawing code, unpatched, over each thing it can be asked for."""
     cameras = [
-        Camera("ov5647"), Camera("ov5647", autofocus=False), Camera("ov5647", autofocus=True),
+        Camera("ov5647", autofocus=False), Camera("ov5647", autofocus=True),
         Camera("ov5647", autofocus=False, fov=160),
-        Camera("imx708", variant="wide_noir", autofocus=True), Camera("imx477"),
+        Camera("imx708", variant="wide_noir", autofocus=True), Camera("imx477", autofocus=False),
         Camera("imx290", autofocus=False),
     ]
     for cam in cameras:
@@ -320,3 +321,18 @@ def test_the_words_are_set_on_the_label(docs, tmp_path, monkeypatch):
         said.append(s), real_text(self, x, y, s, *a, **k))[1])
     render(docs, tmp_path, (Camera("imx708", variant="wide_noir", autofocus=True),))
     assert {"v3", "AF", "wide NoIR"} <= set(said)
+
+
+# --- a lens nobody could look for is never drawn as fixed focus ----------------
+
+def test_a_camera_whose_focus_is_unknown_is_refused(docs, tmp_path):
+    """No "AF" would read as fixed focus, and nobody looked: the label is
+    refused, as an unread header or fan is."""
+    with pytest.raises(labels.CameraNotReadError, match=HOST + ".*focus motor"):
+        render(docs, tmp_path, (Camera("ov5647"),))
+
+
+def test_cameras_nobody_looked_for_draw_no_mark(docs, tmp_path):
+    """Optional: a document from before the probe looked, or the Pi-only
+    read, has none, and the label is the one it always was."""
+    render(docs, tmp_path, None)
