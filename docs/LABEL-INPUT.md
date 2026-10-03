@@ -45,7 +45,7 @@ filled in, as the rules below say.)
 | `schema` | always `"rpi-hwid/label-input"` |
 | `version` | the integer `1`. A reader refuses anything else (`2`, `1.0`, `true`, `"1"`): a version it was not taught is not read hopefully. |
 | `host` | the host the labels are for, a non-empty string |
-| `summary` | the facts, under the field names of `rpi_hwid.model.Summary` verbatim; its `fpga`, `tinytapeout`, `macs` and `usb_net` lists hold `FpgaBoard`, `TinyTapeoutBoard`, `Mac` and `UsbNetAdapter` records, again by their field names. [COLLECT.md](COLLECT.md#the-document) describes each field. |
+| `summary` | the facts, under the field names of `rpi_hwid.model.Summary` verbatim; its `fpga`, `tinytapeout`, `macs`, `usb_net` and `cameras` lists hold `FpgaBoard`, `TinyTapeoutBoard`, `Mac`, `UsbNetAdapter` and `Camera` records, again by their field names. [COLLECT.md](COLLECT.md#the-document) describes each field. |
 | `sources` | provenance, free-form: any keys, any JSON values, not compared and read by no label. rpi-hwid writes, per summary field, who read it (`rpi-hwid`, or `fpgas-verify` for the FPGA boards); the site writes its own (its event names, say). |
 
 The rules:
