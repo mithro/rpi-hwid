@@ -310,7 +310,7 @@ These stay in the document and on the labels as read.
 | a `tt` board without `usb_serial` | dropped | dropped, note "tinytapeout board without usb_serial: no label" |
 | a `tt` board no longer on USB | dropped, its serial listed in `sources.tinytapeout_not_on_usb` | kept (the site cannot see USB); an expected difference |
 | fpgas-verify installed but no document (sudo refused, timeout, nothing printed) | `fpga` and `tinytapeout` `null`, `sources.fpgas_verify_error` says why, `sources.fpga_sysfs` lists what sysfs saw; FPGA labels refused; `labels --this-host` exits 1 with the reason on stderr | |
-| a label short of a field | refused with the list; no "print anyway" | refused with the list; the page shows what each label is missing |
+| a label short of a field | refused with the list; no "print anyway" | to be refused with the list once the site renders labels ([gap 5](#known-gaps)); the page shows what each label is missing |
 
 Until fpgas-verify's `tt` dict carries `usb_serial` ([gap 4](#known-gaps)), both sides
 drop every Tiny Tapeout board.
@@ -339,7 +339,7 @@ Where the code on `main` (2026-10-03) does not yet do what this page says.
 
 | # | rule | what the code does today | being fixed in |
 |---|---|---|---|
-| 1 | `dna_sources` is `["fpgas-verify"]` on both sides for a DNA from fpgas-verify | rpi-hwid's `this_host.identity_boards` leaves it `[]`; the site sets `["fpgas-verify"]` (`hwid.py`). `comparable()` keeps it, so the two documents differ for any board with a DNA. The site's comparison test builds its Pi side with `fpga.merge_identity` / `fpga_summary`, which do set it, so the test does not see this. | rpi-hwid, branch `this-host-dna-sources` |
+| 1 | `dna_sources` is `["fpgas-verify"]` on both sides for a DNA from fpgas-verify | rpi-hwid's `this_host.identity_boards` leaves it `[]`; the site sets `["fpgas-verify"]` (`hwid.py`). `comparable()` keeps it, so the two documents differ for any board with a DNA. The site's comparison test builds its Pi side with `fpga.merge_identity` / `fpga_summary`, which do set it, so the test does not see this. | rpi-hwid [#74](https://github.com/mithro/rpi-hwid/pull/74) |
 | 2 | fpgas-verify runs `rpi-hwid label-input --pi-only [--user-bus]` at boot and sends `pi-identified` (`pi-identity/1`); `--identify` carries a `"pi"` object; each setup's wiring says whether GPIO2/3 are safe for I2C | none of it: no `pi-identified` event, no `--pi-only` call, no `"pi"` object, no wiring flag | fpgas-verify ([#76](https://github.com/fpgas-online/fpgas.online-test-designs/issues/76)) |
 | 3 | `--identify` takes the fields only the boot check reads (the Arty's and NeTV2's flash) from the boot report (`from_report`) | supplies nothing: the Arty/NeTV2 boot report's identity has only how the board was found and its IDCODE fields; the boot flash readback goes into the report's `state`, not its identity | fpgas-verify #76, the Arty/NeTV2 flash PR |
 | 4 | each board kind carries its label fields | Arty and NeTV2: no DNA, no flash identity (so `--identify` exits 1 for them). TT: no `TinyTapeoutBoard` fields (`usb_serial`, `mcu`, `chip`, `demoboard`, `demoboard_version`, `sdk`), so both sides drop every TT board. Acorn: no `flash_sfdp`. | fpgas-verify [#110](https://github.com/fpgas-online/fpgas.online-test-designs/pull/110) (Arty/NeTV2 DNA), [#109](https://github.com/fpgas-online/fpgas.online-test-designs/pull/109) (TT facts), [#107](https://github.com/fpgas-online/fpgas.online-test-designs/pull/107) (Acorn SFDP) |
