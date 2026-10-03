@@ -310,7 +310,7 @@ def test_every_kind_of_camera_renders(docs, tmp_path):
     for cam in cameras:
         render(docs, tmp_path, (cam,))
     render(docs, tmp_path, tuple(cameras[:2]))
-    render(docs, tmp_path, tuple(cameras[:3]))
+    render(docs, tmp_path, (cameras[0],) * 3)       # three plain marks fit
     assert (tmp_path / "camera.pdf").stat().st_size > 0
 
 
@@ -336,3 +336,39 @@ def test_cameras_nobody_looked_for_draw_no_mark(docs, tmp_path):
     """Optional: a document from before the probe looked, or the Pi-only
     read, has none, and the label is the one it always was."""
     render(docs, tmp_path, None)
+
+
+# --- a camera mark never costs the title or the revision code ------------------
+
+WIDE = Camera("imx708", variant="wide_noir", autofocus=True, fov=120)
+
+
+@pytest.mark.parametrize(("host", "cameras"), [
+    # a Compute Module's long name beside two wordy cameras
+    ("rpicm1-serial", (WIDE, Camera("imx219", autofocus=True))),
+    ("rpicm1-serial", (WIDE,)),
+    # a supplied angle makes the widest marks, which crowd the revision code
+    (HOST, (WIDE, WIDE)),
+    (HOST, (Camera("ov9281", variant="wide_noir", autofocus=True, fov=160),)),
+    # a third and fourth camera leave the title no room at all
+    (HOST, (WIDE, WIDE, WIDE)),
+])
+def test_marks_that_would_cut_the_title_or_subtitle_are_refused(docs, tmp_path, host, cameras):
+    """An ellipsis in the title or subtitle is a label with a fact missing:
+    refused, like any other."""
+    with pytest.raises(labels.CameraMarkDoesNotFitError, match=host):
+        render(docs, tmp_path, cameras, host=host)
+
+
+def test_what_is_drawn_is_never_cut(docs, tmp_path, monkeypatch):
+    said = []
+    real_text = labels.Label.text
+    monkeypatch.setattr(labels.Label, "text", lambda self, x, y, s, *a, **k: (
+        said.append(s), real_text(self, x, y, s, *a, **k))[1])
+    for cameras in ((Camera("ov5647", autofocus=True),),
+                    (Camera("ov5647", autofocus=True), Camera("ov5647", autofocus=False)),
+                    (Camera("imx708", variant="wide_noir", autofocus=True),
+                     Camera("imx708", variant="wide_noir", autofocus=True))):
+        render(docs, tmp_path, cameras)
+    render(docs, tmp_path, (Camera("imx219", autofocus=False),) * 2, host="rpicm1-serial")
+    assert not [s for s in said if "…" in s]

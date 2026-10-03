@@ -850,6 +850,23 @@ def draw_board_columns(lab, b, x):
                                           head_w - corner_w - 1.5 * mm) < 7:
         cam_row, corner_w = 1, icons_w
 
+    # the title gives up the room the icons take, rather than running under
+    # them. The subtitle gives up room only to a camera on the second row,
+    # which is all that reaches down to its line; it may then go a point
+    # smaller than elsewhere. A mark that would still cut either short is
+    # refused: an ellipsis there is a label with a fact missing.
+    title_w = head_w - (corner_w + 1.5 * mm if corner_w else 0)
+    sub_w, sub_min = head_w, 5.5
+    if cam_row or len(cams) > 1:
+        sub_w, sub_min = head_w - cams_w - 1.5 * mm, 4.5
+    if cams and (lab.width(b.title, SANS_BOLD, 5.5) > title_w
+                 or lab.width(b.subtitle, SANS, sub_min) > sub_w):
+        raise CameraMarkDoesNotFitError(
+            "%s: the camera marks (%s) leave the %s no room for its name or "
+            "revision code, which would be cut short" % (
+                b.host, ", ".join(" ".join(w for w in camera_words(c) if w) for c in cams),
+                b.title))
+
     ix = LABEL_W - PAD - corner_w
     for draw in icons:
         draw(lab, ix, y + 0.2 * mm, icon)
@@ -860,19 +877,8 @@ def draw_board_columns(lab, b, x):
             mark_camera(lab, cam, cx, y + 0.2 * mm + row * (icon + 0.6 * mm), icon)
         cx += cam_col_w + icon_gap
 
-    # the title gives up the room the icons take, rather than running under
-    # them: lab.fit shrinks and then ellipsises, so a long name degrades
-    # gracefully instead of colliding. The subtitle gives up room only to a
-    # camera on the second row, which is all that reaches down to its line;
-    # it may then go a point smaller than elsewhere, because the widest mark
-    # would otherwise cut the revision code off its end.
-    title_w = head_w - (corner_w + 1.5 * mm if corner_w else 0)
     lab.fit(head_x, y, b.title, SANS_BOLD, 11, title_w)
-    if cam_row or len(cams) > 1:
-        lab.fit(head_x, y + 4.6 * mm, b.subtitle, SANS, 6.5, head_w - cams_w - 1.5 * mm,
-                min_size=4.5)
-    else:
-        lab.fit(head_x, y + 4.6 * mm, b.subtitle, SANS, 6.5, head_w)
+    lab.fit(head_x, y + 4.6 * mm, b.subtitle, SANS, 6.5, sub_w, min_size=sub_min)
 
     # HAT band: the HAT line, then the uuid line centred in the rest of the
     # band (regular weight: bold mono at 6 pt fills in under toner). Every
@@ -1510,6 +1516,11 @@ class CameraNotReadError(Exception):
     """
 
 
+class CameraMarkDoesNotFitError(Exception):
+    """A board's camera marks would leave its title or subtitle too little
+    room, so one of them would be printed cut short."""
+
+
 class FlashNotReadError(Exception):
     """A board reached the label generator without its flash facts.
 
@@ -1653,6 +1664,7 @@ class BoardLabel:
     # PC has no HAT header to report on.
     maker: str | None = None
     maker_mark: str | None = None
+    host: str | None = None          # for a refusal's message
 
 
 @dataclass(frozen=True)
@@ -1795,6 +1807,7 @@ def board_record(doc):
     order = {"eth": 0, "wlan": 1}
     macs.sort(key=lambda m: order[m[0]])
     return BoardLabel(
+        host=doc.host,
         kind=ident.kind, short=ident.short, title=ident.title, subtitle=ident.subtitle,
         mark=ident.mark, serial=s.serial, memory=ident.memory, macs=tuple(macs),
         header=tuple(s.header or ()), hat_uuid=s.hat_uuid,
