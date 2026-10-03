@@ -11,12 +11,15 @@ How three tools pass label data between them, and which tool owns which part.
 ```
                    boot                          on demand
 fpgas-verify ── fpga-board-identified ──▶ site    fpgas-verify --identify ──▶ rpi-hwid labels --this-host
-             ── pi-identified ──────────▶ site                                       │
+             ── pi-identified ──────────▶ site  (not sent yet: gap 2)                │
                                             │                                        ▼
                                             ▼                             label input document (Pi)
                                  label input document (site)
-                         both compared with label_input.comparable(): they must be equal
+                         both compared with label_input.comparable(): they must be equal (gap 1)
 ```
+
+Where the code does not yet do what this page says, the text points to
+[Known gaps](#known-gaps) at the end.
 
 This page describes the code on each repository's `main` as of 2026-10-03.
 The detailed references are:
@@ -88,8 +91,10 @@ Acorn running the pcileech design) or `unknown-fpga`.
 | kind | fields |
 |---|---|
 | `acorn`, `pcileech` | `board`, `kind`, `variant`, `bdf`, the IDCODE fields, `dna` (PCIe BAR0, else JTAG) or `dna_error`, the flash fields read over BAR0 (`flash_source` `pcie`) or `flash_error`, `soc_model`, `identifier`, `build` |
-| `arty`, `netv2` | `board`, `kind`, `variant`, `serial`, `usb`, the IDCODE fields |
-| `tt`, `fomu` | `board`, `kind`, `variant`, `serial`, `usb` |
+| `arty` | `board`, `kind`, `variant`, `serial` (its FT2232's), `usb`, the IDCODE fields; DNA and flash identity not yet ([gap 4](#known-gaps)) |
+| `netv2` | `board`, `kind`, `variant`, the IDCODE fields, all from the JTAG scan that finds it (no `serial`, no `usb`); DNA and flash identity not yet ([gap 4](#known-gaps)) |
+| `tt` | `board`, `kind`, `variant`, `serial`, `usb`; to carry `TinyTapeoutBoard`'s fields (`usb_serial`, `mcu`, `chip`, `demoboard`, `demoboard_version`, `sdk`), not yet ([gap 4](#known-gaps)) |
+| `fomu` | `board`, `kind`, `variant`, `serial`, `usb` |
 
 An Acorn whose flash does not identify itself gets
 `flash_error` "the flash did not identify itself: ..." and fails its boot
@@ -126,7 +131,7 @@ Printed by `fpgas-verify --identify` (also with `--board B`), by each
 | exit status | 0 when every board's label fields were read and at least one board was found; otherwise 1, with each gap on stderr. Readers read the document and ignore the exit status. |
 | what is read live | only reads that do not disturb the board: IDCODE, the Acorn's DNA (BAR0, then JTAG) and its flash over BAR0 |
 | what is never done | anything that loads or reconfigures a board (for example spiOverJtag on an Arty or NeTV2) |
-| `from_report` | a field the live read cannot get is taken from the boot report, and its name listed in the board's `from_report`. A board matches a boot-report board only by the same `kind` and the same `serial` (Arty: FT2232 serial), `bdf` (Acorn: PCIe slot) or `dna`. An IDCODE names a part, not a board, so an IDCODE-only match is refused. |
+| `from_report` | a field the live read cannot get is taken from the boot report, and its name listed in the board's `from_report`. A board matches a boot-report board only by the same `kind` and the same `serial` (Arty: FT2232 serial), `bdf` (Acorn: PCIe slot) or `dna`. An IDCODE names a part, not a board, so an IDCODE-only match is refused. Today it supplies nothing ([gap 3](#known-gaps)). |
 | reasons a field stays missing | "no board-unique match in the boot report", "this board is not in the boot report", "board busy" |
 | board locks | waits at most 30 s for each board's lock, one board at a time; a board whose lock it cannot get is "board busy" |
 
@@ -137,7 +142,7 @@ Printed by `fpgas-verify --identify` (also with `--board B`), by each
 | within version 1 | fields may be added; readers ignore keys they do not know |
 | version 2 needed for | a rename, a removal, or a change of type or spelling of an existing field |
 | readers | refuse any `identity_version` other than the integer `1` (not `true`, not `1.0`) |
-| events | the same rule for the `fpga-identity` and `pi-identity` schemas |
+| events | the same rule for the `fpga-identity` and `pi-identity` schemas (`pi-identity` is not sent yet: [gap 2](#known-gaps)) |
 | rpi-hwid's label input | stricter: it refuses unknown keys, so a builder keeps only `label_input.FPGA_FIELDS`, `TT_FIELDS` and `PI_FIELDS` |
 
 ## 2. Nesting and soft dependencies
@@ -178,13 +183,14 @@ Counts as set only when non-empty, in both tools.
 | fpgas-verify never imports rpi-hwid | only runs its CLI, found with `shutil.which`; a test checks no module imports it |
 | fpgas-verify's deb | `Suggests: python3-rpi-hwid` |
 | fpgas-verify's Python extra | `labels = ["rpi-hwid[labels]; python_version >= '3.11'"]` |
-| rpi-hwid without fpgas-verify | reads FPGA boards passively from sysfs and its own FPGA module, as before |
+| rpi-hwid without fpgas-verify | reads FPGA boards passively from sysfs and its own FPGA module |
 | the site | depends on `rpi-hwid[labels]` directly (a hard dependency) |
 
 ## 3. The event encoding
 
 `fpga-board-identified` (one per board, `schema=fpga-identity/1`) and
-`pi-identified` (`schema=pi-identity/1`) carry flat `key=value` strings.
+`pi-identified` (`schema=pi-identity/1`; not sent yet, [gap 2](#known-gaps)) carry
+flat `key=value` strings.
 
 | value in the dict | in the event |
 |---|---|
@@ -193,7 +199,7 @@ Counts as set only when non-empty, in both tools.
 | a string | as it is |
 | an integer | decimal |
 | a boolean | `true` / `false` |
-| a list or object (`header`, `macs`, `usb_net`) | one key; `json.dumps(v, separators=(",", ":"), sort_keys=True)`; never indexed keys like `header0` |
+| a list or object (`header`, `macs`, `usb_net`: `pi-identified` fields, [gap 2](#known-gaps)) | one key; `json.dumps(v, separators=(",", ":"), sort_keys=True)`; never indexed keys like `header0` |
 | a list read empty | `[]`, never `-` |
 
 A site reading `-` for a list field treats it as not read (so the label is
@@ -232,14 +238,12 @@ Without `--user-bus`, a header with nothing found is `null` (not read).
 |---|---|
 | `--user-bus` | only at boot, before any test or board lock, and only where the setup's wiring says GPIO2/3 are safe for I2C then (an Acorn's J5 is on GPIO3) |
 | never on demand | `labels --this-host` and `fpgas-verify --label` never scan the user bus: others may be using the board |
-| `pi-identified` | the `--pi-only` summary under `Summary`'s field names, `schema=pi-identity/1`, encoded as in section 3; `macs` and `usb_net` as rpi-hwid's lists (`signal` included); `reader=none` when rpi-hwid is not installed |
+| `pi-identified` | the `--pi-only` summary under `Summary`'s field names, `schema=pi-identity/1`, encoded as in section 3; `macs` and `usb_net` as rpi-hwid's lists (`signal` included); `reader=none` when rpi-hwid is not installed. Not sent yet ([gap 2](#known-gaps)) |
 | boot facts in `--identify` | an optional `"pi"` object: the boot `pi-identified` facts, typed JSON, with `read_at`. `labels --this-host` uses each of its fields where its own read left `null`, or left `power_class` `undetermined` or `ambiguous`; it never replaces a value it read. The fields taken are listed in `sources.pi_from_boot` (with `read_at`). |
 
-**Not yet sent:** fpgas-verify does not yet run `--pi-only` at boot, send
-`pi-identified`, or write a `"pi"` object, and no setup's wiring has the
-safe-for-I2C flag. rpi-hwid and the site already read them where present;
-without them, `labels --this-host` uses its own read and the site notes "no
-usable pi-identified event from this Pi".
+None of this boot scan is done yet ([gap 2](#known-gaps)). rpi-hwid and the site
+already read its results where present; without them, `labels --this-host`
+uses its own read and the site notes "no usable pi-identified event from this Pi".
 
 ## 6. The label input document and the comparison
 
@@ -266,14 +270,14 @@ differ between two reads. Both rpi-hwid and the site test with it.
 |---|---|
 | `sources` | who read a field, not what it is |
 | `ext5v_v` | the PMIC's ADC, measured on each read |
-| `max_current_ma` | the USB-C current last negotiated |
+| `max_current_ma` | the USB-C current last negotiated; always left out, whether or not it was measured |
 | each MAC's `signal` | which evidence settled the MAC on that read |
 
 These stay in the document and on the labels as read.
 
 | what the site's document is compared with | |
 |---|---|
-| the target | what `rpi-hwid labels --this-host` builds on the Pi: the `--pi-only` facts plus fpgas-verify's identity |
+| the target | what `rpi-hwid labels --this-host` builds on the Pi: the `--pi-only` facts plus fpgas-verify's identity; the two must be equal under `comparable()` (today they differ for a board with a DNA: [gap 1](#known-gaps)) |
 | not the target | `rpi-hwid label-input --from` a full probe, which may read the user bus and differs by design |
 
 ### Python API (no hardware, no subprocess, no module-global state)
@@ -302,15 +306,14 @@ These stay in the document and on the labels as read.
 | fpgas-verify's extra fields | dropped (keeps `FPGA_FIELDS`, `TT_FIELDS`) | dropped |
 | an FPGA field read as none | dropped, so the default fills it | `-` dropped, so the default fills it |
 | FPGA kinds kept | `acorn`, `arty`, `netv2`, `pcileech`, `unknown-fpga` | every kind except `tt` and `fomu` |
-| `dna_sources` | left empty (`[]`) | `["fpgas-verify"]` when the event has a `dna` |
+| `dna_sources` | `["fpgas-verify"]` when the board's `dna` came from fpgas-verify (today left `[]`: [gap 1](#known-gaps)) | `["fpgas-verify"]` when the event has a `dna` |
 | a `tt` board without `usb_serial` | dropped | dropped, note "tinytapeout board without usb_serial: no label" |
 | a `tt` board no longer on USB | dropped, its serial listed in `sources.tinytapeout_not_on_usb` | kept (the site cannot see USB); an expected difference |
 | fpgas-verify installed but no document (sudo refused, timeout, nothing printed) | `fpga` and `tinytapeout` `null`, `sources.fpgas_verify_error` says why, `sources.fpga_sysfs` lists what sysfs saw; FPGA labels refused; `labels --this-host` exits 1 with the reason on stderr | |
-| a label short of a field | refused with the list; no "print anyway" | the page shows what each label is missing |
+| a label short of a field | refused with the list; no "print anyway" | refused with the list; the page shows what each label is missing |
 
-fpgas-verify's `tt` dict does not yet carry `usb_serial` or the other
-`TinyTapeoutBoard` fields (it carries `serial`), so both sides drop every
-Tiny Tapeout board for now.
+Until fpgas-verify's `tt` dict carries `usb_serial` ([gap 4](#known-gaps)), both sides
+drop every Tiny Tapeout board.
 
 ## 8. The site
 
@@ -327,5 +330,17 @@ Tiny Tapeout board for now.
 | bad event content | never fails a page: each event (and each board) is checked with `label_input.check`; one that is refused is dropped with a note naming the event and the problem, and the next older `pi-identified` is tried |
 | last guard | if the whole summary is still refused, only the registration is used, with a note |
 | download | `/fleet/<serial>/rpi-hwid.json` ([`views.label_input`](https://github.com/fpgas-online/fpgas.online-site/blob/main/fleet/src/fleet/views.py)): `label_input.dumps` of the document; 409 with the problems if rpi-hwid refuses it |
-| labels | the detail page shows `label_input.missing`; the site does not render label PDFs |
+| labels | rendered with `labels.render_sheet` / `labels.render_label` (not yet: [gap 5](#known-gaps)); the detail page shows `label_input.missing` |
 | tests | [`tests/test_fleet_hwid_compare.py`](https://github.com/fpgas-online/fpgas.online-site/blob/main/tests/test_fleet_hwid_compare.py) compares the site's document with an rpi-hwid-built one under `comparable` |
+
+## Known gaps
+
+Where the code on `main` (2026-10-03) does not yet do what this page says.
+
+| # | rule | what the code does today | being fixed in |
+|---|---|---|---|
+| 1 | `dna_sources` is `["fpgas-verify"]` on both sides for a DNA from fpgas-verify | rpi-hwid's `this_host.identity_boards` leaves it `[]`; the site sets `["fpgas-verify"]` (`hwid.py`). `comparable()` keeps it, so the two documents differ for any board with a DNA. The site's comparison test builds its Pi side with `fpga.merge_identity` / `fpga_summary`, which do set it, so the test does not see this. | rpi-hwid, branch `this-host-dna-sources` |
+| 2 | fpgas-verify runs `rpi-hwid label-input --pi-only [--user-bus]` at boot and sends `pi-identified` (`pi-identity/1`); `--identify` carries a `"pi"` object; each setup's wiring says whether GPIO2/3 are safe for I2C | none of it: no `pi-identified` event, no `--pi-only` call, no `"pi"` object, no wiring flag | fpgas-verify ([#76](https://github.com/fpgas-online/fpgas.online-test-designs/issues/76)) |
+| 3 | `--identify` takes the fields only the boot check reads (the Arty's and NeTV2's flash) from the boot report (`from_report`) | supplies nothing: the Arty/NeTV2 boot report's identity has only how the board was found and its IDCODE fields; the boot flash readback goes into the report's `state`, not its identity | fpgas-verify #76, the Arty/NeTV2 flash PR |
+| 4 | each board kind carries its label fields | Arty and NeTV2: no DNA, no flash identity (so `--identify` exits 1 for them). TT: no `TinyTapeoutBoard` fields (`usb_serial`, `mcu`, `chip`, `demoboard`, `demoboard_version`, `sdk`), so both sides drop every TT board. Acorn: no `flash_sfdp`. | fpgas-verify [#110](https://github.com/fpgas-online/fpgas.online-test-designs/pull/110) (Arty/NeTV2 DNA), [#109](https://github.com/fpgas-online/fpgas.online-test-designs/pull/109) (TT facts), [#107](https://github.com/fpgas-online/fpgas.online-test-designs/pull/107) (Acorn SFDP) |
+| 5 | the site renders labels with rpi-hwid's `labels` API | no `render_*` call: the site serves the label input `.json` and the list of what each label is missing | the site |
