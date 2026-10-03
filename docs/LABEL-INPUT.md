@@ -9,6 +9,8 @@ build it for the same host write the same bytes.
 `rpi-hwid labels --data DIR` reads these beside probe documents (see
 [COLLECT.md](COLLECT.md)); the labels made from either are the same.
 
+How fpgas-verify, rpi-hwid and the fpgas.online site exchange label data: [LABEL-CONTRACT.md](LABEL-CONTRACT.md).
+
 ## Version 1
 
 ```json
