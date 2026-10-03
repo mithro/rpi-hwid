@@ -231,7 +231,9 @@ def pi_only_label_input(host: str, user_bus: bool = False) -> dict[str, Any]:
     lists what each does, and undoes)."""
     from rpi_hwid import label_input, probe
 
-    d = probe.collect(user_bus=user_bus)
+    # no cameras: the site's pi-identified event has none, and the two
+    # documents must agree (contract 25)
+    d = probe.collect(user_bus=user_bus, cameras=False)
     d["verdict"] = probe.verdict(d)
     summary = dict(d["verdict"]["summary"])
     summary["header"] = header_as_read(summary.get("header"), d, user_bus)

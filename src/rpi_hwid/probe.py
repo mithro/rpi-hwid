@@ -1192,7 +1192,7 @@ def riscv_summary(rv):
 
 # --- collect ------------------------------------------------------------------
 
-def collect(user_bus=True):
+def collect(user_bus=True, cameras=True):
     """Everything the probe reads, as the evidence document.
 
     `user_bus=False` leaves the header's user bus (pins 3/5, GPIO2/3 on a
@@ -1201,7 +1201,10 @@ def collect(user_bus=True):
     Acorn's J5 is on GPIO3, a Pmod HAT's lines are on the header), so a
     probe made while that board may be in use must not drive them. A HAT
     known only by the devices it puts there then goes unseen, and the
-    evidence says that bus was not read."""
+    evidence says that bus was not read.
+
+    `cameras=False` does not look for the CSI cameras, which the summary
+    then gives as not read (null)."""
     d = {}
     d["model"] = read(ROOT + "/proc/device-tree/model") or ""
     compatible = dt_strings(ROOT + "/proc/device-tree/compatible")
@@ -1284,7 +1287,8 @@ def collect(user_bus=True):
     d["undervoltage_since_boot"] = bool(t & 0x10000) if t is not None else None
     d["interfaces"] = net_interfaces(d["serial"], pci_onboard=d["board"] == "x86")
     d["usb_net"] = usb_net_adapters(d["interfaces"])
-    d["cameras"] = collect_cameras()
+    if cameras:
+        d["cameras"] = collect_cameras()
     pi5 = "Pi 5" in d["model"]
     d["pi5"] = pi5
     if pi5:

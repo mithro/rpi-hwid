@@ -156,7 +156,8 @@ $ sudo rpi-hwid label-input --pi-only [--user-bus] [--host NAME]
 The Pi's facts (model, serial, revision, memory, MACs, the HAT, the power
 class, and on a Pi 5 the fan, the RTC battery and the PMIC's readings) as a
 label input on stdout, with `fpga` and `tinytapeout` empty: nothing probed
-them. fpgas-verify runs it once at boot, before it takes any board's lock,
+them. `cameras` is null, not looked for: the `pi-identified` event carries
+no cameras, and the two documents must agree. fpgas-verify runs it once at boot, before it takes any board's lock,
 and sends the summary to the fpgas.online site in its `pi-identified` event,
 so it is made to be safe while a board under test is wired to the header.
 `--host` defaults to this host's name.
