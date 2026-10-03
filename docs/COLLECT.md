@@ -121,8 +121,9 @@ when that module ran), `hat_uuid` the EEPROM's UUID when one was read,
 (MemTotal rounded up to the size that was soldered on). `cameras` is the CSI
 cameras the kernel bound, each with its `sensor`, `variant`, `autofocus` and
 `lens` (see [PROBE.md](PROBE.md#cameras)); a document collected before the probe
-looked for them has no `cameras`. The Pi 5-only fields are `null` elsewhere. Everything outside `verdict` is evidence, kept so a wrong
-verdict can be argued with.
+looked for them has `"cameras": null`. The Pi 5-only fields are `null`
+elsewhere. Everything outside `verdict` is evidence, kept so a wrong verdict
+can be argued with.
 
 `rpi-hwid labels --data` also reads [label input documents](LABEL-INPUT.md):
 the same `summary`, versioned and checked, for a builder other than the probe.

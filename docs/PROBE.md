@@ -81,8 +81,8 @@ nothing else. The summary's `cameras` lists each one:
 | `autofocus` | a lens driver chip on the sensor's bus | `true`, `false`, or `null` where it could not be settled |
 | `lens` | what showed the lens driver | the kernel driver's name (`ad5398`, `dw9807`), or `0x0c` where a chip answers with no driver |
 
-`cameras` is `[]` when no sensor is bound, and absent from documents collected
-before the probe looked. A camera the firmware did not detect at boot
+`cameras` is `[]` when no sensor is bound, and `null` in the summary of
+evidence collected before the probe looked. A camera the firmware did not detect at boot
 (`camera_auto_detect=1`), or one with no overlay, has no driver and is not seen.
 A USB camera is not a CSI camera and is not listed.
 
