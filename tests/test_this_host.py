@@ -463,10 +463,23 @@ def test_label_input_this_host_needs_no_labels_dependencies(host, capsys, monkey
     """The fpgas.online Pi root installs rpi-hwid without segno or reportlab
     (2026-10-05: `labels --this-host --input` died on `import segno` there),
     so this path must import neither, nor rpi_hwid.labels, which does."""
-    for module in ("segno", "reportlab", "rpi_hwid.labels"):
-        monkeypatch.setitem(sys.modules, module, None)  # importing it now raises ImportError
+    import rpi_hwid
+
+    # This file imported rpi_hwid.labels above, so it is cached twice over:
+    # in sys.modules, and as an attribute of the package, which `from
+    # rpi_hwid import labels` looks at first. Both go, and a None entry in
+    # sys.modules makes any import of the name raise ImportError.
+    monkeypatch.delattr(rpi_hwid, "labels")
+    for module in ("segno", "reportlab", "svglib", "PIL", "rpi_hwid.labels"):
+        monkeypatch.setitem(sys.modules, module, None)
+    with pytest.raises(ImportError):
+        from rpi_hwid import labels as _  # noqa: F401  the guard itself works
+    with pytest.raises(ImportError):
+        import segno  # noqa: F401
     assert cli.main(["label-input", "--this-host", "--host", "pi-sw2-p48"]) == 0
     assert '"schema": "rpi-hwid/label-input"' in capsys.readouterr().out
+    assert sys.modules["rpi_hwid.labels"] is None
+    assert not hasattr(rpi_hwid, "labels")
 
 
 def test_label_input_this_host_says_when_the_boards_are_not_known(failing, capsys):
@@ -477,7 +490,7 @@ def test_label_input_this_host_says_when_the_boards_are_not_known(failing, capsy
     assert "the FPGA and Tiny Tapeout boards are not known: " + FAILED in got.err
 
 
-def test_label_input_this_host_goes_with_neither_from_nor_pi_only(host, capsys):
+def test_label_input_this_host_excludes_pi_only_and_takes_no_user_bus(host, capsys):
     with pytest.raises(SystemExit):
         cli.main(["label-input", "--this-host", "--pi-only"])
     assert cli.main(["label-input", "--this-host", "--user-bus"]) == 2
