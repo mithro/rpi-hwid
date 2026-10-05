@@ -1807,8 +1807,11 @@ def test_read_repl_speaks_raw_repl(fake_board):
     assert b"_shuttle_props" in sent                 # the cached ROM, never a fresh read
 
 
-@pytest.mark.parametrize("stage, why", [
-    ("no-ok", "did not accept"), ("no-output", "snippet's output"), ("no-finish", "snippet to finish")])
+@pytest.mark.parametrize(("stage", "why"), [
+    ("no-ok", "did not accept"),
+    ("no-output", "snippet's output"),
+    ("no-finish", "snippet to finish"),
+])
 def test_read_repl_leaves_the_raw_repl_when_it_fails(stage, why):
     """A board that enters the raw REPL and then stops answering is still
     sent Ctrl-B: the port's next user expects the friendly prompt."""
