@@ -396,8 +396,10 @@ its USB serial — runs along the foot with a small QR of its own.
 </p>
 
 A board with no ASIC on it says so: the FPGA breakout's ROM has no shuttle to
-name — `config.ini` forces the string `FPGA` — so the ROM line stays empty and
-the QR falls back to the chips index.
+name — `config.ini` forces the string `FPGA` — so the ROM line says `none` and
+the QR falls back to the chips index. The same label is made when the board's
+identity names no shuttle at all and only says its chip is an FPGA, which is
+how fpgas-verify's boot check describes it.
 
 Both its boards are still coloured, because neither needs the shuttle to be
 found. The demo board names its own revision over the REPL and the sheet has

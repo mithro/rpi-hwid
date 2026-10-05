@@ -669,6 +669,35 @@ def test_demoboard_text_normalises_both_sdk_forms():
     assert labels.demoboard_text(None, None) == "not read"
 
 
+def test_tinytapeout_fpga_board_as_the_fleets_boot_check_identifies_it():
+    """The identity fpgas-verify gave for a TT FPGA demo board on 2026-10-05
+    (no shuttle, repo or commit: there is no chip ROM) makes a whole label:
+    nothing on it says "not read"."""
+    doc = ProbeDocument.from_dict("h", {"verdict": {"summary": {
+        "model": "m", "serial": "s", "revision": "d03115", "power_class": "p",
+        "tinytapeout": [{"usb_serial": "a2961e5cac65b25f", "mcu": "RP2350", "shuttle": None,
+                         "chip": "fpga", "repo": None, "commit": None,
+                         "demoboard": "TTDBv3 [3.2]", "demoboard_version": None,
+                         "sdk": "3.1.0"}]}}})
+    (tt,) = labels.tinytapeout_records({"h": doc})
+    assert (tt.headline, tt.subtitle) == ("FPGA", "FPGA breakout, no ASIC")
+    assert tt.demoboard_text == "TTDBv3  ·  Rev 3.2"
+    assert (tt.usb_serial, tt.mcu) == ("a2961e5cac65b25f", "RP2350")
+    assert labels.tinytapeout_rom_line(tt) == ("ROM", "none", labels.SANS)
+    assert tt.chip_colour  # both boxes coloured without a shuttle
+    assert tt.demoboard_colour
+
+
+def test_tinytapeout_rom_line_says_what_was_and_was_not_read():
+    def line(**fields):
+        return labels.tinytapeout_rom_line(labels.TinyTapeoutLabel(
+            host="h", headline="x", subtitle="x", url="x", demoboard_text="x", **fields))
+    assert line(shuttle="tt06", commit="a3b2f098") == ("ROM commit", "a3b2f098", labels.MONO)
+    assert line(shuttle="tt03p5") == ("ROM", "no commit", labels.SANS)
+    assert line(shuttle="FPGA", chip="fpga") == ("ROM", "none", labels.SANS)
+    assert line() == ("ROM", "not read", labels.SANS)
+
+
 def test_tinytapeout_records_without_a_rom_or_with_the_fpga_breakout():
     def doc(board):
         return ProbeDocument.from_dict("h", {"verdict": {"summary": {
