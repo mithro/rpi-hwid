@@ -1289,7 +1289,12 @@ def collect(user_bus=True, cameras=True):
     d["usb_net"] = usb_net_adapters(d["interfaces"])
     if cameras:
         d["cameras"] = collect_cameras()
-    pi5 = "Pi 5" in d["model"]
+    # The Pi 5, the Pi 500 and the Compute Module 5 are one family: the same
+    # SoC, PMIC (with its ADC) and firmware fan-header node. The device tree's
+    # compatible says so; the model's words do not ("Raspberry Pi Compute
+    # Module 5 Lite" has no "Pi 5" in it), so a CM5 used to get none of the
+    # reads below and its label, which needs fan and rtc_battery, none either.
+    pi5 = "brcm,bcm2712" in compatible or "Pi 5" in d["model"]
     d["pi5"] = pi5
     if pi5:
         d["max_current_ma"] = dt_u32(ROOT + "/proc/device-tree/chosen/power/max_current")
@@ -1300,7 +1305,11 @@ def collect(user_bus=True, cameras=True):
             d["usbpd_pdos"] = ["0x%08x" % x for x in pdos if x]
         except OSError:
             d["usbpd_pdos"] = None
-        adc = sh(["sudo", "vcgencmd", "pmic_read_adc"])
+        # as the user first (the video group can ask the firmware), then with
+        # sudo that never asks for a password: a host without passwordless
+        # sudo then says "not read" below instead of hanging or guessing
+        adc = (sh(["vcgencmd", "pmic_read_adc"])
+               or sh(["sudo", "-n", "vcgencmd", "pmic_read_adc"]))
         m = re.search(r"EXT5V_V volt\(\d+\)=([0-9.]+)V", adc)
         d["ext5v_v"] = float(m.group(1)) if m else None
         m = re.search(r"BATT_V volt\(\d+\)=([0-9.]+)V", adc)
@@ -1417,9 +1426,10 @@ def verdict(d):
                      "(Waveshare F/G/H/J) or a 3 A USB-C splitter; " + lean)
         ev.append("fan header: %s%s" % (d["fan_dt"] or "no node",
                   ", %d rpm" % d["fan_rpm"] if d["fan_rpm"] is not None else ""))
-        batt = d["rtc_batt_v"] or 0
-        ev.append("RTC battery: %s" % ("fitted, %.2f V" % batt if batt > 1.0
-                                       else "none (%.2f V)" % batt))
+        batt = d["rtc_batt_v"]
+        ev.append("RTC battery: %s" % (
+            "not read (vcgencmd pmic_read_adc gave no BATT_V; it needs sudo)" if batt is None
+            else "fitted, %.2f V" % batt if batt > 1.0 else "none (%.2f V)" % batt))
     if d.get("throttled") is not None:
         ev.append("power port: throttled=%s%s%s" % (
             d["throttled"], ", under-voltage NOW" if d["undervoltage_now"] else "",
@@ -1522,7 +1532,9 @@ def summary(d, header, power):
         "memory": nominal_memory(d.get("mem_kb")),
         "header": items, "hat_uuid": hat_uuid, "power_class": pclass,
         "macs": macs, "usb_net": usb_net,
-        "rtc_battery": ((d.get("rtc_batt_v") or 0) > 1.0) if d["pi5"] else None,
+        # a voltage that could not be read is no answer, not "no battery"
+        "rtc_battery": (d["rtc_batt_v"] > 1.0
+                        if d["pi5"] and d.get("rtc_batt_v") is not None else None),
         "fan": (d.get("fan_dt") == "okay") if d["pi5"] else None,
         "max_current_ma": d.get("max_current_ma") if d["pi5"] else None,
         "ext5v_v": d.get("ext5v_v") if d["pi5"] else None,

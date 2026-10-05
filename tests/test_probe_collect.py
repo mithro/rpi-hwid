@@ -303,7 +303,7 @@ def fake_root(tmp_path, monkeypatch):
     # what it would on a machine lacking the tool, and the PMIC line is fed
     # by the one stub that matters
     def fake_sh(args, timeout=15):
-        if args[:2] == ["sudo", "vcgencmd"]:
+        if args[-1:] == ["pmic_read_adc"]:
             return ("EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n")
         if args == ["vcgencmd", "get_throttled"]:
             return "throttled=0x0"
@@ -2718,3 +2718,46 @@ def test_from_report_lists_only_what_was_taken_from_the_report():
                                      "flash_sfdp"]})
     assert boards[0]["from_report"] == ["flash_uid", "flash_uid_state"]
     assert boards[0]["flash_uid"] == "ab"
+
+
+def test_a_compute_module_5_is_read_as_the_pi_5_family(fake_root):
+    """Its model has no "Pi 5" in it; the device tree's compatible names the
+    SoC (mithro/rpi-hwid issue #81: no label could be drawn for a CM5)."""
+    _w(fake_root, "/proc/device-tree/model", "Raspberry Pi Compute Module 5 Lite Rev 1.0\0")
+    _w(fake_root, "/proc/device-tree/compatible", "raspberrypi,5-compute-module\0brcm,bcm2712\0")
+    d = probe.collect()
+    assert d["pi5"] is True
+    assert d["rtc_batt_v"] == 3.26
+    assert d["fan_dt"] == "okay"
+    s = probe.verdict(d)["summary"]
+    assert (s["fan"], s["rtc_battery"]) == (True, True)
+
+
+def test_the_pmic_is_asked_as_the_user_before_sudo(fake_root, monkeypatch):
+    calls = []
+
+    def sh(args, timeout=15):
+        calls.append(args)
+        if args == ["vcgencmd", "pmic_read_adc"]:
+            return "EXT5V_V volt(24)=5.10000000V\nBATT_V volt(25)=0.00300000V\n"
+        return ""
+    monkeypatch.setattr(probe, "sh", sh)
+    d = probe.collect()
+    assert d["rtc_batt_v"] == 0.003
+    assert ["sudo", "-n", "vcgencmd", "pmic_read_adc"] not in calls
+    assert probe.verdict(d)["summary"]["rtc_battery"] is False
+
+
+def test_an_unread_rtc_battery_is_unread_not_absent(fake_root, monkeypatch):
+    """No passwordless sudo and no answer as the user: the voltage is not
+    known, so the summary says null (and the label asks for it) rather than
+    claiming there is no battery."""
+    calls = []
+    monkeypatch.setattr(probe, "sh", lambda args, timeout=15: calls.append(args) or "")
+    d = probe.collect()
+    assert ["vcgencmd", "pmic_read_adc"] in calls
+    assert ["sudo", "-n", "vcgencmd", "pmic_read_adc"] in calls, "never a sudo that can prompt"
+    assert d["rtc_batt_v"] is None
+    v = probe.verdict(d)
+    assert v["summary"]["rtc_battery"] is None
+    assert any(e.startswith("RTC battery: not read") for e in v["evidence"])

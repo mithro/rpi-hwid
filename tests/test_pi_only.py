@@ -34,7 +34,7 @@ def pi5(tmp_path, monkeypatch):
         elif args[:3] == ["sudo", "dtparam", "-r"]:
             overlays.pop(int(args[3]))
             (tmp_path / "dev/i2c-0").unlink()
-        elif args[:2] == ["sudo", "vcgencmd"]:
+        elif args[-1:] == ["pmic_read_adc"]:
             return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
         elif args == ["vcgencmd", "get_throttled"]:
             return "throttled=0x0"
@@ -125,7 +125,7 @@ def test_user_bus_scans_it_and_puts_back_what_it_brought_up(pi5, monkeypatch):
         elif args[:3] == ["sudo", "dtparam", "-r"]:
             gone = overlays.pop(int(args[3]))
             (root / ("dev/i2c-1" if gone.endswith("arm=on") else "dev/i2c-0")).unlink()
-        elif args[:2] == ["sudo", "vcgencmd"]:
+        elif args[-1:] == ["pmic_read_adc"]:
             return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
         return ""
     overlays = []
@@ -284,7 +284,7 @@ def test_an_id_bus_that_did_not_come_up_leaves_the_header_unread(pi5, monkeypatc
 
     def sh(args, timeout=15):
         calls.append(args)
-        if args[:2] == ["sudo", "vcgencmd"]:
+        if args[-1:] == ["pmic_read_adc"]:
             return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
         return ""                          # no overlay brings i2c-0 up
     monkeypatch.setattr(probe, "sh", sh)

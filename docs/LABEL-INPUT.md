@@ -209,7 +209,7 @@ What it does, and puts back:
   the apply failed, or something else changed the list meanwhile -- it
   removes nothing. The firmware's own reading of the HAT comes from
   `/proc/device-tree/hat`.
-* `vcgencmd get_throttled`, and on a Pi 5 `sudo vcgencmd pmic_read_adc`: reads.
+* `vcgencmd get_throttled`, and on a BCM2712 board (Pi 5, Pi 500, Compute Module 5) `vcgencmd pmic_read_adc`, tried as the user and then with `sudo -n`: reads.
 * sysfs, procfs and the device tree: reads. On a PC (no device tree), the
   root-only DMI serials through `sudo -n cat`.
 
