@@ -147,6 +147,25 @@ $ rpi-hwid probe --json > pi-sw2-p48.json
 $ rpi-hwid label-input --from pi-sw2-p48.json > labels/pi-sw2-p48.json
 ```
 
+## This host, as its labels would be drawn: `--this-host`
+
+```
+$ sudo rpi-hwid label-input --this-host [--host NAME] > labels/NAME.json
+```
+
+The document `rpi-hwid labels --this-host` draws from, printed instead of
+drawn: the Pi's facts as `--pi-only` reads them and each board as
+fpgas-verify identifies it (`fpgas-verify --identify`; a Tiny Tapeout
+board's fields are the ones its boot check read, and no port is opened
+here). It needs none of the labels dependencies, so a host installed
+without them can write it and another machine can draw and print from it
+(`rpi-hwid labels --data DIR`, `rpi-hwid-sheet print SHEET HOST --data DIR`).
+`labels --this-host --input FILE` writes the same bytes, on a host that has
+those dependencies.
+
+When fpgas-verify is installed and gives no identity document, the document
+is still printed, with its boards not known, and the exit status is 1.
+
 ## The Pi alone: `--pi-only`
 
 ```
