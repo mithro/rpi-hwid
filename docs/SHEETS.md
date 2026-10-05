@@ -93,6 +93,17 @@ slots it had held and what its job's state had been, and `status` shows that.
 Pass numbers are never reused. A pass whose job the printer reported completed
 is refused: the printer's word is that it printed.
 
+The other way round, a pass that is on the sheet while the printer has
+forgotten its job (this Brother forgets a finished job within minutes) would
+stay "sent" for ever, and `follow` would keep asking about it:
+
+```
+$ rpi-hwid-sheet printed 7MRC 6 --why "Tim: the two labels which just printed"
+```
+
+Its slots stay used; the pass becomes `completed` and records who said so,
+when, why and what its job's state had been.
+
 A sheet's id is four characters with nothing to misread off paper (no 0/O,
 1/I/L or U/V); type it in either case.
 
@@ -127,6 +138,7 @@ printed on it since), and a plan already sent.
 | `list` | every sheet and what is free on it |
 | `mark SHEET SLOT… [--why TEXT]` | record slots used without printing (a sheet used before this tool) |
 | `unprint SHEET PASS --why TEXT` | record, on a person's word, that a pass put nothing on the sheet: its slots are free again |
+| `printed SHEET PASS --why TEXT` | record, on a person's word, that a pass is on the sheet, when the printer no longer knows its job |
 
 The printer is `--printer` (an IPP URI, `ipp://HOST/ipp/print`) or
 `$RPI_HWID_PRINTER`, and is remembered by the sheet. `--rpi-hwid CMD` names the

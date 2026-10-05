@@ -208,6 +208,18 @@ class Sheet:
                           if q["job_state"] != NOT_PRINTED)
         return freed
 
+    def printed(self, n: int, why: str, at: str, user: str) -> None:
+        """Record, on a person's word, that pass `n` did print, when the
+        printer can no longer be asked how its job ended. The slots stay
+        used, as they were; the pass becomes "completed" and says who said
+        so, when, why and what its job's state had been."""
+        p = self.pass_(n)
+        if p["job_state"] in ("completed", NOT_PRINTED):
+            raise ValueError(f"pass {n} of sheet {self.id} is already recorded as "
+                             f"{p['job_state']}")
+        p["printed"] = {"why": why, "at": at, "user": user, "job_state": p["job_state"]}
+        p["job_state"] = "completed"
+
     def mark(self, slots: list[str], why: str, at: str) -> None:
         """Record `slots` used without printing: stickers peeled off or
         printed before this sheet was tracked."""

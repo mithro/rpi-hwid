@@ -553,7 +553,8 @@ def test_unprint_frees_the_slots_of_a_job_the_printer_forgot(run, printer):
     rc, _, err = run("follow", sid)
     assert rc == 2
     assert "no longer says how job" in err
-    assert f"rpi-hwid-sheet unprint {sid} 1" in err  # it names the way out
+    assert f"rpi-hwid-sheet unprint {sid} 1" in err  # it names both ways out
+    assert f"rpi-hwid-sheet printed {sid} 1" in err
     assert len(state.Store(run.root).load(sid).slots) == 2  # and frees nothing by itself
 
     rc, out, err = run("unprint", sid, "1", "--why", "Tim: the sheet never went in")
@@ -644,3 +645,41 @@ def test_status_shows_a_pass_recorded_as_not_printed_and_why(run, printer):
     assert "Tim: plain paper was in the slot" in out
     assert "slots 1, 2 freed; the job was processing-stopped" in out
     assert "21 free stickers" in out
+
+
+def test_printed_records_a_pass_the_printer_forgot_as_on_the_sheet(run, printer):
+    p = printer(end=(ipp.JOB_STOPPED, 0))
+    sid = new_sheet(run, p)
+    stalled(run, p, sid)
+    p.forgotten = True
+    rc, out, err = run("printed", sid, "1", "--why", "Tim: the two labels which just printed")
+    assert rc == 0, err
+    assert "pass 1 recorded as printed" in out
+    assert "19 free stickers" in out
+    s = state.Store(run.root).load(sid)
+    assert len(s.slots) == 2  # still used
+    assert s.marked
+    (only,) = s.passes
+    assert only["job_state"] == "completed"
+    assert only["printed"]["why"] == "Tim: the two labels which just printed"
+    assert only["printed"]["job_state"] == "processing-stopped"
+    assert run("follow", sid)[0] == 2  # nothing outstanding: the printer is not asked again
+    rc, out, _ = run("status", sid)
+    assert "printed, said" in out
+    assert "Tim: the two labels which just printed" in out
+    # said once; and a printed pass cannot then be unprinted, nor an unprinted one printed
+    assert run("printed", sid, "1", "--why", "again")[0] == 2
+    rc, _, err = run("unprint", sid, "1", "--why", "no")
+    assert rc == 2
+    assert "printed" in err
+
+
+def test_printed_refuses_a_pass_recorded_as_not_printed(run, printer):
+    p = printer(end=(ipp.JOB_STOPPED, 0))
+    sid = new_sheet(run, p)
+    stalled(run, p, sid)
+    assert run("unprint", sid, "1", "--why", "blank")[0] == 0
+    rc, _, err = run("printed", sid, "1", "--why", "it is there after all")
+    assert rc == 2
+    assert "already recorded as not-printed" in err
+    assert run("printed", sid, "9", "--why", "x")[0] == 2

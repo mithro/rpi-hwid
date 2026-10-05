@@ -8,6 +8,7 @@
     rpi-hwid-sheet list
     rpi-hwid-sheet mark K7QX 1 2 5c --why "peeled off before the tool"
     rpi-hwid-sheet unprint K7QX 4 --why "Tim: the sheet never went in"
+    rpi-hwid-sheet printed K7QX 6 --why "Tim: both labels are on the sheet"
 
 Each sheet has an id (four characters, printed in its top and bottom
 margins on its first pass with when, where and by whom it was started)
@@ -19,7 +20,8 @@ printed and where, and only after a yes sends it to the printer's manual
 feed slot. The slots are recorded as used when the printer takes the job;
 a job cancelled before anything printed gives them back. When the printer
 cannot say (it forgot the job, or a later pass has been sent since), a
-person who has looked at the sheet says so with ``unprint``.
+person who has looked at the sheet says so with ``unprint``, or with
+``printed`` when the pass is on the paper and the printer no longer knows.
 
 This tool draws nothing itself: every label comes from ``rpi-hwid labels
 --place``, run as a separate command (``--rpi-hwid`` says which).
@@ -291,6 +293,10 @@ def cmd_status(args: argparse.Namespace, store: state.Store) -> int:
             print(f"    not printed, said {np['user']} at {np['at']}: {np['why']} "
                   f"(slots {', '.join(np['slots']) or 'none'} freed; the job was "
                   f"{np['job_state']})")
+        pd = p.get("printed")
+        if pd:
+            print(f"    printed, said {pd['user']} at {pd['at']}: {pd['why']} "
+                  f"(the job was {pd['job_state']})")
     return 0
 
 
@@ -319,6 +325,20 @@ def cmd_unprint(args: argparse.Namespace, store: state.Store) -> int:
     print(f"sheet {s.id}: pass {args.pass_} recorded as not printed ({args.why}); "
           f"slot{'' if len(freed) == 1 else 's'} {', '.join(freed) or 'none'} free again; "
           f"{free_text(s)}")
+    return 0
+
+
+def cmd_printed(args: argparse.Namespace, store: state.Store) -> int:
+    """Record, on a person's word, that a pass is on the sheet."""
+    with store.lock(args.sheet):
+        s = store.load(args.sheet)
+        try:
+            s.printed(args.pass_, args.why, now().isoformat(timespec="seconds"),
+                      getpass.getuser())
+        except (KeyError, ValueError) as exc:
+            raise ToolError(str(exc.args[0])) from exc
+        store.save(s)
+    print(f"sheet {s.id}: pass {args.pass_} recorded as printed ({args.why}); {free_text(s)}")
     return 0
 
 
@@ -491,9 +511,10 @@ def cmd_follow(args: argparse.Namespace, store: state.Store) -> int:
         # at the sheet can now say what pass that was.
         raise ToolError(
             f"{exc}\nthe printer no longer says how job {last['job']} (sheet {sheet.id} pass "
-            f"{last['pass']}) ended: its slots stay used. If the sheet shows that the pass "
-            f"printed nothing, record that with: rpi-hwid-sheet unprint {sheet.id} "
-            f"{last['pass']} --why \"...\"") from exc
+            f"{last['pass']}) ended: its slots stay used. Look at the sheet, and record what "
+            f"it shows: rpi-hwid-sheet printed {sheet.id} {last['pass']} --why \"...\" if the "
+            f"pass is on it, rpi-hwid-sheet unprint {sheet.id} {last['pass']} --why \"...\" if "
+            f"it printed nothing") from exc
 
 
 def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, n: int,
@@ -589,6 +610,14 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--why", required=True,
                    help="who looked at the sheet and what they saw, in their words")
     p.set_defaults(func=cmd_unprint)
+
+    p = sub.add_parser("printed", help="record, on a person's word, that a pass is on the "
+                                       "sheet, when the printer no longer knows its job")
+    p.add_argument("sheet")
+    p.add_argument("pass_", metavar="PASS", type=int, help="the pass, as status numbers it")
+    p.add_argument("--why", required=True,
+                   help="who looked at the sheet and what they saw, in their words")
+    p.set_defaults(func=cmd_printed)
 
     p = sub.add_parser("print", help="collect, show, ask, and print in the free slots "
                                      "(rpi-hwid-sheet print SHEET HOST... [-- COLLECT-ARGS])")
