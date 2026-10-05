@@ -14,6 +14,7 @@ import struct
 import subprocess
 import termios
 import threading
+import time
 from pathlib import Path
 from typing import ClassVar
 
@@ -1804,6 +1805,46 @@ def test_read_repl_speaks_raw_repl(fake_board):
     assert b"\x04" in sent
     assert sent.endswith(b"\r\x02")                  # and back to the friendly REPL
     assert b"_shuttle_props" in sent                 # the cached ROM, never a fresh read
+
+
+@pytest.mark.parametrize("stage, why", [
+    ("no-ok", "did not accept"), ("no-output", "snippet's output"), ("no-finish", "snippet to finish")])
+def test_read_repl_leaves_the_raw_repl_when_it_fails(stage, why):
+    """A board that enters the raw REPL and then stops answering is still
+    sent Ctrl-B: the port's next user expects the friendly prompt."""
+    master, slave = pty.openpty()
+    seen: list[bytes] = []
+
+    def board():
+        buf = b""
+        while True:
+            try:
+                data = os.read(master, 4096)
+            except OSError:
+                return
+            if not data:
+                return
+            buf += data
+            seen.append(data)
+            if b"\x01" in buf:
+                os.write(master, b"\r\nraw REPL; CTRL-B to exit\r\n>")
+                buf = buf[buf.index(b"\x01") + 1:]
+            if b"\x04" in buf:
+                buf = buf[buf.index(b"\x04") + 1:]
+                if stage != "no-ok":
+                    os.write(master, b"OK")
+                if stage == "no-finish":
+                    os.write(master, b"{}\x04")
+
+    threading.Thread(target=board, daemon=True).start()
+    try:
+        r = tinytapeout.read_repl(os.ttyname(slave), timeout=1)
+        time.sleep(0.2)
+    finally:
+        os.close(slave)
+        os.close(master)
+    assert why in r["error"]
+    assert b"".join(seen).endswith(b"\r\x03\x03\r\x02")
 
 
 def test_read_repl_never_hangs():
