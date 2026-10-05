@@ -315,3 +315,38 @@ def test_a_hat_the_firmware_read_settles_it_even_then(pi5, monkeypatch):
 def test_the_header_is_null_wherever_a_bus_it_needed_went_unread(buses, user_bus, header, want):
     d = {"header_buses_read": buses, "hat_fw": None}
     assert cli.header_as_read(header, d, user_bus) == want
+
+
+def _cm5(root):
+    _w(root, "/proc/device-tree/model", "Raspberry Pi Compute Module 5 Lite Rev 1.0\0")
+    _w(root, "/proc/device-tree/compatible", "raspberrypi,5-compute-module\0brcm,bcm2712\0")
+
+
+def _bus_work(calls):
+    return [c for c in calls if "dtparam" in c or "modprobe" in c]
+
+
+def test_a_compute_module_has_no_header_bus_touched_by_any_default(pi5):
+    """The safety property of mithro/rpi-hwid issue #83, at the level of the
+    commands and the bus opens themselves: GPIO2/GPIO3 are JTAG wires on a
+    Compute Blade wired to an Acorn."""
+    root, calls, buses = pi5
+    _cm5(root)
+    doc = cli.pi_only_label_input("pi16")
+    assert buses == [], "no /dev/i2c-N was opened"
+    assert _bus_work(calls) == [], "no dtparam, no modprobe"
+    # contract 17: a header nobody looked at is null, never "HAT none"
+    assert doc["summary"]["header"] is None
+    calls.clear()
+    d = probe.collect(cameras=False)             # what a bare probe run does
+    assert buses == []
+    assert _bus_work(calls) == []
+    assert d["header_buses_skipped"] == "compute-module"
+
+
+def test_a_compute_modules_buses_are_read_when_asked(pi5):
+    root, calls, buses = pi5
+    _cm5(root)
+    cli.pi_only_label_input("pi16", user_bus=True)
+    assert set(buses) == {0, 1}
+    assert ["sudo", "dtparam", "i2c_vc=on"] in calls
