@@ -14,7 +14,7 @@
                                                           over HTTP, read-only: Tasmota plugs
     rpi-hwid labels --data DIR --out labels.pdf           print-ready labels from that data
     rpi-hwid labels --this-host [--out labels.pdf]        on a Pi: this host's labels
-    rpi-hwid label-input --from PROBE_JSON | --pi-only [--user-bus] [--host NAME]
+    rpi-hwid label-input --from PROBE_JSON | --pi-only [--user-bus] | --this-host [--host NAME]
                                                           the labels' versioned input document
     rpi-hwid name --netv2 DNA… | --arty SERIAL… | --cynthion UID…
                                                           the derived board names
@@ -251,6 +251,23 @@ def cmd_label_input(args: argparse.Namespace) -> int:
         doc = pi_only_label_input(args.host or socket.gethostname(), args.user_bus)
         sys.stdout.write(label_input.dumps(doc))
         return 0
+    if args.this_host:
+        # The document `labels --this-host` draws from, without the drawing:
+        # a host installed with no labels dependencies (segno, reportlab)
+        # can still say what its labels are, and another machine draw them.
+        from rpi_hwid import this_host
+
+        host = args.host or socket.gethostname()
+        doc = this_host.label_input_document(host)
+        sys.stdout.write(label_input.dumps(doc))
+        failed = doc["sources"].get("fpgas_verify_error")
+        if failed:
+            # as labels --this-host (contract 30): the document is printed,
+            # with no boards in it, and the exit status says it is not whole
+            print(f"{host}: the FPGA and Tiny Tapeout boards are not known: {failed}",
+                  file=sys.stderr)
+            return 1
+        return 0
     path = Path(args.from_probe)
     try:
         # a probe document as `probe --json` or `collect` wrote it: from_json
@@ -369,12 +386,16 @@ def main(argv: list[str] | None = None) -> int:
     what.add_argument("--pi-only", action="store_true",
                       help="probe this host's Pi facts only, never touching the FPGA, a "
                            "Tiny Tapeout board or the header's user bus (run on the Pi)")
+    what.add_argument("--this-host", action="store_true",
+                      help="what `labels --this-host` draws from: the Pi's facts and its "
+                           "boards as fpgas-verify identifies them (run on the Pi; needs "
+                           "none of the labels dependencies)")
     p.add_argument("--user-bus", action="store_true",
                    help="with --pi-only: also scan the header's user bus (GPIO2/3), and put "
                         "back what that brings up; only when nothing else may be using "
                         "those pins")
     p.add_argument("--host", help="the host it describes (default: the file's name, or "
-                                  "this host's name with --pi-only)")
+                                  "this host's name with --pi-only and --this-host)")
     p.set_defaults(func=cmd_label_input)
 
     p = sub.add_parser("name", help="derived board names")
