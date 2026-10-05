@@ -795,3 +795,12 @@ def test_copies_that_do_not_fit_say_the_sheet_is_full(run, printer):
     rc, _, err = run("print", sid, "pi3", "--prepare", "--copies", "/rpi/=21")
     assert rc == 2
     assert "start a new sheet" in err
+
+
+def test_two_copies_options_and_the_larger_number_wins(run, printer):
+    sid = new_sheet(run, printer())
+    _, out = prepare(run, sid, "pi3", "--copies", "/rpi/=2", "--copies", "pi3/=3")
+    rows = [line.split(None, 1)[1] for line in out.splitlines()
+            if line.startswith("  ") and line.split()[0].isdigit()]
+    assert len(rows) == 6  # both of pi3's labels three times: "pi3/" matches each
+    assert rows[0] == rows[1] == rows[2] != rows[3] == rows[4] == rows[5]

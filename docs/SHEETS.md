@@ -75,7 +75,8 @@ $ rpi-hwid-sheet print K7QX pi5 --copies /acorn/=2
 ```
 
 `--copies TEXT=N` gives N stickers, one after the other, to every label whose
-id contains TEXT; it may be given more than once. The copies are the same
+id contains TEXT; it may be given more than once, and a label that two of
+them match gets the larger number. The copies are the same
 label drawn from the same read, each in a slot of its own, and the record
 lists each slot. Without it a label is never placed twice in a pass, which is
 how a mistake in a plan is caught (`rpi-hwid labels --place` refuses a plan
