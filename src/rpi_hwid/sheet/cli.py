@@ -6,6 +6,7 @@
     rpi-hwid-sheet commit K7QX-p3-2026-10-01T101200      # ...then print it
     rpi-hwid-sheet status K7QX
     rpi-hwid-sheet list
+    rpi-hwid-sheet print K7QX pi5 --copies /acorn/=2      # two stickers of the Acorn's label
     rpi-hwid-sheet mark K7QX 1 2 5c --why "peeled off before the tool"
     rpi-hwid-sheet unprint K7QX 4 --why "Tim: the sheet never went in"
     rpi-hwid-sheet printed K7QX 6 --why "Tim: both labels are on the sheet"
@@ -141,6 +142,26 @@ def choose(labels: list[dict[str, str]], hosts: list[str], picks: list[str]
                                 + "; ".join(x["id"] for x in chosen))
         chosen = [x for x in chosen if any(p in x["id"] for p in picks)]
     return chosen
+
+
+def copies_of(chosen: list[dict[str, str]], wants: list[str]) -> list[dict[str, str]]:
+    """`chosen` with each label repeated as ``--copies TEXT=N`` asks: N
+    stickers, one after the other, of every label whose id contains TEXT.
+    A label two of them match gets the larger number."""
+    if not wants:
+        return chosen
+    count: dict[str, int] = {}
+    for w in wants:
+        text, sep, n = w.rpartition("=")
+        if not sep or not text or not n.isdigit() or not 1 <= int(n) <= state.STICKERS:
+            raise ToolError(f"--copies {w!r}: give TEXT=N, N from 1 to {state.STICKERS}")
+        hit = [x["id"] for x in chosen if text in x["id"]]
+        if not hit:
+            raise ToolError(f"--copies {text!r} matches none of: "
+                            + "; ".join(x["id"] for x in chosen))
+        for i in hit:
+            count[i] = max(count.get(i, 1), int(n))
+    return [x for x in chosen for _ in range(count.get(x["id"], 1))]
 
 
 # --- the plan --------------------------------------------------------------------------
@@ -361,12 +382,14 @@ def cmd_print(args: argparse.Namespace, store: state.Store) -> int:
         if before:
             print(f"note: {x['id']} is already on this sheet, in {', '.join(before)}",
                   file=sys.stderr)
+    chosen = copies_of(chosen, args.copies)
     try:
         at, guides = sheet.allocate([state.Want(x["id"], x["size"]) for x in chosen])
     except state.SheetFullError as exc:
         raise ToolError(str(exc)) from exc
-    slot_of = dict(at)
     plan: dict[str, Any] = {"labels": [{"id": i, "slot": s} for i, s in at], "guides": guides}
+    if len({i for i, _ in at}) < len(at):
+        plan["copies"] = True  # the same label in more than one slot, and meant
     if not sheet.marked:
         plan["sheet"] = {"id": sheet.id, "note": sheet.note()}
     d = plan_dir(store, sheet)
@@ -374,7 +397,9 @@ def cmd_print(args: argparse.Namespace, store: state.Store) -> int:
     place(rh, data, args.only, d / "plan.json", d / "pass.pdf")
     meta = {"sheet": sheet.id, "revision": sheet.revision(), "data": str(data),
             "only": args.only, "printer": printer_uri(args.printer or sheet.printer),
-            "placed": [[x["id"], slot_of[x["id"]], x["host"], x["title"]] for x in chosen],
+            # allocate answers in the order asked, so a label's copies each keep their slot
+            "placed": [[x["id"], slot, x["host"], x["title"]]
+                       for x, (_, slot) in zip(chosen, at, strict=True)],
             "guides": guides, "marked": "sheet" in plan, "pdf": str(d / "pass.pdf"),
             "made": now().isoformat(timespec="seconds"), "committed": None}
     (d / "meta.json").write_text(json.dumps(meta, indent=1))
@@ -652,6 +677,8 @@ def parser() -> argparse.ArgumentParser:
                    help="as rpi-hwid labels --only")
     p.add_argument("--label", action="append", default=[], metavar="TEXT",
                    help="only the labels whose id contains this")
+    p.add_argument("--copies", action="append", default=[], metavar="TEXT=N",
+                   help="N stickers of each label whose id contains TEXT (the others: one)")
     p.add_argument("--printer", help="for a new sheet (default $RPI_HWID_PRINTER)")
     p.add_argument("--prepare", action="store_true",
                    help="make the plan and preview only; rpi-hwid-sheet commit sends it")

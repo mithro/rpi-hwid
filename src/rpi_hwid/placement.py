@@ -124,7 +124,7 @@ def parse_slot(text: str) -> tuple[int, int | None]:
     return int(m.group(1)), (QUARTERS.index(q) if q else None)
 
 
-PLAN_KEYS = ("labels", "guides", "sheet", "outline")
+PLAN_KEYS = ("labels", "guides", "sheet", "outline", "copies")
 
 
 def check_shape(plan: Any) -> None:
@@ -153,6 +153,8 @@ def check_shape(plan: Any) -> None:
         raise PlacementError("sheet is an object with an id string (and a note string)")
     if not isinstance(plan.get("outline", False), bool):
         raise PlacementError("outline is true or false")
+    if not isinstance(plan.get("copies", False), bool):
+        raise PlacementError("copies is true or false")
 
 
 def check(plan: dict[str, Any], by_id: dict[str, Entry]
@@ -165,7 +167,9 @@ def check(plan: dict[str, Any], by_id: dict[str, Entry]
     quarters: set[tuple[int, int]] = set()
     names = Counter(p["id"] for p in plan["labels"])
     again = sorted(i for i, n in names.items() if n > 1)
-    if again:
+    # A label in two slots is a mistake unless the plan says copies are
+    # meant ("copies": true); each copy still needs a slot of its own.
+    if again and not plan.get("copies", False):
         raise PlacementError(f"placed more than once: {', '.join(again)}")
     for p in plan["labels"]:
         e = by_id.get(p["id"])

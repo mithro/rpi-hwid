@@ -414,3 +414,20 @@ def test_the_ticks_are_bold_enough_to_see_through_a_label_backing(docs, tmp_path
     y = grid_top - labels.LABEL_H
     for dy in (-0.2 * mm, 0, 0.2 * mm):
         assert ink_row(y + dy, side - 0.5, side + 0.5)
+
+
+def test_a_label_is_placed_twice_only_when_the_plan_says_copies(docs, tmp_path):
+    (label, *_rest) = [e.id for e in placement.entries(docs, set(labels.KINDS), None)
+                       if e.size == "sticker"]
+    plan = {"labels": [{"id": label, "slot": "1"}, {"id": label, "slot": "2"}]}
+    with pytest.raises(placement.PlacementError, match="placed more than once"):
+        placement.render(docs, plan, tmp_path / "a.pdf", set(labels.KINDS), None)
+    assert placement.render(docs, {**plan, "copies": True}, tmp_path / "b.pdf",
+                            set(labels.KINDS), None) == 2
+    # copies still need a slot each
+    same = {"labels": [{"id": label, "slot": "1"}, {"id": label, "slot": "1"}], "copies": True}
+    with pytest.raises(placement.PlacementError, match="sticker 1 is printed twice"):
+        placement.render(docs, same, tmp_path / "c.pdf", set(labels.KINDS), None)
+    with pytest.raises(placement.PlacementError, match="copies is true or false"):
+        placement.render(docs, {**plan, "copies": "yes"}, tmp_path / "d.pdf",
+                         set(labels.KINDS), None)

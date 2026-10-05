@@ -743,3 +743,55 @@ def test_only_a_job_the_printer_forgot_gets_the_hint(run, printer):
     rc, _, err = run("follow", sid)
     assert rc == 2
     assert "no longer says how job" in err
+
+
+# --- more than one sticker of a label (--copies) -------------------------------------------
+
+
+def test_copies_gives_a_label_a_sticker_each_in_one_pass(run, printer):
+    p = printer()
+    sid = new_sheet(run, p)
+    plan, out = prepare(run, sid, "pi3", "--copies", "/rpi/=2")
+    rows = [line.split(None, 1) for line in out.splitlines()
+            if line.startswith("  ") and line.split()[0].isdigit()]
+    assert [slot for slot, _ in rows] == ["1", "2", "3"]
+    assert rows[0][1] == rows[1][1]  # the Pi's label twice, then the other label once
+    assert "/rpi/" in rows[0][1]
+    assert "/rpi/" not in rows[2][1]
+    made = json.loads((run.root / "plans" / plan / "plan.json").read_text())
+    assert made["copies"] is True
+    assert [x["slot"] for x in made["labels"]] == ["1", "2", "3"]
+    assert (run.root / "plans" / plan / "pass.pdf").read_bytes().startswith(b"%PDF")
+    rc, _, err = run("commit", plan)
+    assert rc == 0, err
+    s = state.Store(run.root).load(sid)
+    assert sorted(s.slots, key=int) == ["1", "2", "3"]
+    assert s.slots["1"]["label"] == s.slots["2"]["label"] != s.slots["3"]["label"]
+    assert len(s.passes[0]["labels"]) == 3
+    # the next pass starts after all three
+    _, out = prepare(run, sid, "pi3", "--label", "/rpi/")
+    assert any(line.split()[0] == "4" for line in out.splitlines() if "/rpi/" in line)
+
+
+def test_without_copies_a_plan_does_not_say_copies(run, printer):
+    sid = new_sheet(run, printer())
+    plan, _ = prepare(run, sid, "pi3")
+    assert "copies" not in json.loads((run.root / "plans" / plan / "plan.json").read_text())
+
+
+def test_copies_must_name_a_label_and_a_number(run, printer):
+    sid = new_sheet(run, printer())
+    cases = (("/rpi/", "give TEXT=N"), ("/rpi/=0", "give TEXT=N"), ("/rpi/=two", "give TEXT=N"),
+             ("=2", "give TEXT=N"), ("/nothing/=2", "matches none of"))
+    for bad, why in cases:
+        rc, _, err = run("print", sid, "pi3", "--prepare", "--copies", bad)
+        assert rc == 2, bad
+        assert why in err, bad
+    assert state.Store(run.root).load(sid).slots == {}
+
+
+def test_copies_that_do_not_fit_say_the_sheet_is_full(run, printer):
+    sid = new_sheet(run, printer())
+    rc, _, err = run("print", sid, "pi3", "--prepare", "--copies", "/rpi/=21")
+    assert rc == 2
+    assert "start a new sheet" in err
