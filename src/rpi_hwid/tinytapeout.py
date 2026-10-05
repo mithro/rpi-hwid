@@ -780,26 +780,41 @@ def raw_repl_exec(fd, code, timeout):
     Ctrl-C twice interrupts a running program, Ctrl-A enters the raw REPL
     (the board answers with a banner), the code followed by Ctrl-D runs
     it (the board answers "OK", the output, Ctrl-D, any traceback,
-    Ctrl-D, ">"), and Ctrl-B returns to the friendly REPL.
+    Ctrl-D, ">"), and Ctrl-B returns to the friendly REPL. Ctrl-B is sent
+    on every way out once Ctrl-A has been, success or failure.
     """
     deadline = time.monotonic() + timeout
     t = Tty(fd)
     t.write(b"\r\x03\x03", deadline)
     t.drain(0.3)
-    t.write(b"\r\x01", deadline)
-    if t.read_until(RAW_REPL_BANNER, deadline) is None:
-        raise OSError("no raw REPL prompt (not MicroPython, or busy)")
-    t.write(code.encode("utf-8") + b"\x04", deadline)
-    if t.read_until(b"OK", min(deadline, time.monotonic() + 2)) is None:
-        raise OSError("board did not accept the snippet")
-    out = t.read_until(b"\x04", deadline)
-    if out is None:
-        raise OSError("timed out waiting for the snippet's output")
-    err = t.read_until(b"\x04", deadline)
-    if err is None:
-        raise OSError("timed out waiting for the snippet to finish")
-    t.write(b"\r\x02", deadline)
-    return (out[:-1].decode("utf-8", "replace"), err[:-1].decode("utf-8", "replace"))
+    left = False
+    try:
+        t.write(b"\r\x01", deadline)
+        if t.read_until(RAW_REPL_BANNER, deadline) is None:
+            raise OSError("no raw REPL prompt (not MicroPython, or busy)")
+        t.write(code.encode("utf-8") + b"\x04", deadline)
+        if t.read_until(b"OK", min(deadline, time.monotonic() + 2)) is None:
+            raise OSError("board did not accept the snippet")
+        out = t.read_until(b"\x04", deadline)
+        if out is None:
+            raise OSError("timed out waiting for the snippet's output")
+        err = t.read_until(b"\x04", deadline)
+        if err is None:
+            raise OSError("timed out waiting for the snippet to finish")
+        t.write(b"\r\x02", deadline)
+        left = True
+        return (out[:-1].decode("utf-8", "replace"), err[:-1].decode("utf-8", "replace"))
+    finally:
+        if not left:
+            # Never leave the board in the raw REPL: whoever uses the port
+            # next (the site's bridge, a person) expects the ">>>" prompt.
+            # Ctrl-C stops a snippet still running, Ctrl-B leaves; at the
+            # friendly prompt both are harmless. Its own short deadline:
+            # the one above may be what just ran out.
+            try:
+                t.write(b"\r\x03\x03\r\x02", time.monotonic() + 2)
+            except OSError:
+                pass
 
 
 def blame(tty, what):
