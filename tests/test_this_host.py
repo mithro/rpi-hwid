@@ -31,7 +31,7 @@ def host(tmp_path, monkeypatch):
     monkeypatch.setattr(fpga, "ROOT", str(tmp_path))
 
     def sh(args, timeout=15):
-        if args[:2] == ["sudo", "vcgencmd"]:
+        if args[-1:] == ["pmic_read_adc"]:
             return f"EXT5V_V volt(24)={PMIC['ext5v']}V\nBATT_V volt(25)=3.26000000V\n"
         if args == ["vcgencmd", "get_throttled"]:
             return "throttled=0x0"
