@@ -70,6 +70,31 @@ board kind (`netv2`, `arty`, `acorn`, `pcileech`, `cynthion`) where one host
 carries more than one board; `--list` prints what
 would be generated and where.
 
+### Other sheets: `--stock`
+
+The label is always 63.5 × 38.1 mm. `--stock` chooses what it is laid out on:
+
+| `--stock` | Sheet | Grid |
+|---|---|---|
+| `L7160` (default) | A4, Avery L7160 stickers of the label's own size | 3 × 7 |
+| `avery-5163` | US Letter, Avery 5163 / 8163 stickers, 4 × 2 in (101.6 × 50.8 mm) | 2 × 5; each label at its own size in the middle of a larger sticker, never stretched |
+| `letter-plain` | plain US Letter paper | 3 × 6, a line round each label to cut along |
+
+```console
+$ rpi-hwid labels --data data/ --stock avery-5163 --out labels-us.pdf
+$ rpi-hwid labels --data data/ --stock letter-plain --out labels-us-plain.pdf
+```
+
+The `avery-5163` grid is measured from Avery's own PDF template for the product
+(`U-0090-01.pdf` from avery.com/templates/5163): outlines of 4 × 2 in, the two
+columns 0.156 and 4.344 in from the left edge, the five rows every 2 in from
+0.5 in down. **It has not been tried on a real sheet by us**: print it on plain
+paper with `--outline` first (which draws the sticker edges too) and hold it
+against the sheet. Each US Letter sheet says so in a line in its top margin.
+
+Print at 100 %, as on A4. The sheet tool (`rpi-hwid-sheet`, and `--place`),
+which records what was printed on which sticker, knows only L7160.
+
 ### Chosen labels in chosen slots
 
 A sheet that is printed a few labels at a time keeps its used stickers where
