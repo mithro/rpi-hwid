@@ -215,6 +215,10 @@ def header_as_read(header: list[str] | None, d: dict[str, Any],
     a HAT known only by its chips there (a Waveshare PoE HAT (B)) would be
     missed and "HAT none" printed on its Pi."""
     buses = d.get("header_buses_read") or {}
+    if d.get("header_buses_skipped") and not d.get("hat_fw"):
+        # A Compute Module: the carrier's header pins were left alone, so a
+        # HAT on a carrier that has a header was not looked for.
+        return header or None
     if not buses or d.get("hat_fw"):
         return header             # no header to read, or the firmware read it
     if buses.get("id") is False or (user_bus and buses.get("user") is False):

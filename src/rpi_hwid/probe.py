@@ -1197,12 +1197,13 @@ def riscv_summary(rv):
 def collect(user_bus=None, cameras=True):
     """Everything the probe reads, as the evidence document.
 
-    `user_bus` unset scans the header's buses wherever the board has a HAT
-    header of its own, which a Compute Module has not: its GPIO0-3 belong to
-    whatever carrier it sits in (on a Compute Blade wired to an SQRL Acorn,
-    GPIO2 and GPIO3 are the JTAG wires TDI and TDO), so on a Compute Module
-    neither header bus is brought up or scanned unless `user_bus=True` asks
-    for it, and the document says they were left alone.
+    `user_bus` unset scans the header's buses on every board but a Compute
+    Module, whose GPIO0-3 go wherever its carrier takes them (on a Compute
+    Blade wired to an SQRL Acorn, GPIO2 and GPIO3 are the JTAG wires TDI and
+    TDO): there neither header bus is brought up or scanned unless
+    `user_bus=True` asks for it -- `user_bus=False` included -- and the
+    document says they were left alone. A HAT on a carrier that has a header
+    is then seen only if the firmware read its EEPROM itself.
 
     `user_bus=False` leaves the header's user bus (pins 3/5, GPIO2/3 on a
     Pi) entirely alone: no dtparam for it, no open, no scan. On an
@@ -1473,8 +1474,8 @@ def verdict(d):
     buses = HEADER_BUSES.get(d.get("board", "rpi")) or {}
     if d.get("header_buses_skipped"):
         buses = {}
-        ev.append("header buses left alone: a Compute Module has no HAT header of its own, "
-                  "GPIO0-3 belong to its carrier (--user-bus scans them)")
+        ev.append("header buses left alone: a Compute Module's GPIO0-3 belong to its carrier, "
+                  "so a HAT there was not looked for (--user-bus scans them)")
     read_ok = d.get("header_buses_read") or {}
     unread = [role for role in ("id", "user") if role in buses and not read_ok.get(role)]
     if unread:
@@ -1494,7 +1495,7 @@ def verdict(d):
     if not header and d.get("board") in ("riscv", "x86"):
         header = ["no HAT header on this board"]
     elif not header and d.get("header_buses_skipped"):
-        header = ["no HAT header of its own (Compute Module): the carrier's pins were not scanned"]
+        header = ["Compute Module: the carrier's header pins were not scanned"]
     elif not header:
         header = ["nothing identifiable on the header" if not unread else
                   "nothing identifiable on the header, and it was not fully read"]

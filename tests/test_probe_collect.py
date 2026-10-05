@@ -2829,8 +2829,7 @@ def test_a_compute_modules_header_buses_are_left_alone(fake_root, monkeypatch):
     assert d["header_buses_read"] == {}
     assert d["header_i2c"] is None
     v = probe.verdict(d)
-    assert v["header"] == ["no HAT header of its own (Compute Module): "
-                           "the carrier's pins were not scanned"]
+    assert v["header"] == ["Compute Module: the carrier's header pins were not scanned"]
     assert any(e.startswith("header buses left alone") for e in v["evidence"])
     assert not any("could not be read" in e for e in v["evidence"])
     assert v["summary"]["header"] == []
