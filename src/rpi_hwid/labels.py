@@ -1096,14 +1096,8 @@ def draw_tinytapeout(lab, tt):
     cap_w = 14 * mm
     lab.captioned(x, x + cap_w, y, "board", tt.demoboard_text, SANS, 7.5, col_w - cap_w)
     y += row
-    if tt.commit:
-        lab.captioned(x, x + cap_w, y, "ROM commit", tt.commit, MONO, 7.5, col_w - cap_w)
-    elif tt.shuttle:
-        # the ROM answered, it just holds no commit: TT03p5's carries the
-        # shuttle name and nothing else, and the FPGA breakout has no ROM
-        lab.captioned(x, x + cap_w, y, "ROM", "no commit", SANS, 7.5, col_w - cap_w)
-    else:
-        lab.captioned(x, x + cap_w, y, "ROM", "not read", SANS, 7.5, col_w - cap_w)
+    caption, text, font = tinytapeout_rom_line(tt)
+    lab.captioned(x, x + cap_w, y, caption, text, font, 7.5, col_w - cap_w)
     y += row
 
     # The colours, so a board can be matched to its label across the bench.
@@ -1721,6 +1715,23 @@ class TinyTapeoutLabel:
     demoboard_colour_name: str | None = None
     demoboard_silk: str | None = None
     demoboard_silk_name: str | None = None
+
+
+def tinytapeout_rom_line(tt: TinyTapeoutLabel) -> tuple[str, str, str]:
+    """(caption, text, font) of the label's chip ROM line."""
+    if tt.commit:
+        return "ROM commit", tt.commit, MONO
+    if tt.chip == "fpga":
+        # There is no chip ROM to read on the FPGA breakout, whether the SDK
+        # was told so by config.ini (shuttle "FPGA") or the identity came
+        # with no shuttle at all (fpgas-verify's): "not read" would say a
+        # read is still owed.
+        return "ROM", "none", SANS
+    if tt.shuttle:
+        # the ROM answered, it just holds no commit: TT03p5's carries the
+        # shuttle name and nothing else
+        return "ROM", "no commit", SANS
+    return "ROM", "not read", SANS
 
 
 @dataclass(frozen=True)
