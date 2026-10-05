@@ -9,6 +9,9 @@ nothing between rows, 7.21 mm side and 15.15 mm top/bottom margins). Print
 it at 100 % -- "fit to page" shrinks the grid and every label lands off its
 sticker. ``--outline`` draws the sticker edges for a plain-paper alignment
 print.
+``--stock`` lays the same labels out on another sheet: ``avery-5163`` (US
+Letter, 4 x 2 inch stickers) or ``letter-plain`` (plain US Letter, with a
+line to cut along); see STOCKS.
 
 Every label carries only what cannot change: a Pi's revision code, serial
 and soldered-down MACs and the HAT it wears; an Orange Pi's SoC serial,
@@ -53,8 +56,8 @@ from typing import TYPE_CHECKING
 
 import segno
 from reportlab.lib.colors import HexColor, black
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import mm
+from reportlab.lib.pagesizes import A4, letter
+from reportlab.lib.units import inch, mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
@@ -82,6 +85,76 @@ COLS, ROWS = 3, 7
 MARGIN_X, MARGIN_Y = 7.21 * mm, 15.15 * mm
 GAP_X, GAP_Y = 2.54 * mm, 0.0
 PAD = 2.5 * mm            # keep ink this far from the die-cut edge
+
+
+@dataclass(frozen=True)
+class Stock:
+    """A sheet the labels can be laid out on: a paper size and a grid of
+    stickers. The label keeps its own size (LABEL_W x LABEL_H) on every
+    stock and sits in the middle of a sticker that is larger than it, never
+    stretched to fill it. `cut` draws each label's edge as a line to cut
+    along (plain paper); `note` is one line printed in the top margin."""
+    name: str
+    page: tuple[float, float]
+    cols: int
+    rows: int
+    sticker_w: float
+    sticker_h: float
+    margin_x: float
+    margin_y: float
+    gap_x: float
+    gap_y: float
+    cut: bool = False
+    note: str | None = None
+    note_y: float = 0.0       # the note's baseline, measured down from the top edge
+
+    @property
+    def per_sheet(self):
+        return self.cols * self.rows
+
+    def sticker_origin(self, index):
+        """Bottom-left corner of sticker `index` on its sheet, reading order."""
+        col, row = index % self.cols, index // self.cols
+        x = self.margin_x + col * (self.sticker_w + self.gap_x)
+        y = self.page[1] - self.margin_y - (row + 1) * self.sticker_h - row * self.gap_y
+        return x, y
+
+    def label_origin(self, index):
+        """Bottom-left corner of the label in sticker `index`."""
+        x, y = self.sticker_origin(index)
+        return x + (self.sticker_w - LABEL_W) / 2, y + (self.sticker_h - LABEL_H) / 2
+
+
+# L7160 is the stock every sheet so far was printed on, and the only one the
+# sheet tool (rpi-hwid-sheet, rpi_hwid.placement) knows.
+#
+# avery-5163: US Letter, ten 4 x 2 inch stickers, two across and five down.
+# The grid is measured from Avery's own PDF template for the product
+# (U-0090-01.pdf, "Avery5163ShippingLabels.pdf", from avery.com/templates/5163,
+# read 2026-10-05): outlines 4.0000 x 2.0000 in, columns at 0.1556 and
+# 4.3438 in from the left edge, rows every 2.0000 in from 0.5000 in down.
+# The side margin is taken as 5/32 in (0.15625), which that file's 0.1556
+# rounds and which leaves the same margin on the right. Avery sells the same
+# grid as 8163 (inkjet). NOT tried on a real sheet by us.
+#
+# letter-plain: plain US Letter, the labels at true size with a line to cut
+# along, 6 mm apart so one cut never touches two labels.
+STOCKS = {s.name: s for s in (
+    Stock("L7160", A4, COLS, ROWS, LABEL_W, LABEL_H, MARGIN_X, MARGIN_Y, GAP_X, GAP_Y),
+    Stock("avery-5163", letter, 2, 5, 4 * inch, 2 * inch, 0.15625 * inch, 0.5 * inch,
+          0.1875 * inch, 0.0,
+          note="Avery 5163 / 8163 (4 x 2 in), grid from Avery's template. Not yet tried on "
+               "real stock: print on plain paper first and hold it against the sheet. "
+               "Print at 100 %, no scaling.",
+          note_y=0.36 * inch),
+    Stock("letter-plain", letter, 3, 6, LABEL_W, LABEL_H,
+          (letter[0] - 3 * LABEL_W - 2 * 6 * mm) / 2, (letter[1] - 6 * LABEL_H - 5 * 6 * mm) / 2,
+          6 * mm, 6 * mm, cut=True,
+          note="Plain US Letter: labels at true size (63.5 x 38.1 mm). Print at 100 %, "
+               "no scaling; cut along the lines.",
+          note_y=7 * mm),
+)}
+DEFAULT_STOCK = "L7160"
 
 # --- fonts --------------------------------------------------------------------
 #
@@ -269,6 +342,14 @@ class Label:
         c = self.c
         c.setStrokeColor(HexColor("#bbbbbb"))
         c.setLineWidth(0.3)
+        c.rect(self.x0, self.y0, LABEL_W, LABEL_H, stroke=1, fill=0)
+        c.setStrokeColor(black)
+
+    def cut_line(self):
+        """The label's edge as a line to cut along, on plain paper."""
+        c = self.c
+        c.setStrokeColor(GREY)
+        c.setLineWidth(0.5)
         c.rect(self.x0, self.y0, LABEL_W, LABEL_H, stroke=1, fill=0)
         c.setStrokeColor(black)
 
@@ -2160,24 +2241,48 @@ def label_origin(index):
     return x, y
 
 
+def sheet_furniture(c, stock, outline):
+    """What a sheet of `stock` carries besides its labels: its note in the
+    top margin, and with `outline` the edge of every sticker that is larger
+    than the label (the label's own edge is the label's to draw)."""
+    if stock.note:
+        c.setFillColor(GREY)
+        c.setFont(SANS, 7)
+        c.drawCentredString(stock.page[0] / 2, stock.page[1] - stock.note_y, stock.note)
+        c.setFillColor(black)
+    if outline and (stock.sticker_w, stock.sticker_h) != (LABEL_W, LABEL_H):
+        c.setStrokeColor(HexColor("#bbbbbb"))
+        c.setLineWidth(0.3)
+        for index in range(stock.per_sheet):
+            c.rect(*stock.sticker_origin(index), stock.sticker_w, stock.sticker_h,
+                   stroke=1, fill=0)
+        c.setStrokeColor(black)
+
+
 def render(docs, out, only=KINDS, start=0, outline=False,
-           pinned_names=None, order=None, invariant=False):
+           pinned_names=None, order=None, invariant=False, stock=DEFAULT_STOCK):
     """Write the PDF to `out` (a path or a binary file); returns (label
     count, sheet count). `invariant` leaves the creation date and document
-    id out, so the same labels make the same bytes."""
+    id out, so the same labels make the same bytes. `stock` names the sheet
+    (STOCKS)."""
     register_fonts()
+    stock = STOCKS[stock]
     labels = list(all_labels(docs, set(only), pinned_names, order))
-    c = canvas.Canvas(out if hasattr(out, "write") else str(out), pagesize=A4,
+    c = canvas.Canvas(out if hasattr(out, "write") else str(out), pagesize=stock.page,
                       invariant=1 if invariant else 0)
     c.setTitle("Hardware identity labels")
     c.setAuthor("rpi-hwid labels")
-    per_sheet = COLS * ROWS
+    per_sheet = stock.per_sheet
     for i, (_host, _kind, _title, draw, data) in enumerate(labels):
         pos = i + start
         if pos and pos % per_sheet == 0:
             c.showPage()
-        lab = Label(c, *label_origin(pos % per_sheet))
-        if outline:
+        if i == 0 or pos % per_sheet == 0:
+            sheet_furniture(c, stock, outline)
+        lab = Label(c, *stock.label_origin(pos % per_sheet))
+        if stock.cut:
+            lab.cut_line()
+        elif outline:
             lab.outline()
         draw(lab, data)
     c.showPage()
@@ -2257,13 +2362,14 @@ def list_labels(inputs, only=ALL_KINDS, pinned_names=None):
 
 
 def render_sheet(inputs, only=ALL_KINDS, start=0, outline=False, pinned_names=None,
-                 artwork=None):
-    """The label inputs' labels on A4 L7160 sheets, as PDF bytes: the same
-    PDF `rpi-hwid labels` writes, its first `start` positions left blank."""
+                 artwork=None, stock=DEFAULT_STOCK):
+    """The label inputs' labels on sheets of `stock` (A4 L7160 unless named),
+    as PDF bytes: the same PDF `rpi-hwid labels` writes, its first `start`
+    positions left blank."""
     buf = io.BytesIO()
     with _artwork(artwork):
         render(documents(inputs), buf, _only(only), start, outline, pinned_names,
-               invariant=True)
+               invariant=True, stock=stock)
     return buf.getvalue()
 
 
@@ -2326,6 +2432,9 @@ def main(argv=None):
     ap.add_argument("--start", type=int, default=0,
                     help="leave the first N positions of the first sheet blank")
     ap.add_argument("--outline", action="store_true", help="draw each label's edge")
+    ap.add_argument("--stock", choices=sorted(STOCKS), default=DEFAULT_STOCK,
+                    help="the sheet: L7160 (A4, the default), avery-5163 (US Letter, 4 x 2 in "
+                         "stickers) or letter-plain (plain US Letter, with cut lines)")
     ap.add_argument("--artwork", type=Path, help="directory holding the maker marks")
     ap.add_argument("--names", type=Path,
                     help="JSON map of Arty serial -> name, the registry that pins names")
@@ -2372,6 +2481,9 @@ def _main(ap, args, micro_kinds):
         ap.error("--json goes with --list")
     if args.place and (args.list or args.start):
         ap.error("--place gives every label its slot: it takes no --list or --start")
+    if args.stock != DEFAULT_STOCK and (args.place or (args.list and args.json)):
+        ap.error("--place and --list --json are the L7160 sheet tool's: they take no --stock")
+    stock = STOCKS[args.stock]
     if args.check:
         return check_main(docs, only)
     from rpi_hwid import placement
@@ -2390,10 +2502,11 @@ def _main(ap, args, micro_kinds):
         for i, (host, kind, title, _, _) in enumerate(rows):
             pos = i + args.start
             print("sheet %d row %d col %d  %-*s  %-6s %s" % (
-                pos // (COLS * ROWS) + 1, pos % (COLS * ROWS) // COLS + 1, pos % COLS + 1,
-                width, host, kind, title))
+                pos // stock.per_sheet + 1, pos % stock.per_sheet // stock.cols + 1,
+                pos % stock.cols + 1, width, host, kind, title))
         return 0
-    n, sheets = render(docs, args.out, only, args.start, args.outline, pinned)
+    n, sheets = render(docs, args.out, only, args.start, args.outline, pinned,
+                       stock=args.stock)
     print("%d labels on %d sheet%s -> %s" % (n, sheets, "" if sheets == 1 else "s", args.out))
     return 0
 
