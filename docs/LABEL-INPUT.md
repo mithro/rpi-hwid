@@ -108,7 +108,7 @@ whose header was not read, and `--check` lists only what `--only` asks for.
 
 | label | needs | optional |
 |---|---|---|
-| Raspberry Pi | `model`, `serial`, `revision` (one this package can decode), `macs`, `header` (`[]` when read and bare); on a Pi 5 also `fan` and `rtc_battery` | `memory`, `hat_uuid`, `compatible`, `power_class`, `max_current_ma`, `ext5v_v` |
+| Raspberry Pi | `model`, `serial`, `revision` (one this package can decode), `macs`, `header` (`[]` when read and bare); on a Pi 5, Pi 500 or Compute Module 5 also `fan` and `rtc_battery` | `memory`, `hat_uuid`, `compatible`, `power_class`, `max_current_ma`, `ext5v_v` |
 | Orange Pi | `serial`, `compatible`, `memory`, `macs`, `header` | the rest |
 | RISC-V board | `serial`, `macs`, `riscv` | the rest |
 | PC | `macs`, `dmi` (a PC's firmware may carry no serial, which its label says) | the rest |
@@ -209,7 +209,7 @@ What it does, and puts back:
   the apply failed, or something else changed the list meanwhile -- it
   removes nothing. The firmware's own reading of the HAT comes from
   `/proc/device-tree/hat`.
-* `vcgencmd get_throttled`, and on a Pi 5 `sudo vcgencmd pmic_read_adc`: reads.
+* `vcgencmd get_throttled`, and on a BCM2712 board (Pi 5, Pi 500, Compute Module 5) `vcgencmd pmic_read_adc`, tried as the user and then with `sudo -n`: reads.
 * sysfs, procfs and the device tree: reads. On a PC (no device tree), the
   root-only DMI serials through `sudo -n cat`.
 

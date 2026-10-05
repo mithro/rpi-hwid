@@ -303,7 +303,7 @@ def fake_root(tmp_path, monkeypatch):
     # what it would on a machine lacking the tool, and the PMIC line is fed
     # by the one stub that matters
     def fake_sh(args, timeout=15):
-        if args[:2] == ["sudo", "vcgencmd"]:
+        if args[-1:] == ["pmic_read_adc"]:
             return ("EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n")
         if args == ["vcgencmd", "get_throttled"]:
             return "throttled=0x0"
@@ -2718,3 +2718,86 @@ def test_from_report_lists_only_what_was_taken_from_the_report():
                                      "flash_sfdp"]})
     assert boards[0]["from_report"] == ["flash_uid", "flash_uid_state"]
     assert boards[0]["flash_uid"] == "ab"
+
+
+def test_a_compute_module_5_is_read_as_the_pi_5_family(fake_root):
+    """Its model has no "Pi 5" in it; the device tree's compatible names the
+    SoC (mithro/rpi-hwid issue #81: no label could be drawn for a CM5)."""
+    _w(fake_root, "/proc/device-tree/model", "Raspberry Pi Compute Module 5 Lite Rev 1.0\0")
+    _w(fake_root, "/proc/device-tree/compatible", "raspberrypi,5-compute-module\0brcm,bcm2712\0")
+    d = probe.collect()
+    assert d["pi5"] is True
+    assert d["rtc_batt_v"] == 3.26
+    assert d["fan_dt"] == "okay"
+    s = probe.verdict(d)["summary"]
+    assert (s["fan"], s["rtc_battery"]) == (True, True)
+
+
+def test_the_pmic_is_asked_as_the_user_before_sudo(fake_root, monkeypatch):
+    calls = []
+
+    def sh(args, timeout=15):
+        calls.append(args)
+        if args == ["vcgencmd", "pmic_read_adc"]:
+            return "EXT5V_V volt(24)=5.10000000V\nBATT_V volt(25)=0.00300000V\n"
+        return ""
+    monkeypatch.setattr(probe, "sh", sh)
+    d = probe.collect()
+    assert d["rtc_batt_v"] == 0.003
+    assert ["sudo", "-n", "vcgencmd", "pmic_read_adc"] not in calls
+    assert probe.verdict(d)["summary"]["rtc_battery"] is False
+
+
+def test_an_unread_rtc_battery_is_unread_not_absent(fake_root, monkeypatch):
+    """No passwordless sudo and no answer as the user: the voltage is not
+    known, so the summary says null (and the label asks for it) rather than
+    claiming there is no battery."""
+    calls = []
+    monkeypatch.setattr(probe, "sh", lambda args, timeout=15: calls.append(args) or "")
+    d = probe.collect()
+    assert ["vcgencmd", "pmic_read_adc"] in calls
+    assert ["sudo", "-n", "vcgencmd", "pmic_read_adc"] in calls, "never a sudo that can prompt"
+    assert d["rtc_batt_v"] is None
+    v = probe.verdict(d)
+    assert v["summary"]["rtc_battery"] is None
+    assert any(e.startswith("RTC battery: not read") for e in v["evidence"])
+
+
+def test_a_compute_module_draws_no_power_class_from_the_usb_c_fields(fake_root):
+    """Its 5 V comes through the carrier: max_current 3000 would otherwise
+    read as "a GPIO-fed HAT or a 3 A USB-C splitter", which it cannot be."""
+    _w(fake_root, "/proc/device-tree/model", "Raspberry Pi Compute Module 5 Lite Rev 1.0\0")
+    _w(fake_root, "/proc/device-tree/compatible", "raspberrypi,5-compute-module\0brcm,bcm2712\0")
+    d = probe.collect()
+    assert d["compute_module"] is True
+    assert d["max_current_ma"] == 3000
+    v = probe.verdict(d)
+    assert not any(e.startswith("USB-C as the firmware sees it") for e in v["evidence"])
+    assert any(e.startswith("Compute Module: 5 V comes through the carrier") and
+               "5 V input 5.34 V" in e for e in v["evidence"])
+    assert v["power"].startswith("a Compute Module is powered through its carrier")
+    assert v["summary"]["power_class"] == "undetermined"
+
+
+def test_a_pi_5_is_no_compute_module(fake_root):
+    d = probe.collect()
+    assert d["compute_module"] is False
+    assert any(e.startswith("USB-C as the firmware sees it") for e in probe.verdict(d)["evidence"])
+
+
+def test_sudo_is_tried_when_the_plain_answer_lacks_the_battery_line(fake_root, monkeypatch):
+    def sh(args, timeout=15):
+        if args == ["vcgencmd", "pmic_read_adc"]:
+            return "EXT5V_V volt(24)=5.10000000V"
+        if args == ["sudo", "-n", "vcgencmd", "pmic_read_adc"]:
+            return "EXT5V_V volt(24)=5.10000000V\nBATT_V volt(25)=3.10000000V\n"
+        return ""
+    monkeypatch.setattr(probe, "sh", sh)
+    assert probe.collect()["rtc_batt_v"] == 3.1
+
+
+def test_an_unread_5v_input_is_not_printed_as_zero_volts(fake_root, monkeypatch):
+    monkeypatch.setattr(probe, "sh", lambda args, timeout=15: "")
+    v = probe.verdict(probe.collect())
+    assert any("5 V input not read" in e for e in v["evidence"])
+    assert not any("0.00 V" in e for e in v["evidence"])

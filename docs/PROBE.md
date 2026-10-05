@@ -12,9 +12,9 @@ modules for boards attached to the Pi. For installing and running it, see the
 | HAT ID EEPROM at `0x51`–`0x57`, read off the ID bus | boards the firmware **never reads**: Waveshare's PoE M.2 HAT+ (B) puts a well-formed HAT+ EEPROM at `0x52` (product string, pid `0x6d87`, a DT atom naming `pciex1`) |
 | devices on the header's user bus | Waveshare PoE HAT (B): SSD1306 at `0x3c` and PCF8574 at `0x20`. The bus is brought up for the scan when the board has it disabled — as most of the fleet does — and put back afterwards |
 | USB tree | Waveshare PoE-ETH-USB-HUB-HAT on a Zero: a Terminus `1a40:0101` hub on the root port with an RTL8152 on its port 4. That RTL8152 is reported as the Zero's wired port, not as a removable adapter |
-| Pi 5 `max_current` | the firmware's USB-C verdict: 5000 after a PD contract, **3000 both for a 3 A resistor source and for no USB-C source at all** (a HAT on the GPIO 5 V pins), 1500 or 900 for a resistor source advertising that much, so 900/1500 proves an external USB-C supply |
-| Pi 5 PMIC ADC | 5 V input (GPIO-fed HATs 5.1–5.4 V, splitters 4.8–5.0 V) and the RTC cell (about 3 V fitted, under 0.01 V not) |
-| Pi 5 `cooling_fan` node | a fan on the Pi's own header |
+| Pi 5 `max_current` (not used on a Compute Module 5, whose 5 V comes through its carrier) | the firmware's USB-C verdict: 5000 after a PD contract, **3000 both for a 3 A resistor source and for no USB-C source at all** (a HAT on the GPIO 5 V pins), 1500 or 900 for a resistor source advertising that much, so 900/1500 proves an external USB-C supply |
+| Pi 5, Pi 500 and Compute Module 5 PMIC ADC | 5 V input (GPIO-fed HATs 5.1–5.4 V, splitters 4.8–5.0 V) and the RTC cell (about 3 V fitted, under 0.01 V not) |
+| Pi 5, Pi 500 and Compute Module 5 `cooling_fan` node | a fan on the board's own fan header (on a Compute Module: the carrier's, as the firmware found it) |
 | camera sensor drivers | the CSI cameras the kernel bound, and whether a lens driver sits beside each: see [Cameras](#cameras) |
 | interface drivers | soldered-down (SoC Ethernet, SDIO radio, the 3B+'s LAN7800) versus removable USB adapters, which are listed with their descriptors |
 | a MAC the board derives from its own serial | the port is the board's own and which one it is, whatever bus it sits on. Every Pi up to the 3B reaches Ethernet through a soldered USB chip (LAN9512/9514, `smsc95xx`) that also serves removable dongles, so the driver cannot say and the MAC can |
