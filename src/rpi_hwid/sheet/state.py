@@ -121,9 +121,10 @@ class Sheet:
         """(label id, slot) for each of `wants`, in their order, and the
         stickers whose cut guides this pass must print. Whole labels take
         the first free stickers; micro labels the free quarters of stickers
-        already started, then fresh stickers after the whole labels'."""
-        whole = [w for w in wants if w.size == "sticker"]
-        micro = [w for w in wants if w.size == "quarter"]
+        already started, then fresh stickers after the whole labels'. A label
+        asked for twice (copies) gets a slot each time."""
+        whole = [i for i, w in enumerate(wants) if w.size == "sticker"]
+        micro = [i for i, w in enumerate(wants) if w.size == "quarter"]
         free = self.free_stickers()
         quarters = self.free_quarters()
         fresh = len(free) - len(whole)
@@ -133,20 +134,20 @@ class Sheet:
                 f"sheet {self.id} has {len(free)} free sticker{'' if len(free) == 1 else 's'} "
                 f"and {len(quarters)} free quarter{'' if len(quarters) == 1 else 's'}; "
                 f"this needs {len(whole)} whole and {len(micro)} micro: start a new sheet")
-        at: dict[str, str] = {}
-        for w, n in zip(whole, free, strict=False):
-            at[w.id] = str(n)
+        at: dict[int, str] = {}  # by the want's place in the list, not its id: copies share one
+        for i, n in zip(whole, free, strict=False):
+            at[i] = str(n)
         spare = free[len(whole):]
         guides: list[str] = []
         slots = list(quarters)
         for n in spare:
             slots += [f"{n}{q}" for q in QUARTERS]
-        for w, slot in zip(micro, slots, strict=False):
-            at[w.id] = slot
+        for i, slot in zip(micro, slots, strict=False):
+            at[i] = slot
             sticker = slot[:-1]
             if sticker not in self.guides and sticker not in guides:
                 guides.append(sticker)
-        return [(w.id, at[w.id]) for w in wants], sorted(guides, key=int)
+        return [(w.id, at[i]) for i, w in enumerate(wants)], sorted(guides, key=int)
 
     # --- recording ---
 

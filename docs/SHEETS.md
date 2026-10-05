@@ -61,6 +61,27 @@ registration ticks in line with every die-cut — see "Chosen labels in chosen
 slots" in [LABELS.md](LABELS.md). Feed the sheet the same way round every time;
 the margins say which edge is the top.
 
+## More than one sticker of a label
+
+A board that wants its label in two places (on the board and on its case, say)
+gets two stickers in one pass:
+
+```
+$ rpi-hwid-sheet print K7QX pi5 --copies /acorn/=2
+  slot  label
+  3     pi5/rpi/Pi 5 2 GB 285df3f84af242d0
+  4     pi5/acorn/acorn-holly 0x00200c8664b04854
+  5     pi5/acorn/acorn-holly 0x00200c8664b04854
+```
+
+`--copies TEXT=N` gives N stickers, one after the other, to every label whose
+id contains TEXT; it may be given more than once, and a label that two of
+them match gets the larger number. The copies are the same
+label drawn from the same read, each in a slot of its own, and the record
+lists each slot. Without it a label is never placed twice in a pass, which is
+how a mistake in a plan is caught (`rpi-hwid labels --place` refuses a plan
+that repeats an id unless the plan itself says `"copies": true`).
+
 ## The record
 
 Each sheet is one file, `$XDG_STATE_HOME/rpi-hwid/sheets/<ID>.json`
@@ -139,6 +160,7 @@ printed on it since), and a plan already sent.
 | `print … --prepare` | read and show only; prints the `commit` command |
 | `print … --data DIR` | print from an earlier read instead of reading |
 | `print … --label TEXT` | only the labels whose id contains TEXT |
+| `print … --copies TEXT=N` | N stickers of each label whose id contains TEXT; the others get one |
 | `print … --only KIND` | as `rpi-hwid labels --only` |
 | `print … --tasmota` | read with `rpi-hwid tasmota` |
 | `commit PLAN` | send a prepared plan |

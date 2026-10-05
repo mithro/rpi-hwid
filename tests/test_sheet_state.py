@@ -202,3 +202,19 @@ def test_marking_slots_used_by_hand():
         s.mark(["5"], why="whole over a quarter", at="x")
     with pytest.raises(ValueError, match="22"):
         s.mark(["22"], why="off the sheet", at="x")
+
+
+def test_copies_of_a_label_get_a_slot_each():
+    """The same id asked for twice (rpi-hwid-sheet print --copies) is two
+    labels to place: two stickers, or two quarters with one guide."""
+    s = sheet()
+    got, guides = s.allocate([Want("pi", "sticker"), Want("fpga", "sticker"),
+                              Want("fpga", "sticker")])
+    assert got == [("pi", "1"), ("fpga", "2"), ("fpga", "3")]
+    assert guides == []
+    got, guides = s.allocate([Want("m", "quarter")] * 3 + [Want("w", "sticker")] * 2)
+    assert got == [("m", "3a"), ("m", "3b"), ("m", "3c"), ("w", "1"), ("w", "2")]
+    assert guides == ["3"]
+    got, guides = s.allocate([Want("m", "quarter")] * 5)  # copies run on to the next sticker
+    assert [slot for _, slot in got] == ["1a", "1b", "1c", "1d", "2a"]
+    assert guides == ["1", "2"]
