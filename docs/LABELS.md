@@ -90,7 +90,8 @@ The `avery-5163` grid is measured from Avery's own PDF template for the product
 columns 0.156 and 4.344 in from the left edge, the five rows every 2 in from
 0.5 in down. **It has not been tried on a real sheet by us**: print it on plain
 paper with `--outline` first (which draws the sticker edges too) and hold it
-against the sheet. Each US Letter sheet says so in a line in its top margin.
+against the sheet. Each US Letter sheet carries one line in its top margin: the
+Avery one says it is untried, the plain one says to cut along the lines.
 
 Print at 100 %, as on A4. The sheet tool (`rpi-hwid-sheet`, and `--place`),
 which records what was printed on which sticker, knows only L7160.

@@ -121,3 +121,45 @@ def test_the_command_takes_a_stock(data_dir, tmp_path, capsys):
     assert _pages(out.read_bytes())[0] == pytest.approx(letter)
     with pytest.raises(SystemExit):
         labels.main(["--data", str(data_dir), "--stock", "avery-5163", "--list", "--json"])
+
+
+def test_avery_5163_pitch_and_gap():
+    s = labels.STOCKS["avery-5163"]
+    # 4.3438 - 0.1556 in between the columns' left edges; rows touch
+    assert (s.sticker_origin(1)[0] - s.sticker_origin(0)[0]) / inch == pytest.approx(4.1875,
+                                                                                   abs=0.001)
+    assert (s.sticker_origin(0)[1] - s.sticker_origin(2)[1]) / inch == pytest.approx(2.0)
+    assert s.gap_x / inch == pytest.approx(0.1875)
+    assert s.gap_y == 0
+
+
+def test_plain_paper_labels_are_far_enough_apart_to_cut():
+    s = labels.STOCKS["letter-plain"]
+    assert s.cut
+    assert s.gap_x >= 5 * mm
+    assert s.gap_y >= 5 * mm
+
+
+def test_outlines_and_note_are_drawn_once_per_sheet(docs, monkeypatch):
+    drawn = []
+    real = labels.sheet_furniture
+    monkeypatch.setattr(labels, "sheet_furniture", lambda c, stock, outline: (
+        drawn.append(c.getPageNumber()), real(c, stock, outline))[1])
+    s = labels.STOCKS["avery-5163"]
+    for start in (0, 1, s.per_sheet - 1, s.per_sheet):
+        drawn.clear()
+        _n, _sheets, pdf = _pdf(docs, stock="avery-5163", outline=True, start=start)
+        assert drawn == sorted(set(drawn)), "never twice on one sheet"
+        assert len(drawn) <= len(_pages(pdf))
+
+
+def test_render_sheet_takes_a_stock(data_dir):
+    import json
+
+    from rpi_hwid import label_input
+    from rpi_hwid.collect import load_collected
+    host, doc = sorted(load_collected(data_dir).items())[0]
+    inputs = [json.loads(label_input.dumps(label_input.from_probe(host, doc.evidence)))]
+    assert _pages(labels.render_sheet(inputs, only={"rpi"}, stock="avery-5163"))[0] == \
+        pytest.approx(letter)
+    assert _pages(labels.render_sheet(inputs, only={"rpi"}))[0] == pytest.approx(A4)
