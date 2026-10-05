@@ -543,23 +543,29 @@ def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, 
     name = ipp.JOB_STATES.get(js, str(js))
     with store.lock(sid):
         said = store.load(sid).pass_(n)
-    if state.Sheet.settled(said):
+
+    def stands(p: dict[str, Any]) -> int:
         # unprint or printed was run while this waited: a person looked at
         # the sheet, and the printer's word does not overrule that (a pass
         # unprinted has had its slots freed, and may have been printed over)
         print(f"job {job_id} is {name}, but sheet {sid} pass {n} was recorded as "
-              f"{said['job_state']} by a person meanwhile: left as it is "
+              f"{p['job_state']} by a person meanwhile: left as it is "
               f"(rpi-hwid-sheet status {sid})", file=sys.stderr)
         return 1
+
+    if state.Sheet.settled(said):
+        return stands(said)
     if js == ipp.JOB_COMPLETED:
         s = set_pass(store, sid, n, job_state=name)
+        if state.Sheet.settled(s.pass_(n)):  # said between the check above and the write
+            return stands(s.pass_(n))
         print(f"sheet {sid} pass {n} printed; {free_text(s)}")
         return 0
     if js in (ipp.JOB_CANCELED, ipp.JOB_ABORTED) and done == 0:
         with store.lock(sid):
             s = store.load(sid)
             if state.Sheet.settled(s.pass_(n)):
-                return 1
+                return stands(s.pass_(n))
             s.pass_(n)["job_state"] = name
             last = s.passes[-1]["pass"] == n
             if last:
@@ -576,7 +582,9 @@ def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, 
                   f"after pass {n}: its slots stay used (rpi-hwid-sheet status {sid})",
                   file=sys.stderr)
         return 1
-    set_pass(store, sid, n, job_state=name)
+    s = set_pass(store, sid, n, job_state=name)
+    if state.Sheet.settled(s.pass_(n)):
+        return stands(s.pass_(n))
     if js in ipp.JOB_DONE:
         what = "an unknown number of" if done is None else str(done)
         print(f"job {job_id} {name} after {what} sheet(s): its slots stay used; check the "
