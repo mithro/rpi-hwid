@@ -179,7 +179,19 @@ class Sheet:
         p = self.passes.pop()
         self.slots = {k: v for k, v in self.slots.items() if v.get("pass") != n}
         self.guides = [g for g in self.guides if g not in p.get("guides", [])]
-        self.marked = any(q.get("marked") for q in self.passes)
+        self._remark()
+
+    def _remark(self) -> None:
+        """The margins are printed if a pass that printed them is on the
+        sheet: one a person recorded as not printed is not."""
+        self.marked = any(q.get("marked") for q in self.passes
+                          if q["job_state"] != NOT_PRINTED)
+
+    @staticmethod
+    def settled(p: dict[str, Any]) -> bool:
+        """A person has said what this pass put on the sheet (unprint,
+        printed): the printer's later word does not change it."""
+        return p["job_state"] == NOT_PRINTED or "printed" in p
 
     def unprint(self, n: int, why: str, at: str, user: str) -> list[str]:
         """Record, on a person's word, that pass `n` put nothing on the
@@ -204,8 +216,7 @@ class Sheet:
         p["not_printed"] = {"why": why, "at": at, "user": user, "job_state": p["job_state"],
                             "slots": freed}
         p["job_state"] = NOT_PRINTED
-        self.marked = any(q.get("marked") for q in self.passes
-                          if q["job_state"] != NOT_PRINTED)
+        self._remark()
         return freed
 
     def printed(self, n: int, why: str, at: str, user: str) -> None:

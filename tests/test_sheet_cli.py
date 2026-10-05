@@ -78,8 +78,9 @@ class Printer:
             self.next_id += 1
             return 0, [(ipp.JOB_GROUP, {"job-id": ipp.integer(self.next_id),
                                         "job-state": ipp.enum(ipp.JOB_PENDING)})]
-        if getattr(self, "forgotten", False):  # a printer that no longer knows the job
-            return 0x0406, [(ipp.OPERATION_GROUP, {
+        forgotten = getattr(self, "forgotten", False)  # a printer that no longer knows the job
+        if forgotten:
+            return (0x0406 if forgotten is True else forgotten), [(ipp.OPERATION_GROUP, {
                 "status-message": ipp.text("client-error-not-found")})]
         if self.on_job:
             self.on_job()
@@ -683,3 +684,62 @@ def test_printed_refuses_a_pass_recorded_as_not_printed(run, printer):
     assert rc == 2
     assert "already recorded as not-printed" in err
     assert run("printed", sid, "9", "--why", "x")[0] == 2
+
+
+def test_a_cancelled_pass_after_an_unprinted_first_pass_leaves_the_margins_to_print(run, printer):
+    """Pass 1 printed the margins by the record, a person says it printed
+    nothing, pass 2 is then cancelled by the printer: the margins are still
+    owed, whatever pass 1's own entry says."""
+    p = printer(end=(ipp.JOB_STOPPED, 0))
+    sid = new_sheet(run, p)
+    stalled(run, p, sid)
+    assert run("unprint", sid, "1", "--why", "blank")[0] == 0
+    p.end = (ipp.JOB_CANCELED, 0)
+    assert run("commit", prepare(run, sid, "pi3")[0])[0] == 1
+    s = state.Store(run.root).load(sid)
+    assert [x["job_state"] for x in s.passes] == ["not-printed"]
+    assert s.slots == {}
+    assert not s.marked
+    p.end = (ipp.JOB_COMPLETED, 1)
+    assert run("commit", prepare(run, sid, "pi3")[0])[0] == 0
+    assert state.Store(run.root).load(sid).marked
+
+
+def test_the_printers_later_word_does_not_overrule_a_persons(run, printer):
+    """follow is still waiting on a job when a person unprints its pass; the
+    job then ends "completed". The slots were freed on the person's word
+    and stay free: marking the pass completed would hide that."""
+    store = state.Store(run.root)
+    did = []
+
+    def unprint_meanwhile():
+        if not did:
+            did.append(1)
+            with store.lock(sid):
+                s = store.load(sid)
+                s.unprint(1, "blank", "2026-10-05T12:00:00+10:30", "tim")
+                store.save(s)
+
+    p = printer(end=(ipp.JOB_COMPLETED, 1), on_job=unprint_meanwhile)
+    sid = new_sheet(run, p)
+    rc, _, err = run("commit", prepare(run, sid, "pi3")[0])
+    assert rc == 1
+    assert "recorded as not-printed by a person meanwhile" in err
+    s = store.load(sid)
+    assert s.passes[0]["job_state"] == "not-printed"
+    assert s.slots == {}
+
+
+def test_only_a_job_the_printer_forgot_gets_the_hint(run, printer):
+    p = printer(end=(ipp.JOB_STOPPED, 0))
+    sid = new_sheet(run, p)
+    stalled(run, p, sid)
+    p.forgotten = 0x0403  # client-error-forbidden: a refusal that says nothing about the job
+    rc, _, err = run("follow", sid)
+    assert rc != 0
+    assert "status 0x0403" in err
+    assert "no longer says" not in err
+    p.forgotten = 0x0404  # what the Brother answers for a job it has dropped
+    rc, _, err = run("follow", sid)
+    assert rc == 2
+    assert "no longer says how job" in err

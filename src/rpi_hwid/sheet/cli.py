@@ -417,8 +417,9 @@ def set_pass(store: state.Store, sheet_id: str, n: int, **fields: Any) -> state.
     recorded meanwhile."""
     with store.lock(sheet_id):
         s = store.load(sheet_id)
-        s.pass_(n).update(fields)
-        store.save(s)
+        if not state.Sheet.settled(s.pass_(n)):  # a person's word stands (unprint, printed)
+            s.pass_(n).update(fields)
+            store.save(s)
     return s
 
 
@@ -502,19 +503,8 @@ def cmd_follow(args: argparse.Namespace, store: state.Store) -> int:
     if not (d / "meta.json").exists():
         raise ToolError(f"no plan for sheet {sheet.id}'s job {last['job']}")
     meta = json.loads((d / "meta.json").read_text())
-    try:
-        return follow(store, sheet.id, d, ipp.Printer(meta["printer"]), last["job"],
-                      last["pass"], args.poll, args.wait)
-    except ipp.IppRefusedError as exc:
-        # A printer forgets its jobs (a restart, a full job history) and
-        # then refuses to be asked about one: only a person who has looked
-        # at the sheet can now say what pass that was.
-        raise ToolError(
-            f"{exc}\nthe printer no longer says how job {last['job']} (sheet {sheet.id} pass "
-            f"{last['pass']}) ended: its slots stay used. Look at the sheet, and record what "
-            f"it shows: rpi-hwid-sheet printed {sheet.id} {last['pass']} --why \"...\" if the "
-            f"pass is on it, rpi-hwid-sheet unprint {sheet.id} {last['pass']} --why \"...\" if "
-            f"it printed nothing") from exc
+    return follow(store, sheet.id, d, ipp.Printer(meta["printer"]), last["job"],
+                  last["pass"], args.poll, args.wait)
 
 
 def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, n: int,
@@ -525,7 +515,19 @@ def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, 
     done: int | None = None
     told = False
     while True:
-        a = pr.job(job_id)
+        try:
+            a = pr.job(job_id)
+        except ipp.IppRefusedError as exc:
+            if exc.status not in ipp.JOB_FORGOTTEN:
+                raise
+            # A printer forgets its jobs (this Brother within minutes of
+            # their end) and then refuses to be asked about one: only a
+            # person who has looked at the sheet can say what the pass did.
+            raise ToolError(
+                f"{exc}\nthe printer no longer says how job {job_id} (sheet {sid} pass {n}) "
+                f"ended: its slots stay used. Look at the sheet, and record what it shows: "
+                f"rpi-hwid-sheet printed {sid} {n} --why \"...\" if the pass is on it, "
+                f"rpi-hwid-sheet unprint {sid} {n} --why \"...\" if it printed nothing") from exc
         js = (a.get("job-state") or [ipp.JOB_PENDING])[0]
         # how many sheets it printed, only if the printer says: unknown is not none
         raw = a.get("job-impressions-completed") or [None]
@@ -539,6 +541,16 @@ def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, 
             break
         time.sleep(poll)
     name = ipp.JOB_STATES.get(js, str(js))
+    with store.lock(sid):
+        said = store.load(sid).pass_(n)
+    if state.Sheet.settled(said):
+        # unprint or printed was run while this waited: a person looked at
+        # the sheet, and the printer's word does not overrule that (a pass
+        # unprinted has had its slots freed, and may have been printed over)
+        print(f"job {job_id} is {name}, but sheet {sid} pass {n} was recorded as "
+              f"{said['job_state']} by a person meanwhile: left as it is "
+              f"(rpi-hwid-sheet status {sid})", file=sys.stderr)
+        return 1
     if js == ipp.JOB_COMPLETED:
         s = set_pass(store, sid, n, job_state=name)
         print(f"sheet {sid} pass {n} printed; {free_text(s)}")
@@ -546,6 +558,8 @@ def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, 
     if js in (ipp.JOB_CANCELED, ipp.JOB_ABORTED) and done == 0:
         with store.lock(sid):
             s = store.load(sid)
+            if state.Sheet.settled(s.pass_(n)):
+                return 1
             s.pass_(n)["job_state"] = name
             last = s.passes[-1]["pass"] == n
             if last:

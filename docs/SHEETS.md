@@ -90,8 +90,16 @@ The pass's slots, cut guides and, if it was the pass that printed them, the
 sheet's margins are free again. The pass is not removed from the record: it
 stays, as `not-printed`, with who ran the command, when, the reason given, the
 slots it had held and what its job's state had been, and `status` shows that.
-Pass numbers are never reused. A pass whose job the printer reported completed
-is refused: the printer's word is that it printed.
+Its number is not given to a later pass. A pass whose job the printer reported
+completed is refused: the printer's word is that it printed. A pass whose job
+was cancelled or aborted part-way, with its slots kept, is accepted: the
+person looking at the sheet knows better than the printer's count.
+
+Once a person has said what a pass did, with either command, the printer's
+later word does not change it: a `follow` still waiting on that job leaves
+the pass as recorded. If the unprinted pass had printed cut guides for micro
+labels, they are recorded as not printed too, and the next micro label on
+that sticker prints them.
 
 The other way round, a pass that is on the sheet while the printer has
 forgotten its job (this Brother forgets a finished job within minutes) would
