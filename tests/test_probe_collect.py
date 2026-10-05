@@ -2801,3 +2801,70 @@ def test_an_unread_5v_input_is_not_printed_as_zero_volts(fake_root, monkeypatch)
     v = probe.verdict(probe.collect())
     assert any("5 V input not read" in e for e in v["evidence"])
     assert not any("0.00 V" in e for e in v["evidence"])
+
+
+def _cm5(root):
+    _w(root, "/proc/device-tree/model", "Raspberry Pi Compute Module 5 Lite Rev 1.0\0")
+    _w(root, "/proc/device-tree/compatible", "raspberrypi,5-compute-module\0brcm,bcm2712\0")
+
+
+def _bus_scans(monkeypatch):
+    """Record every attempt to bring up or scan a header bus."""
+    seen = []
+    monkeypatch.setattr(probe, "id_bus_scan",
+                        lambda bus, enable=None: seen.append(("id", bus, enable)) or ({}, True))
+    monkeypatch.setattr(probe, "user_bus_scan",
+                        lambda bus, enable=None: seen.append(("user", bus, enable)) or ([], True))
+    return seen
+
+
+def test_a_compute_modules_header_buses_are_left_alone(fake_root, monkeypatch):
+    """GPIO2/GPIO3 are the JTAG wires to an Acorn on a Compute Blade
+    (mithro/rpi-hwid issue #83): no dtparam, no open, no scan, by default."""
+    _cm5(fake_root)
+    seen = _bus_scans(monkeypatch)
+    d = probe.collect()
+    assert seen == []
+    assert d["header_buses_skipped"] == "compute-module"
+    assert d["header_buses_read"] == {}
+    assert d["header_i2c"] is None
+    v = probe.verdict(d)
+    assert v["header"] == ["no HAT header of its own (Compute Module): "
+                           "the carrier's pins were not scanned"]
+    assert any(e.startswith("header buses left alone") for e in v["evidence"])
+    assert not any("could not be read" in e for e in v["evidence"])
+    assert v["summary"]["header"] == []
+
+
+def test_a_compute_modules_header_buses_are_scanned_on_request(fake_root, monkeypatch):
+    _cm5(fake_root)
+    seen = _bus_scans(monkeypatch)
+    d = probe.collect(user_bus=True)
+    assert [s[0] for s in seen] == ["id", "user"]
+    assert d["header_buses_skipped"] is None
+    assert d["header_buses_read"] == {"id": True, "user": True}
+
+
+def test_a_pi_5_is_scanned_as_before(fake_root, monkeypatch):
+    seen = _bus_scans(monkeypatch)
+    d = probe.collect()
+    assert [s[0] for s in seen] == ["id", "user"]
+    assert d["header_buses_skipped"] is None
+    seen.clear()
+    d = probe.collect(user_bus=False)
+    assert [s[0] for s in seen] == ["id"], "--pi-only: the ID bus, never GPIO2/3"
+    assert d["header_buses_read"] == {"id": True, "user": False}
+
+
+@pytest.mark.parametrize(("argv", "want"), [
+    ([], None), (["--json"], None), (["--user-bus"], True), (["--no-user-bus", "--json"], False)])
+def test_main_passes_the_bus_switches(monkeypatch, capsys, argv, want):
+    got = []
+    monkeypatch.setattr(probe, "verdict", lambda d: {"header": [], "evidence": [], "power": ""})
+    monkeypatch.setattr(probe, "headline", lambda d: "x")
+    monkeypatch.setattr(probe.sys, "argv", ["probe.py", *argv])
+    d_iter = {"interfaces": [], "usb_net": []}
+    monkeypatch.setattr(probe, "collect",
+                        lambda user_bus=None: got.append(user_bus) or dict(d_iter))
+    probe.main()
+    assert got == [want]

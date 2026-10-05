@@ -1194,8 +1194,15 @@ def riscv_summary(rv):
 
 # --- collect ------------------------------------------------------------------
 
-def collect(user_bus=True, cameras=True):
+def collect(user_bus=None, cameras=True):
     """Everything the probe reads, as the evidence document.
+
+    `user_bus` unset scans the header's buses wherever the board has a HAT
+    header of its own, which a Compute Module has not: its GPIO0-3 belong to
+    whatever carrier it sits in (on a Compute Blade wired to an SQRL Acorn,
+    GPIO2 and GPIO3 are the JTAG wires TDI and TDO), so on a Compute Module
+    neither header bus is brought up or scanned unless `user_bus=True` asks
+    for it, and the document says they were left alone.
 
     `user_bus=False` leaves the header's user bus (pins 3/5, GPIO2/3 on a
     Pi) entirely alone: no dtparam for it, no open, no scan. On an
@@ -1256,6 +1263,14 @@ def collect(user_bus=True, cameras=True):
     # on a Pi. Which bus is which is the board's to say (HEADER_BUSES); a
     # board that declares nothing is left alone rather than guessed at.
     header_buses = HEADER_BUSES.get(d["board"])
+    d["compute_module"] = (any("compute-module" in c for c in compatible)
+                           or "Compute Module" in d["model"])
+    d["header_buses_skipped"] = None
+    if header_buses and d["compute_module"] and not user_bus:
+        # Not a header that went unread: no header of its own to read.
+        header_buses, d["header_buses_skipped"] = None, "compute-module"
+    elif user_bus is None:
+        user_bus = True
     if header_buses:
         d["hat_eeproms"], id_read = id_bus_scan(header_buses["id"], header_buses["enable"])
         if user_bus:
@@ -1298,8 +1313,6 @@ def collect(user_bus=True, cameras=True):
     # reads below and its label, which needs fan and rtc_battery, none either.
     pi5 = "brcm,bcm2712" in compatible or "Pi 5" in d["model"]
     d["pi5"] = pi5
-    d["compute_module"] = (any("compute-module" in c for c in compatible)
-                           or "Compute Module" in d["model"])
     if pi5:
         d["max_current_ma"] = dt_u32(ROOT + "/proc/device-tree/chosen/power/max_current")
         try:
@@ -1458,6 +1471,10 @@ def verdict(d):
     # different answers and only one of them rules a HAT out, so a bus that
     # stayed shut is said out loud rather than passed off as an empty one.
     buses = HEADER_BUSES.get(d.get("board", "rpi")) or {}
+    if d.get("header_buses_skipped"):
+        buses = {}
+        ev.append("header buses left alone: a Compute Module has no HAT header of its own, "
+                  "GPIO0-3 belong to its carrier (--user-bus scans them)")
     read_ok = d.get("header_buses_read") or {}
     unread = [role for role in ("id", "user") if role in buses and not read_ok.get(role)]
     if unread:
@@ -1476,6 +1493,8 @@ def verdict(d):
         power = "no power sensing on this board: nothing on it reports its supply"
     if not header and d.get("board") in ("riscv", "x86"):
         header = ["no HAT header on this board"]
+    elif not header and d.get("header_buses_skipped"):
+        header = ["no HAT header of its own (Compute Module): the carrier's pins were not scanned"]
     elif not header:
         header = ["nothing identifiable on the header" if not unread else
                   "nothing identifiable on the header, and it was not fully read"]
@@ -1577,7 +1596,10 @@ def headline(d):
 
 
 def main():
-    d = collect()
+    # --user-bus: scan the header's buses on a Compute Module too;
+    # --no-user-bus: leave GPIO2/3 alone on any board
+    d = collect(user_bus=False if "--no-user-bus" in sys.argv
+                else True if "--user-bus" in sys.argv else None)
     v = verdict(d)
     if "--json" in sys.argv:
         d["verdict"] = v
