@@ -49,7 +49,9 @@ I2C devices on the header's user bus (pins 3/5)
 USB tree
     Waveshare's PoE-ETH-USB-HUB-HAT for a Pi Zero is a Terminus 1a40:0101
     hub on the root port with an RTL8152 (0bda:8152) on its port 4.
-Pi 5 firmware power fields
+Pi 5 firmware power fields (the BCM2712 family: Pi 5, Pi 500, Compute Module 5)
+    A Compute Module has no USB-C input of its own, so on one these fields
+    are recorded but no power class is drawn from them.
     /proc/device-tree/chosen/power/max_current is the firmware's verdict on
     the USB-C source: 5000 after a PD contract, 3000 when there is no PD
     contract *including when nothing is on USB-C at all* (a HAT feeding the
@@ -1296,6 +1298,8 @@ def collect(user_bus=True, cameras=True):
     # reads below and its label, which needs fan and rtc_battery, none either.
     pi5 = "brcm,bcm2712" in compatible or "Pi 5" in d["model"]
     d["pi5"] = pi5
+    d["compute_module"] = (any("compute-module" in c for c in compatible)
+                           or "Compute Module" in d["model"])
     if pi5:
         d["max_current_ma"] = dt_u32(ROOT + "/proc/device-tree/chosen/power/max_current")
         try:
@@ -1308,8 +1312,9 @@ def collect(user_bus=True, cameras=True):
         # as the user first (the video group can ask the firmware), then with
         # sudo that never asks for a password: a host without passwordless
         # sudo then says "not read" below instead of hanging or guessing
-        adc = (sh(["vcgencmd", "pmic_read_adc"])
-               or sh(["sudo", "-n", "vcgencmd", "pmic_read_adc"]))
+        adc = sh(["vcgencmd", "pmic_read_adc"])
+        if "BATT_V" not in adc:          # refused, or an answer without it
+            adc = sh(["sudo", "-n", "vcgencmd", "pmic_read_adc"]) or adc
         m = re.search(r"EXT5V_V volt\(\d+\)=([0-9.]+)V", adc)
         d["ext5v_v"] = float(m.group(1)) if m else None
         m = re.search(r"BATT_V volt\(\d+\)=([0-9.]+)V", adc)
@@ -1409,21 +1414,30 @@ def verdict(d):
             power = "PoE through the Waveshare PoE-ETH-USB-HUB-HAT bonnet"
     if d["pi5"]:
         mc = d["max_current_ma"]
-        ev.append("USB-C as the firmware sees it: max_current %s mA, %s; 5 V input %.2f V" % (
-            mc,
-            ("PD objects " + " ".join(d["usbpd_pdos"])) if d.get("usbpd_pdos")
-            else "no PD contract",
-            d["ext5v_v"] or 0))
-        if mc in (900, 1500):
-            power = power or ("external supply on USB-C advertising %d mA by resistor: "
-                              "a PoE splitter or a USB-A lead" % mc)
-        elif mc == 5000:
-            power = power or "USB-C source with a PD contract: a PD supply or a PD splitter"
-        elif mc == 3000 and not power:
-            lean = ("5 V input above 5.1 V leans HAT" if (d["ext5v_v"] or 0) > 5.1
-                    else "5 V input at or below 5.0 V leans splitter")
-            power = ("ambiguous: no PD contract, so either a GPIO-fed HAT without an ID EEPROM "
-                     "(Waveshare F/G/H/J) or a 3 A USB-C splitter; " + lean)
+        ext5v = "%.2f V" % d["ext5v_v"] if d.get("ext5v_v") is not None else "not read"
+        if d.get("compute_module"):
+            # No USB-C power input of its own: the 5 V comes through the
+            # carrier's connector, so the firmware's USB-C fields say nothing
+            # about the supply and no power class is drawn from them.
+            ev.append("Compute Module: 5 V comes through the carrier, so the firmware's "
+                      "USB-C fields (max_current %s mA) do not describe the supply; "
+                      "5 V input %s" % (mc, ext5v))
+        else:
+            ev.append("USB-C as the firmware sees it: max_current %s mA, %s; 5 V input %s" % (
+                mc,
+                ("PD objects " + " ".join(d["usbpd_pdos"])) if d.get("usbpd_pdos")
+                else "no PD contract",
+                ext5v))
+            if mc in (900, 1500):
+                power = power or ("external supply on USB-C advertising %d mA by resistor: "
+                                  "a PoE splitter or a USB-A lead" % mc)
+            elif mc == 5000:
+                power = power or "USB-C source with a PD contract: a PD supply or a PD splitter"
+            elif mc == 3000 and not power:
+                lean = ("5 V input above 5.1 V leans HAT" if (d["ext5v_v"] or 0) > 5.1
+                        else "5 V input at or below 5.0 V leans splitter")
+                power = ("ambiguous: no PD contract, so either a GPIO-fed HAT without an ID EEPROM "
+                         "(Waveshare F/G/H/J) or a 3 A USB-C splitter; " + lean)
         ev.append("fan header: %s%s" % (d["fan_dt"] or "no node",
                   ", %d rpm" % d["fan_rpm"] if d["fan_rpm"] is not None else ""))
         batt = d["rtc_batt_v"]
@@ -1450,7 +1464,10 @@ def verdict(d):
         ev.append("header %s bus could not be read (i2c-%s): a HAT known only "
                   "by what answers there cannot be ruled out" % (
                       " and ".join(unread), ", i2c-".join(str(buses[r]) for r in unread)))
-    if not power and is_pi:
+    if not power and d.get("compute_module"):
+        power = ("a Compute Module is powered through its carrier: "
+                 "nothing on the module says how the carrier is supplied")
+    elif not power and is_pi:
         power = ("nothing on the Pi distinguishes it: a HAT with no ID EEPROM and no I2C devices "
                  "(Waveshare C, D, E) or an external splitter; use the switch's PD class or look")
     elif not power:

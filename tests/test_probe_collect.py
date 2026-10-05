@@ -2761,3 +2761,43 @@ def test_an_unread_rtc_battery_is_unread_not_absent(fake_root, monkeypatch):
     v = probe.verdict(d)
     assert v["summary"]["rtc_battery"] is None
     assert any(e.startswith("RTC battery: not read") for e in v["evidence"])
+
+
+def test_a_compute_module_draws_no_power_class_from_the_usb_c_fields(fake_root):
+    """Its 5 V comes through the carrier: max_current 3000 would otherwise
+    read as "a GPIO-fed HAT or a 3 A USB-C splitter", which it cannot be."""
+    _w(fake_root, "/proc/device-tree/model", "Raspberry Pi Compute Module 5 Lite Rev 1.0\0")
+    _w(fake_root, "/proc/device-tree/compatible", "raspberrypi,5-compute-module\0brcm,bcm2712\0")
+    d = probe.collect()
+    assert d["compute_module"] is True
+    assert d["max_current_ma"] == 3000
+    v = probe.verdict(d)
+    assert not any(e.startswith("USB-C as the firmware sees it") for e in v["evidence"])
+    assert any(e.startswith("Compute Module: 5 V comes through the carrier") and
+               "5 V input 5.34 V" in e for e in v["evidence"])
+    assert v["power"].startswith("a Compute Module is powered through its carrier")
+    assert v["summary"]["power_class"] == "undetermined"
+
+
+def test_a_pi_5_is_no_compute_module(fake_root):
+    d = probe.collect()
+    assert d["compute_module"] is False
+    assert any(e.startswith("USB-C as the firmware sees it") for e in probe.verdict(d)["evidence"])
+
+
+def test_sudo_is_tried_when_the_plain_answer_lacks_the_battery_line(fake_root, monkeypatch):
+    def sh(args, timeout=15):
+        if args == ["vcgencmd", "pmic_read_adc"]:
+            return "EXT5V_V volt(24)=5.10000000V"
+        if args == ["sudo", "-n", "vcgencmd", "pmic_read_adc"]:
+            return "EXT5V_V volt(24)=5.10000000V\nBATT_V volt(25)=3.10000000V\n"
+        return ""
+    monkeypatch.setattr(probe, "sh", sh)
+    assert probe.collect()["rtc_batt_v"] == 3.1
+
+
+def test_an_unread_5v_input_is_not_printed_as_zero_volts(fake_root, monkeypatch):
+    monkeypatch.setattr(probe, "sh", lambda args, timeout=15: "")
+    v = probe.verdict(probe.collect())
+    assert any("5 V input not read" in e for e in v["evidence"])
+    assert not any("0.00 V" in e for e in v["evidence"])

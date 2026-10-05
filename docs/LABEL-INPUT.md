@@ -108,7 +108,7 @@ whose header was not read, and `--check` lists only what `--only` asks for.
 
 | label | needs | optional |
 |---|---|---|
-| Raspberry Pi | `model`, `serial`, `revision` (one this package can decode), `macs`, `header` (`[]` when read and bare); on a Pi 5 also `fan` and `rtc_battery` | `memory`, `hat_uuid`, `compatible`, `power_class`, `max_current_ma`, `ext5v_v` |
+| Raspberry Pi | `model`, `serial`, `revision` (one this package can decode), `macs`, `header` (`[]` when read and bare); on a Pi 5, Pi 500 or Compute Module 5 also `fan` and `rtc_battery` | `memory`, `hat_uuid`, `compatible`, `power_class`, `max_current_ma`, `ext5v_v` |
 | Orange Pi | `serial`, `compatible`, `memory`, `macs`, `header` | the rest |
 | RISC-V board | `serial`, `macs`, `riscv` | the rest |
 | PC | `macs`, `dmi` (a PC's firmware may carry no serial, which its label says) | the rest |
