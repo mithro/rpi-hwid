@@ -78,6 +78,9 @@ class Printer:
             self.next_id += 1
             return 0, [(ipp.JOB_GROUP, {"job-id": ipp.integer(self.next_id),
                                         "job-state": ipp.enum(ipp.JOB_PENDING)})]
+        if getattr(self, "forgotten", False):  # a printer that no longer knows the job
+            return 0x0406, [(ipp.OPERATION_GROUP, {
+                "status-message": ipp.text("client-error-not-found")})]
         if self.on_job:
             self.on_job()
         state_, sheets = self.end
@@ -530,3 +533,114 @@ def test_a_cancelled_job_with_a_later_pass_keeps_its_slots(run, printer):
     assert rc == 1
     assert "pass 1" in err
     assert len(state.Store(run.root).load(sid).slots) == 3
+
+
+# --- a pass a person says never printed (unprint) ------------------------------------------
+
+
+def stalled(run, p, sid, host="pi3"):
+    """Commit a pass whose job is still waiting for its sheet when --wait runs out."""
+    plan, _ = prepare(run, sid, host)
+    assert run("commit", plan, "--wait", "0.05")[0] == 1
+    return plan
+
+
+def test_unprint_frees_the_slots_of_a_job_the_printer_forgot(run, printer):
+    p = printer(end=(ipp.JOB_STOPPED, 0))
+    sid = new_sheet(run, p)
+    plan = stalled(run, p, sid)
+    p.forgotten = True
+    rc, _, err = run("follow", sid)
+    assert rc == 2
+    assert "no longer says how job" in err
+    assert f"rpi-hwid-sheet unprint {sid} 1" in err  # it names the way out
+    assert len(state.Store(run.root).load(sid).slots) == 2  # and frees nothing by itself
+
+    rc, out, err = run("unprint", sid, "1", "--why", "Tim: the sheet never went in")
+    assert rc == 0, err
+    assert "slots 1, 2 free again" in out
+    assert "21 free stickers" in out
+    s = state.Store(run.root).load(sid)
+    assert s.slots == {}
+    assert not s.marked  # the margins were that pass's too: the next pass prints them
+    (only,) = s.passes  # the pass is kept: the record is the evidence
+    assert only["job_state"] == "not-printed"
+    assert only["not_printed"]["why"] == "Tim: the sheet never went in"
+    assert only["not_printed"]["job_state"] == "processing-stopped"  # what it was before
+    assert only["not_printed"]["slots"] == ["1", "2"]
+    assert only["not_printed"]["user"]
+    assert only["not_printed"]["at"]
+
+    # nothing is outstanding any more, and the old plan is refused: the sheet has changed
+    assert run("follow", sid)[0] == 2
+    p.forgotten, p.end = False, (ipp.JOB_COMPLETED, 1)
+    assert run("commit", plan)[0] != 0
+    # a fresh plan prints in the freed slots, as pass 2 (numbers are not reused), margins and all
+    rc, _, err = run("commit", prepare(run, sid, "pi3")[0])
+    assert rc == 0, err
+    s = state.Store(run.root).load(sid)
+    assert sorted(s.slots) == ["1", "2"]
+    assert {v["pass"] for v in s.slots.values()} == {2}
+    assert s.marked
+
+
+def test_unprint_takes_back_a_pass_that_is_not_the_last(run, printer):
+    """2026-10-05, sheet 7MRC: passes 4 and 5 jammed on plain paper, pass 6 printed."""
+    p = printer(end=(ipp.JOB_COMPLETED, 1))
+    sid = new_sheet(run, p)
+    assert run("commit", prepare(run, sid, "pi3")[0])[0] == 0  # pass 1: slots 1, 2
+    p.end = (ipp.JOB_STOPPED, 0)
+    stalled(run, p, sid)                                         # pass 2: slots 3, 4, never printed
+    p.end = (ipp.JOB_COMPLETED, 1)
+    assert run("commit", prepare(run, sid, "pi3")[0])[0] == 0  # pass 3: slots 5, 6
+
+    rc, out, err = run("unprint", sid, "2", "--why", "three empty labels before the two printed")
+    assert rc == 0, err
+    assert "slots 3, 4 free again" in out
+    s = state.Store(run.root).load(sid)
+    assert sorted(s.slots, key=int) == ["1", "2", "5", "6"]
+    assert s.marked  # pass 1 printed the margins
+    assert [x["job_state"] for x in s.passes] == ["completed", "not-printed", "completed"]
+    # the next pass is 4 and fills the gap first
+    rc, _, err = run("commit", prepare(run, sid, "pi3")[0])
+    assert rc == 0, err
+    s = state.Store(run.root).load(sid)
+    assert {k for k, v in s.slots.items() if v["pass"] == 4} == {"3", "4"}
+
+
+def test_unprint_refuses_a_pass_the_printer_said_it_printed(run, printer):
+    p = printer(end=(ipp.JOB_COMPLETED, 1))
+    sid = new_sheet(run, p)
+    assert run("commit", prepare(run, sid, "pi3")[0])[0] == 0
+    rc, _, err = run("unprint", sid, "1", "--why", "it looks blank")
+    assert rc == 2
+    assert "printed: the printer reported its job" in err
+    assert len(state.Store(run.root).load(sid).slots) == 2
+
+
+def test_unprint_is_said_once_and_only_of_a_pass_there_is(run, printer):
+    p = printer(end=(ipp.JOB_STOPPED, 0))
+    sid = new_sheet(run, p)
+    stalled(run, p, sid)
+    rc, _, err = run("unprint", sid, "7", "--why", "x")
+    assert rc == 2
+    assert "has no pass 7" in err
+    assert run("unprint", sid, "1", "--why", "blank")[0] == 0
+    rc, _, err = run("unprint", sid, "1", "--why", "blank")
+    assert rc == 2
+    assert "already recorded as not printed" in err
+    with pytest.raises(SystemExit):  # the reason is not optional
+        run("unprint", sid, "1")
+
+
+def test_status_shows_a_pass_recorded_as_not_printed_and_why(run, printer):
+    p = printer(end=(ipp.JOB_STOPPED, 0))
+    sid = new_sheet(run, p)
+    stalled(run, p, sid)
+    run("unprint", sid, "1", "--why", "Tim: plain paper was in the slot")
+    rc, out, _ = run("status", sid)
+    assert rc == 0
+    assert " not-printed, data " in out
+    assert "Tim: plain paper was in the slot" in out
+    assert "slots 1, 2 freed; the job was processing-stopped" in out
+    assert "21 free stickers" in out

@@ -39,6 +39,10 @@ class SheetFullError(RuntimeError):
     """The labels asked for do not fit in what is left of the sheet."""
 
 
+# a pass a person said put nothing on the sheet (Sheet.unprint)
+NOT_PRINTED = "not-printed"
+
+
 class NoSuchSheetError(LookupError):
     pass
 
@@ -176,6 +180,33 @@ class Sheet:
         self.slots = {k: v for k, v in self.slots.items() if v.get("pass") != n}
         self.guides = [g for g in self.guides if g not in p.get("guides", [])]
         self.marked = any(q.get("marked") for q in self.passes)
+
+    def unprint(self, n: int, why: str, at: str, user: str) -> list[str]:
+        """Record, on a person's word, that pass `n` put nothing on the
+        sheet: its slots, its guides and (if it was the pass that printed
+        them) the sheet's margins are free again. Returns the slots freed.
+
+        The pass stays in the record, as "not-printed" with who said so,
+        when and why: the record is the evidence of what went on the paper,
+        and pass numbers are never reused. Any pass can be taken back, not
+        only the last. One whose job the printer reported completed cannot:
+        the printer's word is that it printed."""
+        p = self.pass_(n)
+        if p["job_state"] == NOT_PRINTED:
+            raise ValueError(f"pass {n} of sheet {self.id} is already recorded as not printed")
+        if p["job_state"] == "completed":
+            raise ValueError(f"pass {n} of sheet {self.id} printed: the printer reported its "
+                             f"job {p['job']} completed")
+        freed = sorted((k for k, v in self.slots.items() if v.get("pass") == n),
+                       key=parse_slot)
+        self.slots = {k: v for k, v in self.slots.items() if v.get("pass") != n}
+        self.guides = [g for g in self.guides if g not in p.get("guides", [])]
+        p["not_printed"] = {"why": why, "at": at, "user": user, "job_state": p["job_state"],
+                            "slots": freed}
+        p["job_state"] = NOT_PRINTED
+        self.marked = any(q.get("marked") for q in self.passes
+                          if q["job_state"] != NOT_PRINTED)
+        return freed
 
     def mark(self, slots: list[str], why: str, at: str) -> None:
         """Record `slots` used without printing: stickers peeled off or

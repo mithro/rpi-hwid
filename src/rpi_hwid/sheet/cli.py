@@ -7,6 +7,7 @@
     rpi-hwid-sheet status K7QX
     rpi-hwid-sheet list
     rpi-hwid-sheet mark K7QX 1 2 5c --why "peeled off before the tool"
+    rpi-hwid-sheet unprint K7QX 4 --why "Tim: the sheet never went in"
 
 Each sheet has an id (four characters, printed in its top and bottom
 margins on its first pass with when, where and by whom it was started)
@@ -16,7 +17,9 @@ the state directory's reads/), asks ``rpi-hwid labels`` which labels that
 makes and to draw them in the sheet's free slots, shows what will be
 printed and where, and only after a yes sends it to the printer's manual
 feed slot. The slots are recorded as used when the printer takes the job;
-a job cancelled before anything printed gives them back.
+a job cancelled before anything printed gives them back. When the printer
+cannot say (it forgot the job, or a later pass has been sent since), a
+person who has looked at the sheet says so with ``unprint``.
 
 This tool draws nothing itself: every label comes from ``rpi-hwid labels
 --place``, run as a separate command (``--rpi-hwid`` says which).
@@ -283,6 +286,11 @@ def cmd_status(args: argparse.Namespace, store: state.Store) -> int:
     for p in s.passes:
         print(f"  pass {p['pass']}: {p['at']} on {p['host']} by {p['user']}, job {p['job']} "
               f"{p['job_state']}, data {p['data']}")
+        np = p.get("not_printed")
+        if np:
+            print(f"    not printed, said {np['user']} at {np['at']}: {np['why']} "
+                  f"(slots {', '.join(np['slots']) or 'none'} freed; the job was "
+                  f"{np['job_state']})")
     return 0
 
 
@@ -295,6 +303,22 @@ def cmd_mark(args: argparse.Namespace, store: state.Store) -> int:
             raise ToolError(str(exc)) from exc
         store.save(s)
     print(f"sheet {s.id}: {', '.join(args.slots)} marked used; {free_text(s)}")
+    return 0
+
+
+def cmd_unprint(args: argparse.Namespace, store: state.Store) -> int:
+    """Record, on a person's word, that a pass put nothing on the sheet."""
+    with store.lock(args.sheet):
+        s = store.load(args.sheet)
+        try:
+            freed = s.unprint(args.pass_, args.why, now().isoformat(timespec="seconds"),
+                              getpass.getuser())
+        except (KeyError, ValueError) as exc:
+            raise ToolError(str(exc.args[0])) from exc
+        store.save(s)
+    print(f"sheet {s.id}: pass {args.pass_} recorded as not printed ({args.why}); "
+          f"slot{'' if len(freed) == 1 else 's'} {', '.join(freed) or 'none'} free again; "
+          f"{free_text(s)}")
     return 0
 
 
@@ -443,7 +467,8 @@ def commit(store: state.Store, d: Path, poll: float, wait: float) -> int:
 def cmd_follow(args: argparse.Namespace, store: state.Store) -> int:
     """Wait again for a sheet's outstanding job, one that outlasted --wait."""
     sheet = store.load(args.sheet)
-    open_ = [p for p in sheet.passes if p["job_state"] not in ("completed", "canceled", "aborted")
+    open_ = [p for p in sheet.passes
+             if p["job_state"] not in ("completed", "canceled", "aborted", state.NOT_PRINTED)
              and p.get("job") is not None]
     if not open_:
         raise ToolError(f"sheet {sheet.id} has nothing outstanding to follow")
@@ -457,8 +482,18 @@ def cmd_follow(args: argparse.Namespace, store: state.Store) -> int:
     if not (d / "meta.json").exists():
         raise ToolError(f"no plan for sheet {sheet.id}'s job {last['job']}")
     meta = json.loads((d / "meta.json").read_text())
-    return follow(store, sheet.id, d, ipp.Printer(meta["printer"]), last["job"],
-                  last["pass"], args.poll, args.wait)
+    try:
+        return follow(store, sheet.id, d, ipp.Printer(meta["printer"]), last["job"],
+                      last["pass"], args.poll, args.wait)
+    except ipp.IppRefusedError as exc:
+        # A printer forgets its jobs (a restart, a full job history) and
+        # then refuses to be asked about one: only a person who has looked
+        # at the sheet can now say what pass that was.
+        raise ToolError(
+            f"{exc}\nthe printer no longer says how job {last['job']} (sheet {sheet.id} pass "
+            f"{last['pass']}) ended: its slots stay used. If the sheet shows that the pass "
+            f"printed nothing, record that with: rpi-hwid-sheet unprint {sheet.id} "
+            f"{last['pass']} --why \"...\"") from exc
 
 
 def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, n: int,
@@ -546,6 +581,14 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("slots", nargs="+", metavar="SLOT", help="1-21, or 1a-21d")
     p.add_argument("--why", default="marked used by hand")
     p.set_defaults(func=cmd_mark)
+
+    p = sub.add_parser("unprint", help="record, on a person's word, that a pass put nothing "
+                                       "on the sheet: its slots are free again")
+    p.add_argument("sheet")
+    p.add_argument("pass_", metavar="PASS", type=int, help="the pass, as status numbers it")
+    p.add_argument("--why", required=True,
+                   help="who looked at the sheet and what they saw, in their words")
+    p.set_defaults(func=cmd_unprint)
 
     p = sub.add_parser("print", help="collect, show, ask, and print in the free slots "
                                      "(rpi-hwid-sheet print SHEET HOST... [-- COLLECT-ARGS])")

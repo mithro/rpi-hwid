@@ -77,6 +77,22 @@ cancelled or aborted before printing anything gives its slots back. One that
 fails part-way, or is still running when `--wait` (600 s) runs out, keeps them,
 and says so.
 
+The printer cannot always say how a job ended. It may have forgotten the job
+(`follow` then gets "not found"), or the cancelled pass may no longer be the
+sheet's last, and only the last pass is given back by itself. A person who has
+looked at the sheet settles it:
+
+```
+$ rpi-hwid-sheet unprint 7MRC 4 --why "Tim: the page has three empty labels before the two which just printed"
+```
+
+The pass's slots, cut guides and, if it was the pass that printed them, the
+sheet's margins are free again. The pass is not removed from the record: it
+stays, as `not-printed`, with who ran the command, when, the reason given, the
+slots it had held and what its job's state had been, and `status` shows that.
+Pass numbers are never reused. A pass whose job the printer reported completed
+is refused: the printer's word is that it printed.
+
 A sheet's id is four characters with nothing to misread off paper (no 0/O,
 1/I/L or U/V); type it in either case.
 
@@ -110,6 +126,7 @@ printed on it since), and a plan already sent.
 | `status SHEET` | the sheet's map, used slots and passes |
 | `list` | every sheet and what is free on it |
 | `mark SHEET SLOT… [--why TEXT]` | record slots used without printing (a sheet used before this tool) |
+| `unprint SHEET PASS --why TEXT` | record, on a person's word, that a pass put nothing on the sheet: its slots are free again |
 
 The printer is `--printer` (an IPP URI, `ipp://HOST/ipp/print`) or
 `$RPI_HWID_PRINTER`, and is remembered by the sheet. `--rpi-hwid CMD` names the
