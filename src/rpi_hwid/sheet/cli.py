@@ -7,6 +7,8 @@
     rpi-hwid-sheet status K7QX
     rpi-hwid-sheet list
     rpi-hwid-sheet mark K7QX 1 2 5c --why "peeled off before the tool"
+    rpi-hwid-sheet unprint K7QX 4 --why "Tim: the sheet never went in"
+    rpi-hwid-sheet printed K7QX 6 --why "Tim: both labels are on the sheet"
 
 Each sheet has an id (four characters, printed in its top and bottom
 margins on its first pass with when, where and by whom it was started)
@@ -16,7 +18,10 @@ the state directory's reads/), asks ``rpi-hwid labels`` which labels that
 makes and to draw them in the sheet's free slots, shows what will be
 printed and where, and only after a yes sends it to the printer's manual
 feed slot. The slots are recorded as used when the printer takes the job;
-a job cancelled before anything printed gives them back.
+a job cancelled before anything printed gives them back. When the printer
+cannot say (it forgot the job, or a later pass has been sent since), a
+person who has looked at the sheet says so with ``unprint``, or with
+``printed`` when the pass is on the paper and the printer no longer knows.
 
 This tool draws nothing itself: every label comes from ``rpi-hwid labels
 --place``, run as a separate command (``--rpi-hwid`` says which).
@@ -283,6 +288,15 @@ def cmd_status(args: argparse.Namespace, store: state.Store) -> int:
     for p in s.passes:
         print(f"  pass {p['pass']}: {p['at']} on {p['host']} by {p['user']}, job {p['job']} "
               f"{p['job_state']}, data {p['data']}")
+        np = p.get("not_printed")
+        if np:
+            print(f"    not printed, said {np['user']} at {np['at']}: {np['why']} "
+                  f"(slots {', '.join(np['slots']) or 'none'} freed; the job was "
+                  f"{np['job_state']})")
+        pd = p.get("printed")
+        if pd:
+            print(f"    printed, said {pd['user']} at {pd['at']}: {pd['why']} "
+                  f"(the job was {pd['job_state']})")
     return 0
 
 
@@ -295,6 +309,36 @@ def cmd_mark(args: argparse.Namespace, store: state.Store) -> int:
             raise ToolError(str(exc)) from exc
         store.save(s)
     print(f"sheet {s.id}: {', '.join(args.slots)} marked used; {free_text(s)}")
+    return 0
+
+
+def cmd_unprint(args: argparse.Namespace, store: state.Store) -> int:
+    """Record, on a person's word, that a pass put nothing on the sheet."""
+    with store.lock(args.sheet):
+        s = store.load(args.sheet)
+        try:
+            freed = s.unprint(args.pass_, args.why, now().isoformat(timespec="seconds"),
+                              getpass.getuser())
+        except (KeyError, ValueError) as exc:
+            raise ToolError(str(exc.args[0])) from exc
+        store.save(s)
+    print(f"sheet {s.id}: pass {args.pass_} recorded as not printed ({args.why}); "
+          f"slot{'' if len(freed) == 1 else 's'} {', '.join(freed) or 'none'} free again; "
+          f"{free_text(s)}")
+    return 0
+
+
+def cmd_printed(args: argparse.Namespace, store: state.Store) -> int:
+    """Record, on a person's word, that a pass is on the sheet."""
+    with store.lock(args.sheet):
+        s = store.load(args.sheet)
+        try:
+            s.printed(args.pass_, args.why, now().isoformat(timespec="seconds"),
+                      getpass.getuser())
+        except (KeyError, ValueError) as exc:
+            raise ToolError(str(exc.args[0])) from exc
+        store.save(s)
+    print(f"sheet {s.id}: pass {args.pass_} recorded as printed ({args.why}); {free_text(s)}")
     return 0
 
 
@@ -373,8 +417,9 @@ def set_pass(store: state.Store, sheet_id: str, n: int, **fields: Any) -> state.
     recorded meanwhile."""
     with store.lock(sheet_id):
         s = store.load(sheet_id)
-        s.pass_(n).update(fields)
-        store.save(s)
+        if not state.Sheet.settled(s.pass_(n)):  # a person's word stands (unprint, printed)
+            s.pass_(n).update(fields)
+            store.save(s)
     return s
 
 
@@ -443,7 +488,8 @@ def commit(store: state.Store, d: Path, poll: float, wait: float) -> int:
 def cmd_follow(args: argparse.Namespace, store: state.Store) -> int:
     """Wait again for a sheet's outstanding job, one that outlasted --wait."""
     sheet = store.load(args.sheet)
-    open_ = [p for p in sheet.passes if p["job_state"] not in ("completed", "canceled", "aborted")
+    open_ = [p for p in sheet.passes
+             if p["job_state"] not in ("completed", "canceled", "aborted", state.NOT_PRINTED)
              and p.get("job") is not None]
     if not open_:
         raise ToolError(f"sheet {sheet.id} has nothing outstanding to follow")
@@ -469,7 +515,19 @@ def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, 
     done: int | None = None
     told = False
     while True:
-        a = pr.job(job_id)
+        try:
+            a = pr.job(job_id)
+        except ipp.IppRefusedError as exc:
+            if exc.status not in ipp.JOB_FORGOTTEN:
+                raise
+            # A printer forgets its jobs (this Brother within minutes of
+            # their end) and then refuses to be asked about one: only a
+            # person who has looked at the sheet can say what the pass did.
+            raise ToolError(
+                f"{exc}\nthe printer no longer says how job {job_id} (sheet {sid} pass {n}) "
+                f"ended: its slots stay used. Look at the sheet, and record what it shows: "
+                f"rpi-hwid-sheet printed {sid} {n} --why \"...\" if the pass is on it, "
+                f"rpi-hwid-sheet unprint {sid} {n} --why \"...\" if it printed nothing") from exc
         js = (a.get("job-state") or [ipp.JOB_PENDING])[0]
         # how many sheets it printed, only if the printer says: unknown is not none
         raw = a.get("job-impressions-completed") or [None]
@@ -483,13 +541,31 @@ def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, 
             break
         time.sleep(poll)
     name = ipp.JOB_STATES.get(js, str(js))
+    with store.lock(sid):
+        said = store.load(sid).pass_(n)
+
+    def stands(p: dict[str, Any]) -> int:
+        # unprint or printed was run while this waited: a person looked at
+        # the sheet, and the printer's word does not overrule that (a pass
+        # unprinted has had its slots freed, and may have been printed over)
+        print(f"job {job_id} is {name}, but sheet {sid} pass {n} was recorded as "
+              f"{p['job_state']} by a person meanwhile: left as it is "
+              f"(rpi-hwid-sheet status {sid})", file=sys.stderr)
+        return 1
+
+    if state.Sheet.settled(said):
+        return stands(said)
     if js == ipp.JOB_COMPLETED:
         s = set_pass(store, sid, n, job_state=name)
+        if state.Sheet.settled(s.pass_(n)):  # said between the check above and the write
+            return stands(s.pass_(n))
         print(f"sheet {sid} pass {n} printed; {free_text(s)}")
         return 0
     if js in (ipp.JOB_CANCELED, ipp.JOB_ABORTED) and done == 0:
         with store.lock(sid):
             s = store.load(sid)
+            if state.Sheet.settled(s.pass_(n)):
+                return stands(s.pass_(n))
             s.pass_(n)["job_state"] = name
             last = s.passes[-1]["pass"] == n
             if last:
@@ -506,7 +582,9 @@ def follow(store: state.Store, sid: str, d: Path, pr: ipp.Printer, job_id: int, 
                   f"after pass {n}: its slots stay used (rpi-hwid-sheet status {sid})",
                   file=sys.stderr)
         return 1
-    set_pass(store, sid, n, job_state=name)
+    s = set_pass(store, sid, n, job_state=name)
+    if state.Sheet.settled(s.pass_(n)):
+        return stands(s.pass_(n))
     if js in ipp.JOB_DONE:
         what = "an unknown number of" if done is None else str(done)
         print(f"job {job_id} {name} after {what} sheet(s): its slots stay used; check the "
@@ -546,6 +624,22 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("slots", nargs="+", metavar="SLOT", help="1-21, or 1a-21d")
     p.add_argument("--why", default="marked used by hand")
     p.set_defaults(func=cmd_mark)
+
+    p = sub.add_parser("unprint", help="record, on a person's word, that a pass put nothing "
+                                       "on the sheet: its slots are free again")
+    p.add_argument("sheet")
+    p.add_argument("pass_", metavar="PASS", type=int, help="the pass, as status numbers it")
+    p.add_argument("--why", required=True,
+                   help="who looked at the sheet and what they saw, in their words")
+    p.set_defaults(func=cmd_unprint)
+
+    p = sub.add_parser("printed", help="record, on a person's word, that a pass is on the "
+                                       "sheet, when the printer no longer knows its job")
+    p.add_argument("sheet")
+    p.add_argument("pass_", metavar="PASS", type=int, help="the pass, as status numbers it")
+    p.add_argument("--why", required=True,
+                   help="who looked at the sheet and what they saw, in their words")
+    p.set_defaults(func=cmd_printed)
 
     p = sub.add_parser("print", help="collect, show, ask, and print in the free slots "
                                      "(rpi-hwid-sheet print SHEET HOST... [-- COLLECT-ARGS])")

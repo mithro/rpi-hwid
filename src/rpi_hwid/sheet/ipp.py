@@ -58,7 +58,16 @@ class IppError(RuntimeError):
 
 
 class IppRefusedError(IppError):
-    """The printer answered and refused the request: it will not act on it."""
+    """The printer answered and refused the request: it will not act on it.
+    `status` is the IPP status code it gave (0 when not known)."""
+
+    status = 0
+
+
+# What a printer answers when asked about a job it no longer has:
+# client-error-not-found by the standard, client-error-not-possible from the
+# Brother MFC-L3760CDW (seen 2026-10-05, minutes after the job had finished).
+JOB_FORGOTTEN = (0x0404, 0x0406)
 
 
 class Value(NamedTuple):
@@ -341,9 +350,11 @@ class Printer:
                            f"{exc}") from exc
         if msg.code >= 0x0400:
             why = msg.attributes("operation").get("status-message", [""])[0]
-            raise IppRefusedError(f"printer {self.where} refused the request: "
-                                  f"status 0x{msg.code:04x}"
-                           + (f", {why}" if why else ""))
+            refused = IppRefusedError(f"printer {self.where} refused the request: "
+                                      f"status 0x{msg.code:04x}"
+                                      + (f", {why}" if why else ""))
+            refused.status = msg.code
+            raise refused
         return msg
 
     def attributes(self, names: list[str]) -> dict[str, list[Any]]:
