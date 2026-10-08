@@ -42,6 +42,7 @@ uv run docs/social_preview.py     # docs/social-preview.png, 1280 x 640
 uv run docs/examples/render_micro.py   # docs/examples/micro-4up.png, one sticker of micro labels
 uv run docs/examples/render_esp32.py   # docs/examples/esp32-sticker-*.png, the ESP32 labels from real reads
 uv run docs/examples/render_esp32_433.py   # docs/examples/esp32-433-sticker.png, the 433 MHz radio-node labels
+uv run docs/examples/render_esp32_gps.py   # docs/examples/esp32-gps-sticker.png, the GPS-node labels
 uv run docs/examples/render_tasmota.py # docs/examples/tasmota-4up.png; --data DIR adds tasmota-sheet.png
 uv run docs/examples/render_cameras.py # docs/examples/camera-icons*.png, every camera mark on fake boards
 ```

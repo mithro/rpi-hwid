@@ -686,6 +686,46 @@ regenerates the image. What is not read is refused:
 Each error names the host and how to read the radio again. Reading it resets the
 node.
 
+## ESP32 GPS nodes
+
+An ESP32 wired to a GPS receiver by
+[esp32-to-gps](https://github.com/mithro/esp32-to-gps), whose receiver
+`rpi-hwid esp32 --gps PORT` (or `collect --esp32-gps HOST=PORT`) has read,
+gets the ESP32 label with the receiver added (`--only esp32-gps`):
+
+- **Header:** an antenna whose mast is `GPS`, after the Wi-Fi and USB glyphs.
+  Not a band: the u-blox parts are L1 receivers but the LC29H(AA) hears L1 and
+  L5, and neither `L1L5` nor `1575` fits the mast.
+- **Receiver line:** under the ids, the receiver maker's mark (the u-blox disc,
+  the Quectel Q), then the model and the firmware the receiver reports:
+  `u-blox M10 · SPG 5.10`, `u-blox 7 · 1.00 (59842)`, `LC29H(AA) · NR11A05S`.
+  A Quectel firmware name starts with the model it is for
+  (`LC29HAANR11A05S`), which the line already says, so that prefix is dropped;
+  whole, it does not fit.
+
+The flash row and every id stay, as on the 433 MHz node label. The receiver's
+hardware and protocol strings are kept in the document but not printed. The
+board is not printed either, because nothing reads it: a MAX-M10S breakout and
+any other M10 board report the same.
+
+Printed with the plain ESP32 kind, a GPS node gets this label instead of the
+plain one. A node that has not found its receiver yet gets the plain label only.
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-gps-sticker.png" alt="Three micro labels from real reads on rpiz-gps: the u-blox M10 node (u-blox disc, u-blox M10 · SPG 5.10), the u-blox 7 node (u-blox 7 · 1.00 (59842)) and the Quectel LC29H(AA) node (Quectel Q, LC29H(AA) · NR11A05S)" width="98%">
+</p>
+
+These are the three C3 SuperMinis on rpiz-gps, read on 2026-10-08
+(`tests/esp32_gps_devices.json`); `docs/examples/render_esp32_gps.py`
+regenerates the image. What is not read is refused:
+
+- A node whose GPS read failed is an error.
+- So is one that remembers a receiver but did not say its model, and one
+  driving a receiver type with no known maker.
+
+Each error names the host and how to read the receiver again. Reading it does
+not reset the node.
+
 ## Tasmota devices
 
 `rpi_hwid.tasmota_micro` labels the smart plugs and bridges running Tasmota
