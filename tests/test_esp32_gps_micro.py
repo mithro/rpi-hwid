@@ -81,6 +81,25 @@ def test_a_receiver_type_with_no_maker_is_fatal_and_says_what_it_saw():
         esp32_gps_micro.maker_for("h", "m", dict(M10["gps"], module="zed-f9p"))
 
 
+def test_the_dish_says_what_each_receiver_type_tracks():
+    """Each from its maker's datasheet or product page (GNSS's sources): the
+    u-blox 7 tracks GPS or GLONASS, never both; the M8, M10 and LC29H the
+    four global constellations; only the LC29H(AA) is dual band."""
+    got = {k: esp32_gps_micro.gnss_text("h", {"module": k}) for k in esp32_gps_micro.MAKER}
+    assert got == {"ublox7": "G/R L1", "m8": "GREC L1", "m10": "GREC L1", "lc29h": "GREC L1L5"}
+    assert [_one(n).icons[-1] for n in (M10, U7, LC29H)] == [
+        Icon("gnss", "GREC L1"), Icon("gnss", "G/R L1"), Icon("gnss", "GREC L1L5")]
+    assert set(esp32_gps_micro.GNSS) == set(esp32_gps_micro.MAKER)
+    for g in esp32_gps_micro.GNSS.values():
+        micro.gnss_parts(f"{g.letters} {g.band}")
+        assert g.source
+
+
+def test_a_receiver_type_with_no_constellations_is_fatal():
+    with pytest.raises(esp32_gps_micro.UnknownReceiverError, match=r"h: .*'zed-f9p'.*GNSS"):
+        esp32_gps_micro.gnss_text("h", {"module": "zed-f9p"})
+
+
 def test_a_failed_gps_read_is_fatal_and_says_how_to_read_it_again():
     dev = dict(M10, gps=None, gps_error="cannot open /dev/ttyACM2: busy")
     with pytest.raises(esp32_micro.Esp32NotReadError, match=r"busy.*--esp32-gps rpiz-gps="):
@@ -111,7 +130,7 @@ def test_the_gps_label_is_the_plain_label_plus_the_receiver():
     assert (m.ident, m.ident_caption, m.title, m.mark, m.subtitle, m.qr_content) == (
         plain.ident, plain.ident_caption, plain.title, plain.mark, plain.subtitle,
         plain.qr_content)
-    assert m.icons == (*plain.icons, Icon("antenna", "GPS"))
+    assert m.icons == (*plain.icons, Icon("gnss", "GREC L1"))
     assert m.rows == plain.rows
     assert m.specs == plain.specs
     assert m.extra is not None
@@ -126,7 +145,7 @@ def test_with_both_kinds_a_gps_node_gets_one_label_not_two():
     for d in REAL["rpiz-gps"]:
         assert titles.count(d["mac"]) == 1
     labelled = [m for r in rows for m in r[4] if m is not None]
-    assert all(Icon("antenna", "GPS") in m.icons for m in labelled)
+    assert all(m.icons[-1].name == "gnss" for m in labelled)
 
 
 @pytest.mark.parametrize("node", [M10, U7, LC29H], ids=["max-m10s", "gt-u7", "lc29h"])

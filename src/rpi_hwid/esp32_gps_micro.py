@@ -9,9 +9,11 @@ MAC in the QR and along the foot, the flash, and both the node's ids --
 with the receiver added, as the 433 MHz node's label adds its radio
 (``rpi_hwid.esp32_433_micro``):
 
-  * an antenna whose mast is "GPS", after the Wi-Fi and USB glyphs. Not a
-    band: the u-blox parts here are L1 receivers but the LC29H(AA) hears
-    L1 and L5, and neither "L1L5" nor "1575" fits the mast;
+  * a satellite dish after the Wi-Fi and USB glyphs, with the
+    constellations the receiver tracks floating above it like satellites
+    and its band at its foot (``micro.glyph_gnss``): "GREC" over "L1" for
+    the M10, "G/R" for the u-blox 7, which tracks GPS or GLONASS but never
+    both, and "GREC" over "L1L5" for the dual-band LC29H(AA);
   * under the ids, a line naming the receiver: its maker's mark, then the
     model and the firmware it reports: "[u-blox] u-blox M10 · SPG 5.10",
     "[Quectel] LC29H(AA) · LC29HAANR11A05S".
@@ -23,6 +25,14 @@ no serial number to print, and the board it sits on is not read: a
 MAX-M10S reports itself as an M10 (its MON-VER carries no MOD= extension),
 so the label names the receiver, never the board.
 
+The dish's constellations and band are not read: the node's firmware does
+not relay the GNSS list a u-blox receiver's MON-VER carries, and the LC29H
+says nothing of it. They are the receiver type's, from its maker's own
+datasheet or product page (``GNSS``, each with its source), and only the
+global constellations are drawn (G GPS, R GLONASS, E Galileo, C BeiDou);
+the regional and augmentation systems (QZSS, NavIC, SBAS) are left to
+the sources, as there is no sky for six letters.
+
 An ESP32 that was never asked about a receiver is not a GPS node, and gets
 only the plain label. One that was asked and has not found its receiver
 yet likewise. One whose read failed is an error that names the host and
@@ -32,6 +42,7 @@ what to do.
 from __future__ import annotations
 
 import dataclasses
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from reportlab.lib.units import mm
@@ -47,11 +58,46 @@ KIND = "esp32-gps"
 # kinds are printed (rpi_hwid.micro.sticker_rows).
 REPLACES = esp32_micro.KIND
 
-BAND = "GPS"
 
 # The firmware's name for each receiver type (GpsModule) -> its maker.
 MAKER = {"ublox7": "u-blox", "m8": "u-blox", "m10": "u-blox", "lc29h": "Quectel"}
 MAKER_MARK = {"u-blox": "u-blox.png", "Quectel": "quectel.svg"}
+
+
+
+@dataclass(frozen=True)
+class Gnss:
+    """What a receiver type tracks, for the dish: RINEX letters, its band,
+    and where that is said."""
+
+    letters: str
+    band: str
+    source: str
+
+
+# The firmware's receiver types (GpsModule) -> what they track. Each from the
+# maker's own document, quoted, fetched 2026-10-08.
+GNSS = {
+    # NEO-7 data sheet, UBX-13003830 - R07, 1.1: "the u-blox 7 GNSS (GPS,
+    # GLONASS, QZSS and SBAS) engine"; 1.5.2: "GLONASS and GPS signals cannot
+    # be received and tracked simultaneously by u-blox 7 modules". Galileo
+    # needs a flash part's firmware upgrade (1.5.3); the GT-U7 reports ROM
+    # firmware 1.00 (59842). L1 only (GPS L1C/A, GLONASS L1OF).
+    "ublox7": Gnss("G/R", "L1", "NEO-7 data sheet UBX-13003830 R07"),
+    # NEO/LEA-M8T FW3 data sheet, UBX-15025193: "concurrent reception of
+    # GPS/QZSS, GLONASS, BeiDou, and Galileo". L1 signals only.
+    "m8": Gnss("GREC", "L1", "NEO/LEA-M8T FW3 data sheet UBX-15025193"),
+    # MAX-M10S data sheet, UBX-20035208 - R08, 1.3: "The M10 platform
+    # supports concurrent reception of four GNSSs (GPS, GLONASS, Galileo, and
+    # BeiDou)"; signals GPS L1C/A, Galileo E1-B/C, GLONASS L1OF, BeiDou
+    # B1I/B1C: all L1.
+    "m10": Gnss("GREC", "L1", "MAX-M10S data sheet UBX-20035208 R08"),
+    # quectel.com/product/gnss-lc29h, as the Internet Archive captured it on
+    # 2026-05-20: "Multi-GNSS engine supporting GPS, GLONASS, BDS, Galileo,
+    # NavIC and QZSS"; "Concurrent reception of L1 and L5 GNSS band signals";
+    # LC29H (AA): "Dual band (L1+L5), standard precision".
+    "lc29h": Gnss("GREC", "L1L5", "quectel.com LC29H product page, 2026-05-20"),
+}
 
 LINE_H = 2.1 * mm        # the mark at most this tall
 MARK_GAP = 0.5 * mm
@@ -64,6 +110,16 @@ class UnknownReceiverError(ValueError):
 def read_command(host: str, dev: esp32_micro.Esp32Device) -> str:
     return (f"rpi-hwid esp32 --gps {dev.port}` on that host, or "
             f"`rpi-hwid collect --esp32-gps {host}={dev.port} {host}")
+
+
+def gnss_text(host: str, gps: Mapping[str, Any]) -> str:
+    """The dish's text: 'GREC L1L5'."""
+    g = GNSS.get(gps.get("module") or "")
+    if g is None:
+        raise UnknownReceiverError(
+            f"{host}: no constellations are known for a {gps.get('module')!r} receiver; "
+            "add it to rpi_hwid.esp32_gps_micro.GNSS with its source")
+    return f"{g.letters} {g.band}"
 
 
 def maker_for(host: str, mac: str, gps: Mapping[str, Any]) -> str:
@@ -143,7 +199,7 @@ def gps_label(host: str, raw: Mapping[str, Any]) -> MicroLabel | None:
     plain = esp32_micro.esp32_label(host, dev)
     maker = maker_for(host, dev.mac or "", gps)
     return dataclasses.replace(
-        plain, icons=(*plain.icons, Icon("antenna", BAND)),
+        plain, icons=(*plain.icons, Icon("gnss", gnss_text(host, gps))),
         extra=draw_receiver(host, MAKER_MARK[maker], receiver_text(gps)))
 
 
