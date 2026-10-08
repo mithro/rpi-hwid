@@ -231,6 +231,14 @@ License: trademark
  of docs.ai-thinker.com, pixels untouched; see
  src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/satellite-dish.svg
+Copyright: Pictogrammers (Material Design Icons contributors)
+License: Apache-2.0
+ The dish of the satellite-uplink icon from the Material Design Icons
+ package @mdi/svg 7.4.47 (svg/satellite-uplink.svg), with its radio-wave
+ subpaths removed and the viewBox trimmed to the dish. See
+ src/rpi_hwid/artwork/README.md.
+
 Files: src/rpi_hwid/artwork/u-blox.png
 Copyright: u-blox AG
 License: trademark
