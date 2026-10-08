@@ -231,6 +231,21 @@ License: trademark
  of docs.ai-thinker.com, pixels untouched; see
  src/rpi_hwid/artwork/README.md.
 
+Files: src/rpi_hwid/artwork/u-blox.png
+Copyright: u-blox AG
+License: trademark
+ The u-blox disc, drawn only on the label of hardware carrying a u-blox GPS
+ receiver, to identify it. Cropped from u-blox.com's own header logo,
+ pixels untouched; see src/rpi_hwid/artwork/README.md.
+
+Files: src/rpi_hwid/artwork/quectel.svg
+Copyright: Quectel Wireless Solutions Co., Ltd.
+License: trademark
+ The Quectel "Q" and swoosh, drawn only on the label of hardware carrying a
+ Quectel GPS receiver (an LC29H), to identify it. From quectel.com's own
+ header logo SVG with the other letters and the TM removed and the viewBox
+ trimmed, the kept paths untouched; see src/rpi_hwid/artwork/README.md.
+
 Files: src/rpi_hwid/artwork/custom.svg
 Copyright: 2026 Tim Ansell
 License: Apache-2.0
