@@ -476,6 +476,15 @@ else that a reset would interrupt. On `collect` the ports are named per host, as
 HOST that is not being collected is an error, reported before anything is
 probed.
 
+The reads run one after another on the host, so `collect` gives each host's ssh
+session 180 s plus the longest each read asked of it may take: 180 s for an
+esptool read (60 s to find an interpreter that imports esptool, 120 s for the
+read) and 21 s for a radio read (`--esp32-radio`, below). A read that overruns
+gives up on its own and says so in the document, so a slow chip costs that read,
+not the host's whole record. `--timeout SECONDS` sets the 180 s base. A flat
+180 s was not enough: rpiz-gps, a Pi Zero W, took 191 s to read three
+ESP32-C3s on 2026-10-08.
+
 What the reads of 2026-09-26 and 27 found:
 
 - **ESP32-C3 SuperMinis:** their in-package flash is an XMC (JEDEC `0x464016`,
