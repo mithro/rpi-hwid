@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import math
 import subprocess
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -91,6 +92,28 @@ def probe_source(
     return "RPI_HWID_EMBEDDED = True\n" + probe + extra + glue
 
 
+# The ssh timeout for a probe that reads nothing disruptive: the Pi probe
+# and whatever modules are appended to it.
+BASE_TIMEOUT = 180
+
+
+def probe_timeout(base: int = BASE_TIMEOUT, esp32_read: Sequence[str] = (),
+                  esp32_radio: Sequence[str] = ()) -> int:
+    """The ssh timeout for one host's probe: `base`, and on top of it the
+    longest each read asked for of it may take, since they run one after
+    another on the host. Each read gives up on its own before then and
+    says so in the document, so a slow chip costs that read, never the
+    whole host's record. (rpiz-gps, a Pi Zero W, took 191 s to read three
+    ESP32-C3s with esptool and ask each a few console questions; the flat
+    180 s this replaces killed that probe and lost the whole record.)"""
+    from rpi_hwid import esp32
+    from rpi_hwid import esp32_radio as radio
+
+    read = esp32.ESPTOOL_CHECK_TIMEOUT + esp32.READ_TIMEOUT
+    asked = radio.LISTEN + len(radio.COMMANDS) * radio.ANSWER_WAIT
+    return base + len(esp32_read) * read + math.ceil(len(esp32_radio) * asked)
+
+
 @dataclass
 class Result:
     """One host's outcome: a document, or the reason there is none."""
@@ -109,7 +132,7 @@ def probe_host(
     fpga: bool = False,
     jtag: bool = False,
     flash: bool = False,
-    timeout: int = 180,
+    timeout: int | None = None,
     tinytapeout: bool = False,
     take_port: bool = True,
     esp32: bool = False,
@@ -120,7 +143,11 @@ def probe_host(
     sdr: bool = False,
     sdr_open: bool = False,
 ) -> Result:
-    """Run the probe on one host; `host` may carry its own ``user@``."""
+    """Run the probe on one host; `host` may carry its own ``user@``.
+    `timeout` is the ssh timeout; by default ``probe_timeout()`` of the
+    reads asked for."""
+    if timeout is None:
+        timeout = probe_timeout(BASE_TIMEOUT, esp32_read, esp32_radio)
     source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32=esp32,
                           esp32_read=esp32_read, esp32_radio=esp32_radio,
                           force_offline=force_offline, esp32_gps=esp32_gps,
@@ -141,7 +168,7 @@ def probe_host(
         try:
             r = subprocess.run(cmd, input=source, capture_output=True, text=True, timeout=timeout)
         except subprocess.TimeoutExpired:
-            return Result(host, False, error="timed out")
+            return Result(host, False, error=f"timed out after {timeout} s")
         if r.returncode == 0:
             try:
                 doc = ProbeDocument.from_json(target, r.stdout)
@@ -224,6 +251,7 @@ def collect(
     esp32_gps: Sequence[str] = (),
     sdr: bool = False,
     sdr_open_hosts: Sequence[str] = (),
+    base_timeout: int = BASE_TIMEOUT,
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
@@ -242,7 +270,9 @@ def collect(
     what receiver it drives.
     `force_offline_hosts` are the hosts whose Cynthion is taken offline to
     read its ECP5 TraceID: its capture stops for a few seconds and its TARGET
-    port may lose power, so only on the hosts named.
+    port may lose power, so only on the hosts named. `base_timeout` is each
+    host's ssh timeout before the reads asked of it are allowed for
+    (``probe_timeout``).
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -258,7 +288,9 @@ def collect(
                           esp32=esp32 or host in reads or host in radios or host in gpses,
                           esp32_read=reads.get(host, ()), esp32_radio=radios.get(host, ()),
                           force_offline=offline, esp32_gps=gpses.get(host, ()),
-                          sdr=sdr, sdr_open=host in sdr_open_hosts)
+                          sdr=sdr, sdr_open=host in sdr_open_hosts,
+                          timeout=probe_timeout(base_timeout, reads.get(host, ()),
+                                                radios.get(host, ())))
 
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:

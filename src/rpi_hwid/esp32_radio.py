@@ -47,6 +47,8 @@ import termios
 import time
 
 COMMANDS = ("Radio", "CcStatus", "SxStatus")
+LISTEN = 12.0          # seconds of boot output kept after the reset
+ANSWER_WAIT = 3.0      # seconds each command's answer is waited for, at most
 LOG_PREFIX = "CC1: "
 
 
@@ -205,7 +207,7 @@ def drain(fd, secs, until=None):
     return buf.decode("utf-8", "replace")
 
 
-def read_radio(port, listen=12.0, answer_wait=3.0):
+def read_radio(port, listen=LISTEN, answer_wait=ANSWER_WAIT):
     """Reset the node on `port`, keep its boot, ask it the commands:
     {port, radio (see summarise) or None, error, boot, answers}."""
     out = {"port": port, "tty": os.path.realpath(port), "radio": None, "error": None,
