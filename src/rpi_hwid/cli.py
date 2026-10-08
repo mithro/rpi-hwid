@@ -6,7 +6,7 @@
                                                           on a Pi: which FPGA board?
     rpi-hwid tinytapeout [--json] [--no-repl] [--no-stop-service]
                                                           on a Pi: which Tiny Tapeout board?
-    rpi-hwid esp32 [--json] [--read PORT…] [--radio PORT…]
+    rpi-hwid esp32 [--json] [--read PORT…] [--radio PORT…] [--gps PORT…]
                                                           on a Pi: which ESP32s are on USB?
     rpi-hwid collect --out DIR [-J JUMP] [--fpga] [--tinytapeout] [--no-stop-service] HOST…
                                                           over ssh: one JSON per host
@@ -135,12 +135,20 @@ def cmd_esp32(args: argparse.Namespace) -> int:
         # through the document's shape, which shares e's device dicts
         esp32_radio.merge_radios(esp32.merge_esp32({}, e), reads)
         e["radio_reads"] = reads
+    if args.gps:
+        from rpi_hwid import esp32_gps
+
+        gps_reads = esp32_gps.collect_gps(args.gps)
+        esp32_gps.merge_gps(esp32.merge_esp32({}, e), gps_reads)
+        e["gps_reads"] = gps_reads
     if args.json:
         print(json.dumps(e, indent=1))
     else:
         esp32.describe(e)
         if args.radio:
             esp32_radio.describe(reads)
+        if args.gps:
+            esp32_gps.describe_gps(gps_reads)
     return 0
 
 
@@ -151,6 +159,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         # checked before anything is probed, so a mistyped host costs nothing
         esp32_reads(args.hosts, args.esp32_read or ())
         esp32_reads(args.hosts, args.esp32_radio or (), "--esp32-radio")
+        esp32_reads(args.hosts, args.esp32_gps or (), "--esp32-gps")
         offline = {resolve_host(args.hosts, h, "--force-offline")
                    for h in args.force_offline or ()}
     except ValueError as exc:
@@ -164,6 +173,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         esp32=args.esp32, esp32_read=tuple(args.esp32_read or ()),
         esp32_radio=tuple(args.esp32_radio or ()),
         force_offline_hosts=tuple(sorted(offline)),
+        esp32_gps=tuple(args.esp32_gps or ()),
     )
     failed = 0
     for r in results:
@@ -363,6 +373,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--esp32-radio", action="append", metavar="HOST=PORT",
                    help="reset the 433 MHz node on PORT of HOST and ask its firmware which "
                         "radio it drives (disruptive; implies --esp32 there)")
+    p.add_argument("--esp32-gps", action="append", metavar="HOST=PORT",
+                   help="ask the GPS node on PORT of HOST which receiver its firmware "
+                        "drives (no reset; implies --esp32 there)")
     p.add_argument("--workers", type=int, default=4)
     p.set_defaults(func=cmd_collect)
 
@@ -374,6 +387,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--radio", action="append", metavar="PORT",
                    help="reset the 433 MHz node on PORT and ask its firmware which radio "
                         "it drives (disruptive)")
+    p.add_argument("--gps", action="append", metavar="PORT",
+                   help="ask the GPS node on PORT which receiver its firmware drives "
+                        "(no reset)")
     p.set_defaults(func=cmd_esp32)
 
     sub.add_parser("tasmota", help="read Tasmota devices over HTTP, read-only "
