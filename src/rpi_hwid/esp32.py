@@ -61,6 +61,13 @@ BRIDGES = {
     "0403:6015": "FT231X",
 }
 
+# How long one --read may take, at most: checking that an interpreter can
+# import esptool, then the read itself (its reset, the ROM's answers and the
+# listen after the reset back into the application). The collector's ssh
+# timeout allows this much for each port it asks to be read.
+ESPTOOL_CHECK_TIMEOUT = 60
+READ_TIMEOUT = 120
+
 MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
 
 
@@ -405,7 +412,7 @@ def esptool_python():
         try:
             r = subprocess.run([python, "-c", "import esptool, espefuse"],
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               timeout=60)
+                               timeout=ESPTOOL_CHECK_TIMEOUT)
         except (OSError, subprocess.TimeoutExpired):
             continue
         if r.returncode == 0:
@@ -421,7 +428,7 @@ def error_line(text):
     return (errors or lines or ["no output"])[-1]
 
 
-def run_read(port, timeout=120):
+def run_read(port, timeout=READ_TIMEOUT):
     """Run the read on one port: (result or None, error or None, output)."""
     python = esptool_python()
     if python is None:
