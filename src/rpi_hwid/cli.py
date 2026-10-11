@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from rpi_hwid import names, revision
-from rpi_hwid.collect import DEFAULT_USERS
+from rpi_hwid.collect import BASE_TIMEOUT, DEFAULT_USERS
 
 
 def fpga_module_pins() -> str:
@@ -164,6 +164,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         esp32=args.esp32, esp32_read=tuple(args.esp32_read or ()),
         esp32_radio=tuple(args.esp32_radio or ()),
         force_offline_hosts=tuple(sorted(offline)),
+        base_timeout=args.timeout,
     )
     failed = 0
     for r in results:
@@ -364,6 +365,9 @@ def main(argv: list[str] | None = None) -> int:
                    help="reset the 433 MHz node on PORT of HOST and ask its firmware which "
                         "radio it drives (disruptive; implies --esp32 there)")
     p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--timeout", type=int, metavar="SECONDS", default=BASE_TIMEOUT,
+                   help=f"each host's ssh timeout (default {BASE_TIMEOUT}), before the "
+                        "time every --esp32-read and --esp32-radio of it may take is added")
     p.set_defaults(func=cmd_collect)
 
     p = sub.add_parser("esp32", help="which ESP32s are on USB (run on the Pi)")
