@@ -804,8 +804,102 @@ def glyph_zigbee(cell: Cell, x: float, y: float, size: float, text: str) -> floa
     return float(cell.svg(path, x, y, size))
 
 
+# The GNSS glyph: a satellite dish, with the constellations a receiver
+# tracks floating in the sky above it like satellites, and its band at its
+# foot (Tim, 2026-10-08). The constellations are RINEX's one-letter codes,
+# G GPS, R GLONASS, E Galileo, C BeiDou, J QZSS, I NavIC, S SBAS, and "/"
+# between two that are tracked one at a time, never together.
+GNSS_LETTERS = "GRECJIS/"
+GNSS_BANDS = ("L1", "L1L2", "L1L5", "L1L2L5")
+DISH_MARK = "satellite-dish.svg"
+DISH_H = 0.6                   # the dish's height, of the glyph's
+DISH_GAP = 0.2 * mm            # the dish to the band beside its foot
+SKY_STEP = 0.3 * mm            # how much higher each satellite floats than the last
+SKY_START = 0.4                # the first satellite's left, of the dish's width
+SKY_CLEAR = 0.1 * mm           # the least air between a satellite and the dish
+# The dish's mouth, the straight edge that faces up and to the right, as
+# fractions of the dish's box: from (0.064, 0) to (1, 0.86) (satellite-dish.svg's
+# M3.72,9.69 ... L14.3,20.28 in its 11.3 x 12.31 viewBox from (3, 9.69)).
+DISH_MOUTH = ((3.72 - 3) / 11.3, 0.0, (14.3 - 3) / 11.3, (20.28 - 9.69) / 12.31)
+
+
+def gnss_parts(text: str) -> tuple[str, str]:
+    """'GREC L1L5' -> ('GREC', 'L1L5'): the constellations, then the band.
+    Refused unless it is that."""
+    letters, _, band = text.partition(" ")
+    if (not letters or any(ch not in GNSS_LETTERS for ch in letters)
+            or letters[0] == "/" or letters[-1] == "/" or "//" in letters
+            or len(set(letters.replace("/", ""))) != len(letters.replace("/", ""))
+            or band not in GNSS_BANDS):
+        raise ValueError(
+            "a GNSS glyph's text is its constellations as RINEX letters "
+            f"({GNSS_LETTERS[:-1]}, '/' between two tracked one at a time) and its "
+            f"band ({', '.join(GNSS_BANDS)}), 'GREC L1L5', not {text!r}")
+    return letters, band
+
+
+def _dish_size(size: float) -> tuple[float, float]:
+    """The dish's width and height in a `size`-high glyph."""
+    path = labels.artwork(DISH_MARK)
+    if not path:
+        raise ValueError(f"the {DISH_MARK} artwork is missing")
+    h = size * DISH_H
+    return h / labels.mark_aspect(path), h
+
+
+def _sky(size: float, letters: str) -> list[tuple[str, float, float]]:
+    """Each letter and where it floats: (letter, x, y of its top) from the
+    glyph's top-left. They rise left to right over the dish's mouth, which
+    opens up and to the right, the last at the glyph's top."""
+    dish_w, _ = _dish_size(size)
+    out, x = [], dish_w * SKY_START
+    n = len(letters)
+    for i, ch in enumerate(letters):
+        out.append((ch, x, (n - 1 - i) * SKY_STEP))
+        x += _bold(ch) + (0.05 * mm if ch != "/" and i + 1 < n and letters[i + 1] != "/" else 0.0)
+    return out
+
+
+def gnss_width(size: float, text: str) -> float:
+    if not text:
+        return _dish_size(size)[0]
+    letters, band = gnss_parts(text)
+    dish_w, _ = _dish_size(size)
+    ch, x, _y = _sky(size, letters)[-1]
+    return max(dish_w + DISH_GAP + _bold(band), x + _bold(ch))
+
+
+def glyph_gnss(cell: Cell, x: float, y: float, size: float, text: str) -> float:
+    """A GNSS receiver: a satellite dish (artwork/satellite-dish.svg). With
+    text -- ``Icon("gnss", "GREC L1L5")`` -- the constellations it tracks
+    float above the dish like satellites, rising left to right over its
+    mouth, and the band stands at its foot, where the Wi-Fi glyph sets its
+    band; all of it bold, at the smallest size the labels print."""
+    dish_w, dish_h = _dish_size(size)
+    path = labels.artwork(DISH_MARK)
+    if not text:
+        cell.svg(path, x, y + size - dish_h, dish_h)
+        return dish_w
+    letters, band = gnss_parts(text)
+    # every satellite clears the dish's mouth below it
+    x0, y0, x1, y1 = DISH_MOUTH
+    for ch, cx, top in _sky(size, letters):
+        f = min(max(cx / dish_w, x0), x1)
+        mouth = size - dish_h + dish_h * (y0 + (f - x0) / (x1 - x0) * (y1 - y0))
+        if top + WIFI_TYPE * 0.72 + SKY_CLEAR > mouth:
+            raise ValueError(f"the GNSS glyph's {ch!r} of {letters!r} would float down "
+                             "into the dish; give it fewer constellations")
+    cell.svg(path, x, y + size - dish_h, dish_h)
+    for ch, cx, top in _sky(size, letters):
+        cell.text(x + cx, y + top, ch, labels.SANS_BOLD, WIFI_TYPE)
+    cell.text(x + dish_w + DISH_GAP, y + _wifi_baseline(size) - WIFI_TYPE * 0.72, band,
+              labels.SANS_BOLD, WIFI_TYPE)
+    return gnss_width(size, text)
+
+
 ICONS: dict[str, IconFn] = {
     "wifi": glyph_wifi,
+    "gnss": glyph_gnss,
     "usb": glyph_usb,
     "ethernet": glyph_ethernet,
     "chip": glyph_chip,
@@ -1103,6 +1197,7 @@ WIDTHS: dict[str, Callable[[float, str], float]] = {
     "riscv": lambda h, t: isa_width(h),
     "cores": cores_width,
     "wifi": wifi_width,
+    "gnss": gnss_width,
     "tasmota": lambda h, t: _artwork_width("tasmota.svg", h),
     "memory": lambda h, t: memory_width(h, t),
     "bluetooth": lambda h, t: h * BLUETOOTH_W,

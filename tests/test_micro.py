@@ -752,3 +752,65 @@ def test_a_wrapped_identifier_s_halves_stand_close(monkeypatch):
     assert y["fedcba9876543210"] - y["0123456789abcdef"] == pytest.approx(
         micro.wrap_advance(4.0))
     assert y["0123456789abcdef"] - y["XM25QH32D · 4 MiB"] > micro.wrap_advance(4.0)
+
+
+# --- the GNSS glyph: a dish with its satellites --------------------------------
+
+
+@pytest.mark.parametrize(("text", "parts"), [
+    ("GREC L1L5", ("GREC", "L1L5")), ("G/R L1", ("G/R", "L1")), ("GRECJIS L1", ("GRECJIS", "L1")),
+])
+def test_the_gnss_glyph_text_is_constellations_then_band(text, parts):
+    assert micro.gnss_parts(text) == parts
+
+
+@pytest.mark.parametrize("text", ["GREC", "L1", "GREC L3", "GRX L1", "GG L1", "/GR L1",
+                                  "GR/ L1", "G//R L1", "grec L1"])
+def test_a_gnss_text_the_glyph_cannot_draw_is_refused(text):
+    with pytest.raises(ValueError, match="RINEX"):
+        micro.gnss_parts(text)
+
+
+def _gnss_drawn(monkeypatch, text):
+    """Each piece of text glyph_gnss sets, (x, top, text), and its width."""
+    from reportlab.pdfgen import canvas
+
+    cell = micro.Cell(canvas.Canvas(_null_pdf()), 0, 0)
+    drawn = []
+    monkeypatch.setattr(micro.Cell, "text", lambda self, x, y, s, font, size, **k:
+                        drawn.append((x, y, s)))
+    w = micro.glyph_gnss(cell, 0, 0, micro.HEAD_H, text)
+    return drawn, w
+
+
+def test_the_satellites_rise_over_the_dish_and_the_band_stands_at_its_foot(monkeypatch):
+    """Tim, 2026-10-08: the constellations float above the dish like
+    satellites; the band, as on the Wi-Fi glyph, at the foot."""
+    drawn, w = _gnss_drawn(monkeypatch, "GREC L1L5")
+    *sky, (bx, btop, band) = drawn
+    assert "".join(s for _x, _y, s in sky) == "GREC"
+    assert band == "L1L5"
+    xs, tops = [x for x, _y, _s in sky], [y for _x, y, _s in sky]
+    # rising left to right
+    assert xs == sorted(xs)
+    assert tops == sorted(tops, reverse=True)
+    assert tops[-1] == 0                                            # the last at the top
+    dish_w, _dish_h = micro._dish_size(micro.HEAD_H)
+    assert bx == pytest.approx(dish_w + micro.DISH_GAP)
+    assert btop > max(tops) + micro.WIFI_TYPE * 0.72                 # band below the sky
+    assert w == pytest.approx(micro.gnss_width(micro.HEAD_H, "GREC L1L5"))
+
+
+def test_too_many_satellites_would_fall_into_the_dish():
+    from reportlab.pdfgen import canvas
+
+    cell = micro.Cell(canvas.Canvas(_null_pdf()), 0, 0)
+    with pytest.raises(ValueError, match="into the dish"):
+        micro.glyph_gnss(cell, 0, 0, micro.HEAD_H, "GRECJIS L1")
+
+
+def test_the_plain_gnss_glyph_is_the_dish_alone(monkeypatch):
+    drawn, w = _gnss_drawn(monkeypatch, "")
+    assert drawn == []
+    assert w == pytest.approx(micro._dish_size(micro.HEAD_H)[0])
+    assert labels.artwork(micro.DISH_MARK)

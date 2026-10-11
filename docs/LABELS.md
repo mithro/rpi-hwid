@@ -495,6 +495,7 @@ one it is. The strip's glyphs are registered like the header's:
 | `Icon("zigbee")` | the Zigbee mark, for an IEEE 802.15.4 radio |
 | `Icon("revision", "v0.4")` | a chip's revision, its text alone at 4 pt |
 | `Icon("wifi", "2.4/5 a/b/g/n/ac/ax")` | the Wi-Fi arcs with the band under them, the single-letter 802.11 standards beside them and the two-letter ones (ac, ax) beside the band, bold at 4 pt (a header glyph). With one standard (`"2.4 n"`) it is joined to the band, `2.4n`, and a trailing `+bt` or `+zb` draws the Bluetooth rune or the Zigbee mark in the empty corner right or left of the arcs' dot. The band is always centred under the arcs |
+| `Icon("gnss", "GREC L1L5")` | a satellite dish (`satellite-dish.svg`) with the constellations floating above its mouth like satellites, rising left to right, and the band at its foot, all bold at 4 pt (a header glyph). The constellations are RINEX letters (G R E C J I S), with `/` between two tracked one at a time; the band is `L1`, `L1L2`, `L1L5` or `L1L2L5`. Satellites that would float down into the dish are refused |
 | `Icon("usb", "OJS")` | the USB logo (`usb.svg`, unchanged) turned upright, and on one line over it a letter for each prong, for what the port does: O (OTG) over the round prong, J (JTAG) over the arrow, S (serial) over the square one; a prong with no function leaves its letter's place empty (a header glyph) |
 
 A strip too wide for the band is refused when the label is made.
@@ -685,6 +686,57 @@ regenerates the image. What is not read is refused:
 
 Each error names the host and how to read the radio again. Reading it resets the
 node.
+
+## ESP32 GPS nodes
+
+An ESP32 wired to a GPS receiver by
+[esp32-to-gps](https://github.com/mithro/esp32-to-gps), whose receiver
+`rpi-hwid esp32 --gps PORT` (or `collect --esp32-gps HOST=PORT`) has read,
+gets the ESP32 label with the receiver added (`--only esp32-gps`):
+
+- **Header:** a satellite dish after the Wi-Fi and USB glyphs, with the
+  constellations the receiver tracks floating above it like satellites and its
+  band at its foot: `GREC` over `L1` for the M10 (and the M8), `G/R` for the
+  u-blox 7, which tracks GPS or GLONASS but never both, and `GREC` over `L1L5`
+  for the dual-band LC29H(AA). The letters are RINEX's: G GPS, R GLONASS,
+  E Galileo, C BeiDou. Only the global constellations are drawn; QZSS, NavIC
+  and SBAS are in the sources, not on the label.
+- **Receiver line:** under the ids, the receiver maker's mark (the u-blox disc,
+  the Quectel Q), then the model and the firmware the receiver reports:
+  `u-blox M10 · SPG 5.10`, `u-blox 7 · 1.00 (59842)`, `LC29H(AA) · NR11A05S`.
+  A Quectel firmware name starts with the model it is for
+  (`LC29HAANR11A05S`), which the line already says, so that prefix is dropped;
+  whole, it does not fit.
+
+The dish's constellations and band are not read from the receiver: the
+firmware does not relay the GNSS list a u-blox MON-VER carries, and the LC29H
+says nothing of it. They belong to the receiver type, from its maker
+(`esp32_gps_micro.GNSS`, each entry quoting its source): the NEO-7 data sheet
+(UBX-13003830 R07), the NEO/LEA-M8T FW3 data sheet (UBX-15025193), the
+MAX-M10S data sheet (UBX-20035208 R08) and Quectel's LC29H product page.
+
+The flash row and every id stay, as on the 433 MHz node label. The receiver's
+hardware and protocol strings are kept in the document but not printed. The
+board is not printed either, because nothing reads it: a MAX-M10S breakout and
+any other M10 board report the same.
+
+Printed with the plain ESP32 kind, a GPS node gets this label instead of the
+plain one. A node that has not found its receiver yet gets the plain label only.
+
+<p>
+<img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/esp32-gps-sticker.png" alt="Three micro labels from real reads on rpiz-gps: the u-blox M10 node (dish with GREC over L1; u-blox disc, u-blox M10 · SPG 5.10), the u-blox 7 node (dish with G/R over L1; u-blox 7 · 1.00 (59842)) and the Quectel LC29H(AA) node (dish with GREC over L1L5; Quectel Q, LC29H(AA) · NR11A05S)" width="98%">
+</p>
+
+These are the three C3 SuperMinis on rpiz-gps, read on 2026-10-08
+(`tests/esp32_gps_devices.json`); `docs/examples/render_esp32_gps.py`
+regenerates the image. What is not read is refused:
+
+- A node whose GPS read failed is an error.
+- So is one that remembers a receiver but did not say its model, and one
+  driving a receiver type with no known maker or constellations.
+
+Each error names the host and how to read the receiver again. Reading it does
+not reset the node.
 
 ## Tasmota devices
 

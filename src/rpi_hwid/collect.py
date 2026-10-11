@@ -38,6 +38,7 @@ def probe_source(
     fpga: bool = False, jtag: bool = False, flash: bool = False, tinytapeout: bool = False,
     take_port: bool = True, esp32: bool = False, esp32_read: Sequence[str] = (),
     esp32_radio: Sequence[str] = (), force_offline: bool = False,
+    esp32_gps: Sequence[str] = (),
 ) -> str:
     """The script to feed to ``python3 -`` on a host.
 
@@ -74,6 +75,11 @@ def probe_source(
         # which resets the same chips and must find them first
         extra += "\n" + pkg.joinpath("esp32_radio.py").read_text()
         glue += f"merge_radios(_doc, collect_radios({list(esp32_radio)!r}))\n"
+    if esp32_gps:
+        # the receiver a GPS node's firmware drives: asked without a reset,
+        # after the reads that do reset the same chips
+        extra += "\n" + pkg.joinpath("esp32_gps.py").read_text()
+        glue += f"merge_gps(_doc, collect_gps({list(esp32_gps)!r}))\n"
     glue += "print(json.dumps(_doc, indent=1))\n"
     return "RPI_HWID_EMBEDDED = True\n" + probe + extra + glue
 
@@ -103,10 +109,11 @@ def probe_host(
     esp32_read: Sequence[str] = (),
     esp32_radio: Sequence[str] = (),
     force_offline: bool = False,
+    esp32_gps: Sequence[str] = (),
 ) -> Result:
     """Run the probe on one host; `host` may carry its own ``user@``."""
     source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32, esp32_read,
-                          esp32_radio, force_offline)
+                          esp32_radio, force_offline, esp32_gps)
     args = ["--json"]
     if "@" in host:
         user_list: Sequence[str] = [host.split("@", 1)[0]]
@@ -203,6 +210,7 @@ def collect(
     esp32_read: Sequence[str] = (),
     esp32_radio: Sequence[str] = (),
     force_offline_hosts: Sequence[str] = (),
+    esp32_gps: Sequence[str] = (),
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
@@ -216,7 +224,9 @@ def collect(
     `esp32` appends the ESP32 module for every host (the USB tree only, from
     sysfs); `esp32_read` is HOST=PORT pairs, the ports whose chip may be reset
     and read on that host, and `esp32_radio` the same for the ports whose
-    433 MHz node firmware may be reset and asked what radio it drives.
+    433 MHz node firmware may be reset and asked what radio it drives, and
+    `esp32_gps` the ports whose GPS node firmware may be asked (no reset)
+    what receiver it drives.
     `force_offline_hosts` are the hosts whose Cynthion is taken offline to
     read its ECP5 TraceID: its capture stops for a few seconds and its TARGET
     port may lose power, so only on the hosts named.
@@ -225,15 +235,16 @@ def collect(
 
     reads = esp32_reads(hosts, esp32_read)
     radios = esp32_reads(hosts, esp32_radio, "--esp32-radio")
+    gpses = esp32_reads(hosts, esp32_gps, "--esp32-gps")
 
     def one(host: str) -> Result:
         offline = host in force_offline_hosts
         return probe_host(host, users, jump, fpga or host in jtag_hosts or offline,
                           host in jtag_hosts, host in flash_hosts, tinytapeout=tinytapeout,
                           take_port=take_port,
-                          esp32=esp32 or host in reads or host in radios,
+                          esp32=esp32 or host in reads or host in radios or host in gpses,
                           esp32_read=reads.get(host, ()), esp32_radio=radios.get(host, ()),
-                          force_offline=offline)
+                          force_offline=offline, esp32_gps=gpses.get(host, ()))
 
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:
