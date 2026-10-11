@@ -238,8 +238,53 @@ passwordless `sudo`, so the firmware tools were not run.
 **Nothing comes out of the printer.** The job is waiting for its sheet. Put one
 in the manual feed, top edge first.
 
+**"the probe could not tell whether the CAMERA camera has a focus motor".**
+The lens did not answer, so the label is refused rather than printed claiming
+fixed focus. Read it again with the camera streaming, and if it still will not
+answer, see "A field nothing could read" below.
+
 **The sheet id is not found.** See below: a sheet lives on the machine that
 started it.
+
+## A field nothing could read
+
+Some fields cannot be read from where the station stands. A camera whose lens
+driver does not answer is the common one: the label would have to say the
+camera has no focus motor, which nobody established, so it is refused instead.
+
+Do not edit the read document. A read is what the board said, and patching it
+makes the station's own record untrue -- and because unknown keys are only
+checked in the label input, a note added to a read is kept silently.
+
+Say it in a label input instead, which is the document the labels are drawn
+from and is checked field by field:
+
+```sh
+mkdir -p ~/labels
+rpi-hwid label-input --from ~/.local/state/rpi-hwid/reads/SHEET/RUN/board1.json \
+  > ~/labels/board1.json
+```
+
+`RUN` is the timestamp the run printed on its `1 of 1 host(s) written to` line.
+
+Edit the one field in `~/labels/board1.json` -- for a fixed-focus camera,
+`"autofocus": false` -- and record who says so under `sources`, which is
+free-form and exists for exactly this:
+
+```json
+"sources": {"cameras": "operator: these are fixed-focus modules (2026-10-11)"}
+```
+
+Then print from that document rather than collecting again:
+
+```sh
+rpi-hwid-sheet print SHEET board1 --data ~/labels
+```
+
+An unknown key, a renamed field or a wrong type is refused when the document
+is read, naming what is wrong. Only assert what you know about the hardware in
+front of you: the label is believed afterwards, and `sources` is what says it
+came from a person rather than from the board.
 
 ## Next
 
@@ -255,5 +300,6 @@ When the station is no longer wanted, withdraw its key from both accounts.
 Removing the laptop's files is not enough, and a key left in place is what turns
 a borrowed laptop into standing access.
 
-See also [SHEETS.md](SHEETS.md) for sheets in general, and
-[COLLECT.md](COLLECT.md) for what the reader asks a host.
+See also [SHEETS.md](SHEETS.md) for sheets in general,
+[COLLECT.md](COLLECT.md) for what the reader asks a host, and
+[LABEL-INPUT.md](LABEL-INPUT.md) for the document the labels are drawn from.
