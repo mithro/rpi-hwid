@@ -257,34 +257,43 @@ makes the station's own record untrue -- and because unknown keys are only
 checked in the label input, a note added to a read is kept silently.
 
 Say it in a label input instead, which is the document the labels are drawn
-from and is checked field by field:
+from and is checked field by field. Give each read its own directory:
 
 ```sh
-mkdir -p ~/labels
+mkdir -p ~/labels/RUN
 rpi-hwid label-input --from ~/.local/state/rpi-hwid/reads/SHEET/RUN/board1.json \
-  > ~/labels/board1.json
+  > ~/labels/RUN/board1.json
 ```
 
 `RUN` is the timestamp the run printed on its `1 of 1 host(s) written to` line.
+Keep them apart, because `board1` names the port and not the board in it. A
+single `~/labels/board1.json` is overwritten by the next board on that port,
+and a stale one left there prints the previous board's label for a new board.
+The reads are kept for ever; this document, the one that differs from the
+board, is only as safe as where you put it.
 
-Edit the one field in `~/labels/board1.json` -- for a fixed-focus camera,
-`"autofocus": false` -- and record who says so under `sources`, which is
-free-form and exists for exactly this:
+Edit the one field -- for a fixed-focus camera, `"autofocus": false` -- and
+change that field's entry under `sources` to say who settled it. `--from` has
+already written an entry there for every field, so change the one and leave the
+rest alone:
 
 ```json
-"sources": {"cameras": "operator: these are fixed-focus modules (2026-10-11)"}
+"cameras": "operator: these are fixed-focus modules (2026-10-11)",
 ```
 
 Then print from that document rather than collecting again:
 
 ```sh
-rpi-hwid-sheet print SHEET board1 --data ~/labels
+rpi-hwid-sheet print SHEET board1 --data ~/labels/RUN
 ```
 
-An unknown key, a renamed field or a wrong type is refused when the document
-is read, naming what is wrong. Only assert what you know about the hardware in
-front of you: the label is believed afterwards, and `sources` is what says it
-came from a person rather than from the board.
+An unknown key, a renamed field or a wrong type is refused when the document is
+read, naming what is wrong. A `sources` written over wholesale is not: it drops
+the provenance of every other field, and nothing says so.
+
+Only assert what you know about the hardware in front of you. No label reads
+`sources`, so the sticker is identical whether the board settled the field or
+you did; the document you keep is the only record that a person answered.
 
 ## Next
 
