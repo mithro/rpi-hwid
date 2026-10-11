@@ -537,3 +537,43 @@ way `rpi-hwid esp32 --radio` prints them:
 ```
 
 All three nodes were back in their firmware straight after.
+
+### GPS nodes
+
+`rpi_hwid.esp32_gps` asks a node built by
+[esp32-to-gps](https://github.com/mithro/esp32-to-gps) which GPS receiver it
+has. The nodes run Tasmota's `gps` build, whose driver finds the receiver
+itself the first time (its speed, then UBX MON-VER, then Quectel's
+`$PQTMVERNO`) and remembers it. It is a module of the same kind as the
+others, and its helpers are named apart from `esp32_radio`'s, because the
+probe can embed both. `rpi-hwid esp32 --gps PORT` runs it on the host, and
+`rpi-hwid collect --esp32-gps HOST=PORT` appends it after the esptool read.
+
+Unlike the radio read, this one resets nothing. The firmware answers
+`GpsConfig` (the receiver type it remembers) and `GpsStatus` (with the
+receiver's own model, firmware, hardware and protocol strings under
+`Receiver`) whenever it is asked. So the port is opened with DTR and RTS
+raised together, which the C3's USB-Serial-JTAG takes as no reset, and HUPCL is
+cleared. `Status 2` is asked as well, for the Tasmota version, which names the
+`gps` build. A GPS receiver has no serial number, and the board it sits on is
+not reported: a MAX-M10S's MON-VER carries no `MOD=` extension, so it says it
+is a "u-blox M10".
+
+A node that has not found its receiver yet is a finding, not an error. A port
+that answers neither GPS command is an error, kept on its ESP32 as
+`gps_error`. The receiver goes on the ESP32's entry as `verdict.esp32[].gps`,
+and each read's answers are kept under `esp32.gps_reads`.
+
+The reads made on rpiz-gps on 2026-10-08, the day its three nodes were first
+flashed, printed the way `rpi-hwid esp32 --gps` prints them:
+
+```
+  gps    : /dev/gps-max-m10s: u-blox M10 firmware SPG 5.10 hardware 000A0000 (m10, 38400 baud)
+  gps    : /dev/gps-gt-u7: u-blox 7 firmware 1.00 (59842) hardware 00070000 (ublox7, 38400 baud)
+  gps    : /dev/gps-lc29h: LC29H(AA) firmware LC29HAANR11A05S hardware AG3335M (lc29h, 115200 baud)
+```
+
+The nodes' uptimes ran on across the reads. With `--esp32-read` on the same
+ports, a collect of a Pi Zero W's three nodes takes over three minutes, longer
+than `collect`'s 180-second ssh timeout; the record above was made by running
+the same probe script over ssh by hand.

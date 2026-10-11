@@ -1,0 +1,283 @@
+{
+ "rpiz-gps": [
+  {
+   "transport": "usb-serial-jtag",
+   "usb_path": "1-1.2",
+   "vidpid": "303a:1001",
+   "tty": "/dev/ttyACM2",
+   "tty_links": [
+    "/dev/gps-esp32-44:1B:F6:2E:A9:A4",
+    "/dev/gps-max-m10s",
+    "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_44:1B:F6:2E:A9:A4-if00"
+   ],
+   "usb_manufacturer": "Espressif",
+   "usb_product": "USB JTAG/serial debug unit",
+   "usb_serial": "44:1B:F6:2E:A9:A4",
+   "bcd_device": "0101",
+   "bridge": null,
+   "mac": "44:1b:f6:2e:a9:a4",
+   "mac_source": "usb-serial-jtag serial; efuse",
+   "chip": "ESP32-C3",
+   "chip_description": "ESP32-C3 (QFN32) (revision v0.4)",
+   "revision": "v0.4",
+   "package": "QFN32",
+   "features": [
+    "WiFi",
+    "BLE",
+    "Embedded Flash 4MB (XMC)"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0x464016",
+   "flash_uid": "322b0419167111ca013affffffffffff",
+   "flash_uid_bits": 128,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "322b0419167111ca013affffffffffffffffffffffffffffffffffffffffffff",
+   "flash_rdid": "4640164640164640",
+   "flash_status": {
+    "05": "00",
+    "35": "02",
+    "15": "20"
+   },
+   "flash_sfdp": "1.6",
+   "flash_sfdp_summary": {
+    "revision": "1.6",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.6",
+      "dwords": 16,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xff46",
+      "revision": "1.0",
+      "dwords": 4,
+      "pointer": "0xd0"
+     },
+     {
+      "id": "0xff84",
+      "revision": "1.0",
+      "dwords": 2,
+      "pointer": "0xc0"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450060102ff00060110300000ff46000104d00000ff84000102c00000ffffffffffffffffffffffffffffffffffe520f9ffffffff0144eb086b083b42bbfeffffffffff00ffffff40eb0c200f5210d800ff1532a50084a313c1cca176357a757a75f7b3d55c19f64dffe910c080ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000f0ffffffffffffffffffffffffff003600239ff9776400e8ffffffffffff322b0419167111ca013affffffffffffffff01ffff50345039323408c12769aa",
+   "efuse": {
+    "MAC": "44:1b:f6:2e:a9:a4 (OK)",
+    "WAFER_VERSION_MINOR_LO": 4,
+    "PKG_VERSION": 0,
+    "BLK_VERSION_MINOR": 3,
+    "FLASH_CAP": 1,
+    "FLASH_TEMP": 1,
+    "FLASH_VENDOR": 1,
+    "WAFER_VERSION_MINOR_HI": false,
+    "WAFER_VERSION_MAJOR": 0,
+    "OPTIONAL_UNIQUE_ID": "2e 4c aa 29 9d 5d 52 63 12 c9 23 61 bf 1f 80 99",
+    "BLK_VERSION_MAJOR": 1,
+    "CUSTOM_MAC": "00:00:00:00:00:00 (OK)",
+    "WAFER_VERSION_MINOR": 4
+   },
+   "read": "esptool 4.7.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "(trimmed)",
+   "gps": {
+    "module": "m10",
+    "model": "u-blox M10",
+    "firmware": "SPG 5.10",
+    "hardware": "000A0000",
+    "protocol": "34.10",
+    "baud": 38400,
+    "tasmota": "15.6.0.2(gps)"
+   }
+  },
+  {
+   "transport": "usb-serial-jtag",
+   "usb_path": "1-1.3",
+   "vidpid": "303a:1001",
+   "tty": "/dev/ttyACM0",
+   "tty_links": [
+    "/dev/gps-esp32-44:1B:F6:2F:18:78",
+    "/dev/gps-gt-u7",
+    "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_44:1B:F6:2F:18:78-if00"
+   ],
+   "usb_manufacturer": "Espressif",
+   "usb_product": "USB JTAG/serial debug unit",
+   "usb_serial": "44:1B:F6:2F:18:78",
+   "bcd_device": "0101",
+   "bridge": null,
+   "mac": "44:1b:f6:2f:18:78",
+   "mac_source": "usb-serial-jtag serial; efuse",
+   "chip": "ESP32-C3",
+   "chip_description": "ESP32-C3 (QFN32) (revision v0.4)",
+   "revision": "v0.4",
+   "package": "QFN32",
+   "features": [
+    "WiFi",
+    "BLE",
+    "Embedded Flash 4MB (XMC)"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0x464016",
+   "flash_uid": "35210419167165ca013affffffffffff",
+   "flash_uid_bits": 128,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "35210419167165ca013affffffffffffffffffffffffffffffffffffffffffff",
+   "flash_rdid": "4640164640164640",
+   "flash_status": {
+    "05": "00",
+    "35": "02",
+    "15": "20"
+   },
+   "flash_sfdp": "1.6",
+   "flash_sfdp_summary": {
+    "revision": "1.6",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.6",
+      "dwords": 16,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xff46",
+      "revision": "1.0",
+      "dwords": 4,
+      "pointer": "0xd0"
+     },
+     {
+      "id": "0xff84",
+      "revision": "1.0",
+      "dwords": 2,
+      "pointer": "0xc0"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450060102ff00060110300000ff46000104d00000ff84000102c00000ffffffffffffffffffffffffffffffffffe520f9ffffffff0144eb086b083b42bbfeffffffffff00ffffff40eb0c200f5210d800ff1532a50084a313c1cca176357a757a75f7b3d55c19f64dffe910c080ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000f0ffffffffffffffffffffffffff003600239ff9776400e8ffffffffffff35210419167165ca013affffffffffffffff01ffff50345039323407523369aa",
+   "efuse": {
+    "MAC": "44:1b:f6:2f:18:78 (OK)",
+    "WAFER_VERSION_MINOR_LO": 4,
+    "PKG_VERSION": 0,
+    "BLK_VERSION_MINOR": 3,
+    "FLASH_CAP": 1,
+    "FLASH_TEMP": 1,
+    "FLASH_VENDOR": 1,
+    "WAFER_VERSION_MINOR_HI": false,
+    "WAFER_VERSION_MAJOR": 0,
+    "OPTIONAL_UNIQUE_ID": "f6 54 ce 82 63 3a d5 1d 8b 50 a1 7d 31 52 90 e3",
+    "BLK_VERSION_MAJOR": 1,
+    "CUSTOM_MAC": "00:00:00:00:00:00 (OK)",
+    "WAFER_VERSION_MINOR": 4
+   },
+   "read": "esptool 4.7.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "(trimmed)",
+   "gps": {
+    "module": "ublox7",
+    "model": "u-blox 7",
+    "firmware": "1.00 (59842)",
+    "hardware": "00070000",
+    "protocol": "14.00",
+    "baud": 38400,
+    "tasmota": "15.6.0.2(gps)"
+   }
+  },
+  {
+   "transport": "usb-serial-jtag",
+   "usb_path": "1-1.1",
+   "vidpid": "303a:1001",
+   "tty": "/dev/ttyACM1",
+   "tty_links": [
+    "/dev/gps-esp32-E8:3D:C1:8C:5C:BC",
+    "/dev/gps-lc29h",
+    "/dev/serial/by-id/usb-Espressif_USB_JTAG_serial_debug_unit_E8:3D:C1:8C:5C:BC-if00"
+   ],
+   "usb_manufacturer": "Espressif",
+   "usb_product": "USB JTAG/serial debug unit",
+   "usb_serial": "E8:3D:C1:8C:5C:BC",
+   "bcd_device": "0101",
+   "bridge": null,
+   "mac": "e8:3d:c1:8c:5c:bc",
+   "mac_source": "usb-serial-jtag serial; efuse",
+   "chip": "ESP32-C3",
+   "chip_description": "ESP32-C3 (QFN32) (revision v0.4)",
+   "revision": "v0.4",
+   "package": "QFN32",
+   "features": [
+    "WiFi",
+    "BLE",
+    "Embedded Flash 4MB (XMC)"
+   ],
+   "crystal_mhz": 40,
+   "flash_jedec": "0x464016",
+   "flash_uid": "030b1119088547540150ffffffffffff",
+   "flash_uid_bits": 128,
+   "flash_uid_state": "read",
+   "flash_uid_raw": "030b1119088547540150ffffffffffffffffffffffffffffffffffffffffffff",
+   "flash_rdid": "4640164640164640",
+   "flash_status": {
+    "05": "00",
+    "35": "02",
+    "15": "20"
+   },
+   "flash_sfdp": "1.6",
+   "flash_sfdp_summary": {
+    "revision": "1.6",
+    "tables": [
+     {
+      "id": "0xff00",
+      "revision": "1.6",
+      "dwords": 16,
+      "pointer": "0x30"
+     },
+     {
+      "id": "0xff46",
+      "revision": "1.0",
+      "dwords": 4,
+      "pointer": "0xd0"
+     },
+     {
+      "id": "0xff84",
+      "revision": "1.0",
+      "dwords": 2,
+      "pointer": "0xc0"
+     }
+    ],
+    "density_bytes": 4194304
+   },
+   "flash_sfdp_raw": "53464450060102ff00060110300000ff46000104d00000ff84000102c00000ffffffffffffffffffffffffffffffffffe520f9ffffffff0144eb086b083b42bbfeffffffffff00ffffff40eb0c200f5210d800ff1532a50084a313c1cca176357a757a75f7b3d55c19f64dffe910c080ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff0000f0ffffffffffffffffffffffffff003600239ff9776400e8ffffffffffff030b1119088547540150ffffffffffffffff01ffff50345039313307729069aa",
+   "efuse": {
+    "MAC": "e8:3d:c1:8c:5c:bc (OK)",
+    "WAFER_VERSION_MINOR_LO": 4,
+    "PKG_VERSION": 0,
+    "BLK_VERSION_MINOR": 3,
+    "FLASH_CAP": 1,
+    "FLASH_TEMP": 1,
+    "FLASH_VENDOR": 1,
+    "WAFER_VERSION_MINOR_HI": false,
+    "WAFER_VERSION_MAJOR": 0,
+    "OPTIONAL_UNIQUE_ID": "4b ab ff 1b 31 97 ee ea f6 89 f5 8e 1a 5f 1a 1e",
+    "BLK_VERSION_MAJOR": 1,
+    "CUSTOM_MAC": "00:00:00:00:00:00 (OK)",
+    "WAFER_VERSION_MINOR": 4
+   },
+   "read": "esptool 4.7.0",
+   "read_error": null,
+   "read_errors": {},
+   "boot_after": "(trimmed)",
+   "gps": {
+    "module": "lc29h",
+    "model": "LC29H(AA)",
+    "firmware": "LC29HAANR11A05S",
+    "hardware": "AG3335M",
+    "protocol": null,
+    "baud": 115200,
+    "tasmota": "15.6.0.2(gps)"
+   }
+  }
+ ]
+}
