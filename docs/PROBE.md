@@ -343,7 +343,7 @@ sysfs, and runs `iio_attr` only against a Pluto's *network* IIO context.
 
 - **RTL2832U** (`0bda:2838`): the EEPROM gives the USB strings and the serial
   and nothing more. A Blog V4 names itself (`RTLSDRBlog` / `Blog V4`, which
-  librtlsdr checks). A Blog V3 carries the same generic strings as every other
+  librtlsdr checks), but there is no label for one yet, so it is refused. A Blog V3 carries the same generic strings as every other
   dongle: `Realtek`, `RTL2838UHIDIR`, serial `00000001`.
 - **KrakenSDR**: five RTL2832U on one hub (a Microchip USB2517, `0424:2517`),
   serials 1000–1004. Those serials are Heimdall's convention
@@ -392,7 +392,8 @@ reads `19 04 02 03 09 0e 97 69`, then eight erased bytes, with the factory
 lock clear. It is the only per-unit value the card has, so the label keys on
 it and names its source.
 
-On an RTL2832U it runs `rtl_eeprom -d SERIAL`, which without a write flag only
+On an RTL2832U it runs `rtl_eeprom -d INDEX` (librtlsdr's index for the
+dongle, never its serial, which most dongles share), which without a write flag only
 reads. That gives the tuner librtlsdr found (an R820T2 answers as "Rafael
 Micro R820T") and the EEPROM's fields, which on the fleet's six dongles are
 the generic defaults throughout.

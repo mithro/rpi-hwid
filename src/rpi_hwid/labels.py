@@ -2449,7 +2449,8 @@ def main(argv=None):
     from rpi_hwid import micro
     micro_kinds = list(micro.kinds())
     ap.add_argument("--only", action="append", choices=list(ONLY_CHOICES) + micro_kinds,
-                    metavar="KIND", help="rpi|opi|riscv|x86|fpga|tt|usb, or one FPGA board kind "
+                    metavar="KIND",
+                    help="rpi|opi|riscv|x86|fpga|tt|usb|sdr, or one FPGA board kind "
                                          "(%s)" % "|".join(FPGA_KINDS))
     ap.add_argument("--start", type=int, default=0,
                     help="leave the first N positions of the first sheet blank")

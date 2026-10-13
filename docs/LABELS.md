@@ -65,7 +65,7 @@ $ rpi-hwid labels --data data/ --out labels.pdf
 
 `--outline` draws the die-cut edges for an alignment print on plain paper;
 `--start N` skips N positions on the first sheet so a partly used sheet can be
-finished; `--only rpi|opi|riscv|x86|fpga|tt|usb` limits the kinds, and takes a single FPGA
+finished; `--only rpi|opi|riscv|x86|fpga|tt|usb|sdr` limits the kinds, and takes a single FPGA
 board kind (`netv2`, `arty`, `acorn`, `pcileech`, `cynthion`) where one host
 carries more than one board; `--list` prints what
 would be generated and where.
@@ -423,7 +423,17 @@ Identity follows the FPGA rule, with one addition for hardware that has none.
 A unit with its own identifier is keyed on it: a Pluto's serial, which is its
 QSPI flash's factory unique id, or an XSDR's configuration-flash ESN, read
 from the AT25SL321's secured OTP by `--sdr-open`. If that identifier exists but was never read, the
-label is refused, naming the host and the command. Hardware whose serial every
+label is refused, naming the host and the command. An ESN that was read and is
+blank is refused too, and said to be blank: reading it again will not help.
+
+A label is printed whole or not at all. A Pluto whose IIO context did not
+answer has no frequency range or sample rate to print, and a KrakenSDR with no
+channel serials nothing to tell it by, so each is refused with the read that
+would fill it. A dongle that was opened and is not a model this package knows
+(a Blog V4, any R828D) is refused until its model is added: it is never given
+a generic RTL2832U label. A refusal stops the labels of the host it is about,
+and of a run that asks for every host; the labels of another host, asked for
+by name, are still made. Hardware whose serial every
 unit shares prints that serial along the foot, marked *not unique*, and the
 QR's square says the same, because a code there would claim an identity the
 sticker does not have. A KrakenSDR's five channels are 1000–1004 on every
