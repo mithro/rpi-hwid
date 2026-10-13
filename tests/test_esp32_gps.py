@@ -195,7 +195,8 @@ def test_collect_hands_each_host_its_own_gps_ports(monkeypatch, tmp_path):
     seen = {}
 
     def fake(host, users, jump, fpga, jtag, flash, tinytapeout=False, take_port=True,
-             esp32=False, esp32_read=(), esp32_radio=(), force_offline=False, esp32_gps=()):
+             esp32=False, esp32_read=(), esp32_radio=(), force_offline=False, esp32_gps=(),
+             **other):
         seen[host] = (esp32, tuple(esp32_gps))
         return collect.Result(host, False, error="not really")
 
