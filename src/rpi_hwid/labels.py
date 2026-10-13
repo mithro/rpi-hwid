@@ -2115,7 +2115,7 @@ def all_labels(docs, only, pinned_names=None, order=None):
 
 
 # The summary list each attached record kind comes from.
-LIST_OF = {"fpga": "fpga", "tt": "tinytapeout", "usb": "usb_net"}
+LIST_OF = {"fpga": "fpga", "tt": "tinytapeout", "usb": "usb_net", "sdr": "sdr"}
 
 
 def whole_labels(docs, only, pinned_names=None, order=None, hosts=None):
