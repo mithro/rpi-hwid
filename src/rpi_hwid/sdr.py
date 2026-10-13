@@ -203,6 +203,19 @@ USDR_IMAGE = re.compile(r"(Golden|Master) image: DEVID ([0-9a-fA-F]{8}) "
                         r"FirmwareID ([0-9a-fA-F]{8})")
 
 
+def usdr_open_all(cards):
+    """{slot: usdr_open's answer} for the cards. usdr's tools open the
+    default card and take no word on which, so with more than one here
+    none is opened: every slot would be given the same card's answers, and
+    one card held by a listener could be opened because another was free."""
+    if len(cards) > 1:
+        why = ("%d usdr cards here and usdr_dm_sensors and usdr_flash open only the "
+               "default one: not opened, so that no card is given another's identity"
+               % len(cards))
+        return dict((p["slot"], {"error": why}) for p in cards)
+    return dict((p["slot"], usdr_open(p)) for p in cards)
+
+
 def usdr_open(p):
     """Open the card the way its own tools do and read what only an open
     card says: the HWID register (which LMS7002M card this is), the
@@ -292,7 +305,7 @@ def rtl_index(serial):
 
 
 def rtl_open(u, kraken=False):
-    """Ask librtlsdr about one RTL2832U -- `rtl_eeprom -d SERIAL`, which with
+    """Ask librtlsdr about one RTL2832U -- `rtl_eeprom -d INDEX`, which with
     no write flag only reads -- for the tuner and the EEPROM's fields. Only
     with --sdr-open, and only when nothing holds the device: readsb, OpenWebRX
     and Heimdall keep theirs open for as long as they run."""
@@ -712,7 +725,7 @@ def sdr_summary(devices):
 
 def collect_sdr(open_radios=False):
     s = {"usb": sdr_usb_devices(), "pcie": sdr_pcie_devices(), "iio": {}}
-    s["usdr_open"] = {p["slot"]: usdr_open(p) for p in s["pcie"]} if open_radios else {}
+    s["usdr_open"] = usdr_open_all(s["pcie"]) if open_radios else {}
     # a KrakenSDR's channels are asked their EEPROM only, never streamed:
     # rpi-sdr-kraken browns out under load on its 15 W supply
     kraken_paths = set()

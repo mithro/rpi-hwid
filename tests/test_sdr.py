@@ -579,6 +579,17 @@ def test_a_krakens_channels_are_never_streamed(kraken_root, monkeypatch):
     assert not [c for c in lib.calls if c[:3] == ["python3", "-c", sdr.RTL_DS_READER]]
 
 
+def test_two_usdr_cards_are_not_opened_since_the_tools_cannot_be_told_which(monkeypatch):
+    calls = []
+    monkeypatch.setattr(sdr, "sdr_sh", lambda a, timeout=15: calls.append(a) or (1, "", ""))
+    cards = [{"slot": "0000:01:00.0", "usdr_node": "/dev/usdr0", "health": None},
+             {"slot": "0000:02:00.0", "usdr_node": "/dev/usdr1", "health": None}]
+    opened = sdr.usdr_open_all(cards)
+    assert calls == []
+    assert set(opened) == {"0000:01:00.0", "0000:02:00.0"}
+    assert all("2 usdr cards" in o["error"] for o in opened.values())
+
+
 def test_sdr_open_finds_its_host_written_with_a_user_and_refuses_one_not_collected(
         monkeypatch, tmp_path, capsys):
     from rpi_hwid import cli, collect
