@@ -133,7 +133,7 @@ SHARED_SERIALS = {
 
 # What reads a radio's unique identifier, for the refusal when it is missing.
 IDENT_READ_WITH = {
-    "usdr": ("the XSDR's configuration flash ESN (the AT25SL321's secured OTP) with "
+    "xsdr": ("the XSDR's configuration flash ESN (the AT25SL321's secured OTP) with "
              "`rpi-hwid collect --sdr-open HOST`, which needs the card free: nothing "
              "holding /dev/usdr0"),
 }
@@ -183,6 +183,8 @@ class SdrLabel:
     # why an FPGA radio is keyed on its flash and not on its die, as the foot
     # says it: see DNA_NOT_READABLE
     dna_note: str | None = None
+    # why this label may not be printed, where the record itself knows
+    problem: str | None = None
 
 
 def mhz(hz: int) -> str:
@@ -211,22 +213,38 @@ def model_key(r) -> str | None:
     return None
 
 
-def sdr_records(docs):
-    """One record per radio across all documents."""
+def sdr_records(docs, hosts=None):
+    """One record per radio across the documents -- of the `hosts` named,
+    where they are: a radio nobody identified stops its own host's labels,
+    not those of a host that was not asked for."""
     out = []
     for host in sorted(docs):
+        if hosts is not None and host not in hosts:
+            continue
         for r in docs[host].summary.sdr:
             if r.usdr_error:
                 raise RadioNotIdentifiedError(f"{host}: the {r.kind} card at "
                                               f"{r.pcie_id}: {r.usdr_error}.")
             key = model_key(r)
             if key is None:
-                raise RadioNotIdentifiedError(
-                    f"{host}: a {r.kind} radio ({r.vidpid or r.pcie_id}) is known only by "
-                    "its bus id, so its label would carry capabilities nobody read. "
-                    + NOT_IDENTIFIED.get(r.kind, ""))
+                raise RadioNotIdentifiedError(not_identified(host, r))
             out.append(record(host, key, r))
     return out
+
+
+def not_identified(host, r) -> str:
+    """Why a radio with no entry in MODELS gets no label, and what would
+    change that: a read where none was made, a model where one was."""
+    where = r.vidpid or r.pcie_id
+    if r.kind == "rtl-sdr" and r.tuner:
+        named = " / ".join(x for x in (r.manufacturer, r.product) if x)
+        return (f"{host}: the RTL2832U dongle ({where}{', ' + named if named else ''}) was "
+                f"opened and its tuner is a {r.tuner}, which is no label this package "
+                "knows how to print in full: its frequency range and rate are not in "
+                "rpi_hwid.sdr_labels.MODELS. It gets no label until its model is added "
+                "there.")
+    return (f"{host}: a {r.kind} radio ({where}) is known only by its bus id, so its "
+            "label would carry capabilities nobody read. " + NOT_IDENTIFIED.get(r.kind, ""))
 
 
 NOT_IDENTIFIED = {
@@ -272,7 +290,7 @@ def record(host, key, r):
     rx, tx, rx_aux = m.rx, m.tx, m.rx_aux
     rx_ch, tx_ch, bits, rate = m.rx_channels, m.tx_channels, m.adc_bits, m.rate
     radio, clock, fpga = m.radio, m.clock, m.fpga
-    variant = ident = shared = flash = flash_uid = dna_note = None
+    variant = ident = shared = flash = flash_uid = dna_note = problem = None
     ident_caption, shared_caption = "serial", ""
     if key == "pluto":
         # the radio's own word, over the datasheet's, wherever it gave one
@@ -312,6 +330,16 @@ def record(host, key, r):
             prov.append(("FPGA", f"read: {r.iio_uri} context hw_model = {r.hw_model}"))
         ident = r.hw_serial or r.usb_serial
         ident_caption = "serial  (QSPI flash unique id)"
+        unanswered = [what for what, got in (("receive range", r.rx_lo_hz),
+                                              ("transmit range", r.tx_lo_hz),
+                                              ("sample rate", r.rx_rate_hz)) if not got]
+        if unanswered:
+            problem = (f"{host}: the {m.title}'s {', '.join(unanswered)} "
+                       f"{'was' if len(unanswered) == 1 else 'were'} never read, so its "
+                       "label would be printed with those rows empty. They come from its "
+                       "network IIO context: with the Pluto's USB network interface up "
+                       "and `iio_attr` (libiio-utils) installed on the host, run "
+                       "`rpi-hwid collect --sdr HOST` again.")
         flash_uid = r.flash_uid
         prov.append(("identity", "read: USB iSerial and IIO hw_serial, which ADI's "
                                  "board/pluto/S23udc both set from the kernel's "
@@ -321,8 +349,15 @@ def record(host, key, r):
             prov.append(("tuner, read", f"read: rtl_eeprom on all five channels: {r.tuner} "
                                         "(librtlsdr's name for R820T and R820T2 alike: the "
                                         "two answer the same chip id)"))
-        shared = "\u2013".join((r.channel_serials[0], r.channel_serials[-1]))
-        shared_caption = "channel serials  \u00b7  the same on every KrakenSDR: not unique"
+        if r.channel_serials:
+            shared = "\u2013".join((r.channel_serials[0], r.channel_serials[-1]))
+            shared_caption = ("channel serials  \u00b7  the same on every KrakenSDR: "
+                              "not unique")
+        else:
+            problem = (f"{host}: the {m.title}'s channel serials were never read, so its "
+                       "label would carry nothing to tell it by. They are its five "
+                       "receivers' USB serials: run `rpi-hwid collect --sdr HOST` again "
+                       "with all five on the bus.")
     elif key == "rtl-sdr-blog-v3":
         prov.append(("model", "read: tuner Rafael Micro R820T (rtl_eeprom), and the "
                               "direct-sampling Q branch carrying signal where the I branch "
@@ -338,6 +373,11 @@ def record(host, key, r):
         # keyed on the flash uid, as an FPGA board with no die id is
         ident = flash_uid = r.flash_uid if r.flash_uid_state == "read" else None
         ident_caption = "flash uid"
+        if r.flash_uid_state == "blank":
+            problem = (f"{host}: the {m.title}'s configuration flash ESN was read and is "
+                       "blank (never programmed), and the card has nothing else unique "
+                       "that can be read in place, so its label would carry nothing that "
+                       "identifies it. Reading it again will not change that.")
         flash = lb.flash_text(lb.flash_from_jedec(r.flash_jedec))
         if flash:
             prov.append(("flash", f"read: JEDEC {r.flash_jedec} through usdr's espi core, "
@@ -369,11 +409,19 @@ def record(host, key, r):
         rx_aux=tuple(rx_aux), tx=tuple(tx), rx_channels=rx_ch, tx_channels=tx_ch,
         facts=facts, coherent=m.coherent, noise_source=m.noise_source, ident=ident,
         ident_caption=ident_caption, shared=shared, shared_caption=shared_caption,
-        provenance=tuple(prov), flash=flash, flash_uid=flash_uid, dna_note=dna_note)
+        provenance=tuple(prov), flash=flash, flash_uid=flash_uid, dna_note=dna_note,
+        problem=problem)
 
 
 def unreadable(r: SdrLabel) -> str | None:
-    """Why this label may not be printed, or None."""
+    """Why this label may not be printed, or None. A label is printed whole
+    or not at all: every row it has a place for, and what identifies it."""
+    if r.problem:
+        return r.problem
+    if not r.rx or (r.tx_channels and not r.tx) or not r.facts[0]:
+        return (f"{r.host}: the {r.title}'s label has rows for its frequency range and "
+                "sample rate, and they were never read. Run `rpi-hwid collect --sdr "
+                "HOST` again.")
     if r.ident or r.shared:
         return None
     return (f"{r.host}: the {r.title} has a unique identifier and it was never read, so "

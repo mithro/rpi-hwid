@@ -2162,7 +2162,7 @@ def whole_labels(docs, only, pinned_names=None, order=None, hosts=None):
             ("fpga", fpga_records(docs, pinned_names) if any_fpga else ()),
             ("tt", tinytapeout_records(docs) if "tt" in only else ()),
             ("usb", usb_records(docs) if "usb" in only else ()),
-            ("sdr", sdr_records(docs) if "sdr" in only else ())):
+            ("sdr", sdr_records(docs, hosts) if "sdr" in only else ())):
         for r in records:
             n = position.get((record_kind, r.host), 0)
             position[(record_kind, r.host)] = n + 1
@@ -2239,11 +2239,12 @@ def whole_labels(docs, only, pinned_names=None, order=None, hosts=None):
             yield (host,) + row
 
 
-def sdr_records(docs):
-    """The radios' records (rpi_hwid.sdr_labels, which draws with this
-    module and so is imported late)."""
+def sdr_records(docs, hosts=None):
+    """The radios' records, of the `hosts` named where they are
+    (rpi_hwid.sdr_labels, which draws with this module and so is imported
+    late)."""
     from rpi_hwid import sdr_labels
-    return sdr_labels.sdr_records(docs)
+    return sdr_labels.sdr_records(docs, hosts)
 
 
 def sdr_row(r):

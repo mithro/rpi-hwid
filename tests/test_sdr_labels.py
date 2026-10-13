@@ -239,3 +239,75 @@ def test_the_label_prints_the_captioned_chips_and_groups(tmp_path):
     v3 = _page_text(r["rpi-sdr-rtlsdr-v3"], tmp_path)
     assert b"(FPGA)" not in v3
     assert b"(TX" not in v3
+
+
+# --- a label is printed whole or not at all -------------------------------------
+
+def one_radio(host, radio):
+    raw = copy.deepcopy(SDR_RAW["rpi-sdr-kraken"])
+    raw["verdict"]["summary"]["sdr"] = [radio]
+    return ProbeDocument.from_dict(host, raw)
+
+
+def test_a_radio_nobody_identified_stops_its_own_hosts_labels_only():
+    docs = sdr_docs()
+    docs["rpi-sdr-odd"] = one_radio("rpi-sdr-odd", {"kind": "rtl-sdr", "vidpid": "0bda:2838",
+                                                    "usb_serial": "00000001"})
+    made = list(labels.whole_labels(docs, {"sdr"}, hosts={"rpi-sdr-pluto"}))
+    assert [row[0] for row in made] == ["rpi-sdr-pluto"]
+    with pytest.raises(sdr_labels.RadioNotIdentifiedError, match="rpi-sdr-odd"):
+        list(labels.whole_labels(docs, {"sdr"}, hosts={"rpi-sdr-odd"}))
+    with pytest.raises(sdr_labels.RadioNotIdentifiedError, match="rpi-sdr-odd"):
+        list(labels.whole_labels(docs, {"sdr"}))
+
+
+def test_an_opened_dongle_that_is_no_known_model_is_not_told_to_open_it_again():
+    docs = {"h": one_radio("h", {"kind": "rtl-sdr", "vidpid": "0bda:2838",
+                                 "usb_serial": "00000001", "product": "Blog V4",
+                                 "tuner": "Rafael Micro R828D"})}
+    with pytest.raises(sdr_labels.RadioNotIdentifiedError) as exc:
+        sdr_labels.sdr_records(docs)
+    assert "R828D" in str(exc.value)
+    assert "no label" in str(exc.value)
+    assert "--sdr-open" not in str(exc.value)
+
+
+def test_a_pluto_that_did_not_answer_is_refused_not_drawn_with_empty_rows():
+    docs = {"h": one_radio("h", {"kind": "pluto", "vidpid": "0456:b673",
+                                 "usb_serial": "10447354119600022000120009f61e2b82"})}
+    with pytest.raises(labels.IdentifierNotReadError, match=r"h: .*collect --sdr"):
+        list(labels.all_labels(docs, {"sdr"}))
+
+
+@pytest.mark.parametrize("gone", ["rx_lo_hz", "tx_lo_hz", "rx_rate_hz"])
+def test_a_pluto_short_of_one_answer_is_refused(gone):
+    raw = copy.deepcopy(SDR_RAW["rpi-sdr-pluto"])
+    (radio,) = raw["verdict"]["summary"]["sdr"]
+    del radio[gone]
+    docs = {"h": ProbeDocument.from_dict("h", raw)}
+    with pytest.raises(labels.IdentifierNotReadError, match="h: "):
+        list(labels.all_labels(docs, {"sdr"}))
+
+
+def test_the_xsdr_refusal_names_the_command_that_reads_its_id():
+    docs = {"h": one_radio("h", {"kind": "usdr", "pcie_id": "10ee:7049",
+                                 "usdr_family": "m2_lm7_1", "usdr_hwid": "8030012d"})}
+    with pytest.raises(labels.IdentifierNotReadError, match="collect --sdr-open HOST"):
+        list(labels.all_labels(docs, {"sdr"}))
+
+
+def test_a_blank_esn_is_said_to_be_blank_not_unread():
+    raw = copy.deepcopy(SDR_RAW["rpi-sdr-xsdr"])
+    (radio,) = raw["verdict"]["summary"]["sdr"]
+    radio["flash_uid_state"] = "blank"
+    docs = {"h": ProbeDocument.from_dict("h", raw)}
+    with pytest.raises(labels.IdentifierNotReadError) as exc:
+        list(labels.all_labels(docs, {"sdr"}))
+    assert "blank" in str(exc.value)
+    assert "never read" not in str(exc.value)
+
+
+def test_a_kraken_with_no_channel_serials_is_refused():
+    docs = {"h": one_radio("h", {"kind": "krakensdr", "vidpid": "0bda:2838"})}
+    with pytest.raises(labels.IdentifierNotReadError, match="h: "):
+        list(labels.all_labels(docs, {"sdr"}))
