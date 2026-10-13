@@ -10,7 +10,8 @@ import pytest
 from rpi_hwid import cli, collect, esp32, esp32_gps, esp32_radio
 
 READ = esp32.ESPTOOL_CHECK_TIMEOUT + esp32.READ_TIMEOUT
-RADIO = esp32_radio.LISTEN + len(esp32_radio.COMMANDS) * esp32_radio.ANSWER_WAIT
+RADIO = (esp32_radio.SETTLE + esp32_radio.RESET_PULSE + esp32_radio.LISTEN
+         + len(esp32_radio.COMMANDS) * esp32_radio.ANSWER_WAIT)
 GPS = esp32_gps.GPS_SETTLE + len(esp32_gps.GPS_COMMANDS) * esp32_gps.GPS_ANSWER_WAIT
 
 
@@ -31,7 +32,7 @@ def timeouts(monkeypatch):
 def test_the_timeout_allows_for_each_read_on_top_of_the_base():
     assert collect.probe_timeout() == collect.BASE_TIMEOUT == 180
     assert collect.probe_timeout(esp32_read=("a", "b", "c")) == 180 + 3 * READ
-    assert collect.probe_timeout(100, ("a",), ("a", "b")) == 100 + READ + int(2 * RADIO)
+    assert collect.probe_timeout(100, ("a",), ("a", "b")) == 100 + READ + math.ceil(2 * RADIO)
 
 
 def test_each_read_gives_up_inside_the_time_the_probe_allows_it():
@@ -51,7 +52,7 @@ def test_collect_gives_each_host_the_time_its_own_reads_need(timeouts, tmp_path)
     assert cli.main(["collect", "--out", str(tmp_path), "--users", "pi",
                      "--esp32-read", "a=/dev/ttyACM0", "--esp32-read", "a=/dev/ttyACM1",
                      "--esp32-radio", "b=/dev/ttyACM0", "a", "b", "c"]) != 0
-    assert timeouts == {"a": 180 + 2 * READ, "b": 180 + int(RADIO), "c": 180}
+    assert timeouts == {"a": 180 + 2 * READ, "b": 180 + math.ceil(RADIO), "c": 180}
 
 
 def test_a_gps_node_is_allowed_its_questions_too(timeouts, tmp_path):
@@ -76,3 +77,41 @@ def test_a_probe_that_times_out_says_after_how_long(monkeypatch):
     monkeypatch.setattr(collect.subprocess, "run", fake_run)
     r = collect.probe_host("h", users=("pi",), esp32=True, esp32_read=("/dev/ttyACM0",))
     assert r.error == f"timed out after {180 + READ} s"
+
+
+# The tests above rebuild the allowance from the probes' constants, so they
+# cannot see a wait the constants leave out. These run each read against a
+# port that never answers and add up what it actually waited.
+
+def allowed(**reads):
+    return collect.probe_timeout(**reads) - collect.BASE_TIMEOUT
+
+
+@pytest.fixture
+def waited(monkeypatch):
+    """Every second a console read spends waiting, on a silent port."""
+    spent: list[float] = []
+
+    def silent(fd, secs, until=None):
+        spent.append(secs)
+        return ""
+
+    for mod, opener, drain in ((esp32_radio, "open_port", "drain"),
+                               (esp32_gps, "gps_open_port", "gps_drain")):
+        monkeypatch.setattr(mod, opener, lambda port: 99)
+        monkeypatch.setattr(mod, drain, silent)
+    monkeypatch.setattr(esp32_radio, "_modem", lambda fd, bit, on: None)
+    monkeypatch.setattr(esp32_radio.time, "sleep", spent.append)
+    monkeypatch.setattr(esp32_radio.os, "write", lambda fd, data: len(data))
+    monkeypatch.setattr(esp32_radio.os, "close", lambda fd: None)
+    return spent
+
+
+def test_a_silent_radio_node_is_given_up_on_inside_its_allowance(waited):
+    assert esp32_radio.read_radio("/dev/ttyACM0")["radio"] is None
+    assert 0 < sum(waited) <= allowed(esp32_radio=("p",))
+
+
+def test_a_silent_gps_node_is_given_up_on_inside_its_allowance(waited):
+    assert esp32_gps.read_gps("/dev/ttyACM0")["gps"] is None
+    assert 0 < sum(waited) <= allowed(esp32_gps=("p",))

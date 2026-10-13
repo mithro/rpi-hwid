@@ -111,7 +111,8 @@ def probe_timeout(base: int = BASE_TIMEOUT, esp32_read: Sequence[str] = (),
     from rpi_hwid import esp32_radio as radio
 
     read = esp32.ESPTOOL_CHECK_TIMEOUT + esp32.READ_TIMEOUT
-    asked = radio.LISTEN + len(radio.COMMANDS) * radio.ANSWER_WAIT
+    asked = (radio.SETTLE + radio.RESET_PULSE + radio.LISTEN
+             + len(radio.COMMANDS) * radio.ANSWER_WAIT)
     # a GPS node is not reset, so there is no boot to listen to: only its answers
     fixed = gps.GPS_SETTLE + len(gps.GPS_COMMANDS) * gps.GPS_ANSWER_WAIT
     return (base + len(esp32_read) * read + math.ceil(len(esp32_radio) * asked)
