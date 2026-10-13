@@ -115,3 +115,44 @@ def test_a_silent_radio_node_is_given_up_on_inside_its_allowance(waited):
 def test_a_silent_gps_node_is_given_up_on_inside_its_allowance(waited):
     assert esp32_gps.read_gps("/dev/ttyACM0")["gps"] is None
     assert 0 < sum(waited) <= allowed(esp32_gps=("p",))
+
+
+def test_the_search_for_esptool_and_the_read_fit_one_ports_allowance(monkeypatch):
+    """Every interpreter hangs, then (in a second run) the read does: the
+    search shares one deadline however many virtualenvs there are, and is
+    not made again for the next port."""
+    clock = [0.0]
+    monkeypatch.setattr(esp32.time, "time", lambda: clock[0])
+    monkeypatch.setattr(esp32, "esptool_pythons", lambda: ["py-a", "py-b", "py-c"])
+    monkeypatch.setattr(esp32, "ESPTOOL_FOUND", [])
+
+    def hang(cmd, stdout, stderr, timeout):
+        clock[0] += timeout
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr(esp32.subprocess, "run", hang)
+    assert esp32.run_read("/dev/ttyACM0")[0] is None
+    assert clock[0] <= esp32.ESPTOOL_CHECK_TIMEOUT
+
+    clock[0] = 0.0
+    monkeypatch.setattr(esp32, "ESPTOOL_FOUND", [])
+    ran = []
+
+    def slow_import_then_hung_read(cmd, stdout, stderr, timeout):
+        ran.append(cmd[0])
+        if cmd[1] == "-c" and cmd[0] != "py-c":
+            clock[0] += 25
+            return subprocess.CompletedProcess(cmd, 1, stdout=b"no esptool")
+        if cmd[1] == "-c":
+            clock[0] += 5
+            return subprocess.CompletedProcess(cmd, 0, stdout=b"")
+        clock[0] += timeout
+        raise subprocess.TimeoutExpired(cmd, timeout)
+
+    monkeypatch.setattr(esp32.subprocess, "run", slow_import_then_hung_read)
+    assert esp32.run_read("/dev/ttyACM0")[1].startswith("timed out")
+    assert clock[0] <= allowed(esp32_read=("p",))
+    first = clock[0]
+    assert esp32.run_read("/dev/ttyACM1")[1].startswith("timed out")
+    assert clock[0] - first == esp32.READ_TIMEOUT     # the interpreter was remembered
+    assert ran == ["py-a", "py-b", "py-c", "py-c", "py-c"]
