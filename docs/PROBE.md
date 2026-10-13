@@ -563,9 +563,9 @@ probed.
 
 The reads run one after another on the host, so `collect` gives each host's ssh
 session 180 s plus the longest each read asked of it may take: 180 s for an
-esptool read (60 s to find an interpreter that imports esptool, 120 s for the
-read), 21 s for a radio read (`--esp32-radio`, below) and 10 s for a GPS read
-(`--esp32-gps`). A read that overruns
+esptool read (60 s to find an interpreter that imports esptool, shared between
+every interpreter tried, and 120 s for the read), 22 s for a radio read
+(`--esp32-radio`, below) and 10 s for a GPS read (`--esp32-gps`). A read that overruns
 gives up on its own and says so in the document, so a slow chip costs that read,
 not the host's whole record. `--timeout SECONDS` sets the 180 s base. A flat
 180 s was not enough: rpiz-gps, a Pi Zero W, took 191 s to read three
@@ -670,5 +670,7 @@ flashed, printed the way `rpi-hwid esp32 --gps` prints them:
 
 The nodes' uptimes ran on across the reads. With `--esp32-read` on the same
 ports, a collect of a Pi Zero W's three nodes takes over three minutes, longer
-than `collect`'s 180-second ssh timeout; the record above was made by running
-the same probe script over ssh by hand.
+than the flat 180-second ssh timeout `collect` had then, so the record above
+was made by running the same probe script over ssh by hand. `collect` now
+gives each read asked of a host its own time (see "The reads run one after
+another" above).
