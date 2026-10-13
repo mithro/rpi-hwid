@@ -62,7 +62,7 @@ def cmd_probe(args: argparse.Namespace) -> int:
 
         tinytapeout.merge_tinytapeout(
             doc, tinytapeout.collect_tinytapeout(take_port=not args.no_stop_service))
-    if args.sdr:
+    if args.sdr or args.sdr_open:
         from rpi_hwid import sdr
 
         sdr.merge_sdr(doc, sdr.collect_sdr(args.sdr_open))
@@ -170,6 +170,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         esp32_reads(args.hosts, args.esp32_gps or (), "--esp32-gps")
         offline = {resolve_host(args.hosts, h, "--force-offline")
                    for h in args.force_offline or ()}
+        sdr_open = {resolve_host(args.hosts, h, "--sdr-open") for h in args.sdr_open or ()}
     except ValueError as exc:
         print(f"rpi-hwid collect: {exc}", file=sys.stderr)
         return 2
@@ -182,7 +183,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         esp32_radio=tuple(args.esp32_radio or ()),
         force_offline_hosts=tuple(sorted(offline)),
         esp32_gps=tuple(args.esp32_gps or ()), sdr=args.sdr,
-        sdr_open_hosts=tuple(args.sdr_open or ()),
+        sdr_open_hosts=tuple(sorted(sdr_open)),
     )
     failed = 0
     for r in results:
@@ -329,8 +330,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--sdr", action="store_true",
                    help="also look for a software-defined radio (opens none)")
     p.add_argument("--sdr-open", action="store_true",
-                   help="with --sdr: open the radios nothing holds, for what only an "
-                        "open radio says")
+                   help="open the radios nothing holds, for what only an open radio "
+                        "says (implies --sdr)")
     p.add_argument("--no-stop-service", action="store_true",
                    help=NO_STOP_SERVICE_HELP)
     p.set_defaults(func=cmd_probe)

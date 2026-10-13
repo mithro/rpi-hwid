@@ -577,3 +577,36 @@ def test_a_krakens_channels_are_never_streamed(kraken_root, monkeypatch):
     monkeypatch.setattr(sdr, "sdr_sh", lib)
     sdr.collect_sdr(open_radios=True)
     assert not [c for c in lib.calls if c[:3] == ["python3", "-c", sdr.RTL_DS_READER]]
+
+
+def test_sdr_open_finds_its_host_written_with_a_user_and_refuses_one_not_collected(
+        monkeypatch, tmp_path, capsys):
+    from rpi_hwid import cli, collect
+
+    seen = {}
+
+    def fake(host, *args, **kw):
+        seen[host] = kw["sdr_open"]
+        return collect.Result(host, False, error="not really")
+
+    monkeypatch.setattr(collect, "probe_host", fake)
+    cli.main(["collect", "--out", str(tmp_path), "--sdr-open", "a", "pi@a", "b"])
+    assert seen == {"pi@a": True, "b": False}
+    seen.clear()
+    assert cli.main(["collect", "--out", str(tmp_path), "--sdr-open", "c", "pi@a", "b"]) == 2
+    assert seen == {}
+    assert "--sdr-open: c is not one of the hosts" in capsys.readouterr().err
+
+
+def test_probe_sdr_open_looks_for_radios_without_being_told_twice(monkeypatch, capsys):
+    from rpi_hwid import cli, probe
+
+    asked = []
+    monkeypatch.setattr(sdr, "collect_sdr", lambda open_radios=False: asked.append(open_radios)
+                        or {"usb": [], "pcie": [], "iio": {}, "usdr_open": {}, "devices": []})
+    monkeypatch.setattr(sdr, "merge_sdr", lambda doc, s: None)
+    monkeypatch.setattr(probe, "collect", dict)
+    monkeypatch.setattr(probe, "verdict", lambda doc: {"summary": {}})
+    cli.main(["probe", "--json", "--sdr-open"])
+    assert asked == [True]
+
