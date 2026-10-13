@@ -558,6 +558,301 @@
       "null"
      ]
     },
+    "sdr": {
+     "items": {
+      "additionalProperties": false,
+      "properties": {
+       "adc_bits": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "channel_serials": {
+        "items": {
+         "type": [
+          "string"
+         ]
+        },
+        "type": [
+         "array",
+         "null"
+        ]
+       },
+       "driver": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_error": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_jedec": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_source": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_uid": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_uid_bits": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "flash_uid_note": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "flash_uid_state": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "fpga_devid": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "fw_version": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "hub": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "hw_model": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "hw_model_variant": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "hw_serial": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "iio_uri": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "kind": {
+        "type": [
+         "string"
+        ]
+       },
+       "manufacturer": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "pcie_dsn": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "pcie_id": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "pcie_link": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "pcie_subsystem": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "product": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "rf_chip": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "rtl_model": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "rx_bw_hz": {
+        "items": {
+         "type": [
+          "integer"
+         ]
+        },
+        "type": [
+         "array",
+         "null"
+        ]
+       },
+       "rx_channels": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "rx_lo_hz": {
+        "items": {
+         "type": [
+          "integer"
+         ]
+        },
+        "type": [
+         "array",
+         "null"
+        ]
+       },
+       "rx_rate_hz": {
+        "items": {
+         "type": [
+          "integer"
+         ]
+        },
+        "type": [
+         "array",
+         "null"
+        ]
+       },
+       "tuner": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "tx_bw_hz": {
+        "items": {
+         "type": [
+          "integer"
+         ]
+        },
+        "type": [
+         "array",
+         "null"
+        ]
+       },
+       "tx_channels": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       },
+       "tx_lo_hz": {
+        "items": {
+         "type": [
+          "integer"
+         ]
+        },
+        "type": [
+         "array",
+         "null"
+        ]
+       },
+       "tx_rate_hz": {
+        "items": {
+         "type": [
+          "integer"
+         ]
+        },
+        "type": [
+         "array",
+         "null"
+        ]
+       },
+       "usb_serial": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "usdr_error": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "usdr_family": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "usdr_hwid": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "vidpid": {
+        "type": [
+         "string",
+         "null"
+        ]
+       },
+       "xo_hz": {
+        "type": [
+         "integer",
+         "null"
+        ]
+       }
+      },
+      "required": [
+       "kind"
+      ],
+      "type": "object"
+     },
+     "type": [
+      "array",
+      "null"
+     ]
+    },
     "serial": {
      "type": [
       "string",

@@ -41,6 +41,7 @@ from rpi_hwid.model import (
     FpgaBoard,
     Mac,
     ProbeDocument,
+    SdrDevice,
     Summary,
     TinyTapeoutBoard,
     UsbNetAdapter,
@@ -96,7 +97,7 @@ ABSENT_IS_UNREAD = ("header",)
 # The records each list in `summary` holds.
 ITEM_TYPES: dict[str, type] = {
     "fpga": FpgaBoard, "tinytapeout": TinyTapeoutBoard, "macs": Mac, "usb_net": UsbNetAdapter,
-    "cameras": Camera,
+    "cameras": Camera, "sdr": SdrDevice,
 }
 
 
