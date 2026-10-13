@@ -156,3 +156,10 @@ def test_the_search_for_esptool_and_the_read_fit_one_ports_allowance(monkeypatch
     assert esp32.run_read("/dev/ttyACM1")[1].startswith("timed out")
     assert clock[0] - first == esp32.READ_TIMEOUT     # the interpreter was remembered
     assert ran == ["py-a", "py-b", "py-c", "py-c", "py-c"]
+
+
+@pytest.mark.parametrize("bad", ["0", "-5", "soon"])
+def test_a_timeout_that_is_no_time_at_all_is_refused(bad, tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["collect", "--out", str(tmp_path), "--timeout", bad, "a"])
+    assert "--timeout" in capsys.readouterr().err
