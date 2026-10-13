@@ -98,7 +98,7 @@ BASE_TIMEOUT = 180
 
 
 def probe_timeout(base: int = BASE_TIMEOUT, esp32_read: Sequence[str] = (),
-                  esp32_radio: Sequence[str] = ()) -> int:
+                  esp32_radio: Sequence[str] = (), esp32_gps: Sequence[str] = ()) -> int:
     """The ssh timeout for one host's probe: `base`, and on top of it the
     longest each read asked for of it may take, since they run one after
     another on the host. Each read gives up on its own before then and
@@ -107,11 +107,15 @@ def probe_timeout(base: int = BASE_TIMEOUT, esp32_read: Sequence[str] = (),
     ESP32-C3s with esptool and ask each a few console questions; the flat
     180 s this replaces killed that probe and lost the whole record.)"""
     from rpi_hwid import esp32
+    from rpi_hwid import esp32_gps as gps
     from rpi_hwid import esp32_radio as radio
 
     read = esp32.ESPTOOL_CHECK_TIMEOUT + esp32.READ_TIMEOUT
     asked = radio.LISTEN + len(radio.COMMANDS) * radio.ANSWER_WAIT
-    return base + len(esp32_read) * read + math.ceil(len(esp32_radio) * asked)
+    # a GPS node is not reset, so there is no boot to listen to: only its answers
+    fixed = gps.GPS_SETTLE + len(gps.GPS_COMMANDS) * gps.GPS_ANSWER_WAIT
+    return (base + len(esp32_read) * read + math.ceil(len(esp32_radio) * asked)
+            + math.ceil(len(esp32_gps) * fixed))
 
 
 @dataclass
@@ -147,7 +151,7 @@ def probe_host(
     `timeout` is the ssh timeout; by default ``probe_timeout()`` of the
     reads asked for."""
     if timeout is None:
-        timeout = probe_timeout(BASE_TIMEOUT, esp32_read, esp32_radio)
+        timeout = probe_timeout(BASE_TIMEOUT, esp32_read, esp32_radio, esp32_gps)
     source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32=esp32,
                           esp32_read=esp32_read, esp32_radio=esp32_radio,
                           force_offline=force_offline, esp32_gps=esp32_gps,
@@ -290,7 +294,7 @@ def collect(
                           force_offline=offline, esp32_gps=gpses.get(host, ()),
                           sdr=sdr, sdr_open=host in sdr_open_hosts,
                           timeout=probe_timeout(base_timeout, reads.get(host, ()),
-                                                radios.get(host, ())))
+                                                radios.get(host, ()), gpses.get(host, ())))
 
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:

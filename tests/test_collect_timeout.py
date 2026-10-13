@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import math
 import subprocess
 
 import pytest
 
-from rpi_hwid import cli, collect, esp32, esp32_radio
+from rpi_hwid import cli, collect, esp32, esp32_gps, esp32_radio
 
 READ = esp32.ESPTOOL_CHECK_TIMEOUT + esp32.READ_TIMEOUT
 RADIO = esp32_radio.LISTEN + len(esp32_radio.COMMANDS) * esp32_radio.ANSWER_WAIT
+GPS = esp32_gps.GPS_SETTLE + len(esp32_gps.GPS_COMMANDS) * esp32_gps.GPS_ANSWER_WAIT
 
 
 @pytest.fixture
@@ -50,6 +52,15 @@ def test_collect_gives_each_host_the_time_its_own_reads_need(timeouts, tmp_path)
                      "--esp32-read", "a=/dev/ttyACM0", "--esp32-read", "a=/dev/ttyACM1",
                      "--esp32-radio", "b=/dev/ttyACM0", "a", "b", "c"]) != 0
     assert timeouts == {"a": 180 + 2 * READ, "b": 180 + int(RADIO), "c": 180}
+
+
+def test_a_gps_node_is_allowed_its_questions_too(timeouts, tmp_path):
+    """--esp32-gps asks without a reset, but still waits for each answer."""
+    assert collect.probe_timeout(esp32_gps=("a", "b")) == 180 + math.ceil(2 * GPS)
+    assert cli.main(["collect", "--out", str(tmp_path), "--users", "pi",
+                     "--esp32-read", "a=/dev/ttyACM0", "--esp32-gps", "a=/dev/ttyACM0",
+                     "--esp32-gps", "b=/dev/ttyACM0", "a", "b", "c"]) != 0
+    assert timeouts == {"a": 180 + READ + math.ceil(GPS), "b": 180 + math.ceil(GPS), "c": 180}
 
 
 def test_timeout_sets_the_base(timeouts, tmp_path):
