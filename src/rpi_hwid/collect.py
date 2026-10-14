@@ -39,6 +39,7 @@ def probe_source(
     take_port: bool = True, esp32: bool = False, esp32_read: Sequence[str] = (),
     esp32_radio: Sequence[str] = (), force_offline: bool = False,
     esp32_gps: Sequence[str] = (),
+    sdr: bool = False, sdr_open: bool = False,
 ) -> str:
     """The script to feed to ``python3 -`` on a host.
 
@@ -49,7 +50,7 @@ def probe_source(
     """
     pkg = resources.files("rpi_hwid")
     probe = pkg.joinpath("probe.py").read_text()
-    if not fpga and not tinytapeout and not esp32:
+    if not fpga and not tinytapeout and not esp32 and not sdr:
         return probe
     extra = ""
     glue = "\n\n_doc = collect()\n_doc['verdict'] = verdict(_doc)\n"
@@ -80,6 +81,12 @@ def probe_source(
         # after the reads that do reset the same chips
         extra += "\n" + pkg.joinpath("esp32_gps.py").read_text()
         glue += f"merge_gps(_doc, collect_gps({list(esp32_gps)!r}))\n"
+    if sdr:
+        # the radios: sysfs and a Pluto's network IIO context, nothing opened
+        extra += "\n" + pkg.joinpath("sdr.py").read_text()
+        # opening a free usdr card is its own opt-in, written out only when asked
+        glue += ("merge_sdr(_doc, collect_sdr(open_radios=True))\n" if sdr_open
+                 else "merge_sdr(_doc, collect_sdr())\n")
     glue += "print(json.dumps(_doc, indent=1))\n"
     return "RPI_HWID_EMBEDDED = True\n" + probe + extra + glue
 
@@ -110,10 +117,14 @@ def probe_host(
     esp32_radio: Sequence[str] = (),
     force_offline: bool = False,
     esp32_gps: Sequence[str] = (),
+    sdr: bool = False,
+    sdr_open: bool = False,
 ) -> Result:
     """Run the probe on one host; `host` may carry its own ``user@``."""
-    source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32, esp32_read,
-                          esp32_radio, force_offline, esp32_gps)
+    source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32=esp32,
+                          esp32_read=esp32_read, esp32_radio=esp32_radio,
+                          force_offline=force_offline, esp32_gps=esp32_gps,
+                          sdr=sdr or sdr_open, sdr_open=sdr_open)
     args = ["--json"]
     if "@" in host:
         user_list: Sequence[str] = [host.split("@", 1)[0]]
@@ -211,6 +222,8 @@ def collect(
     esp32_radio: Sequence[str] = (),
     force_offline_hosts: Sequence[str] = (),
     esp32_gps: Sequence[str] = (),
+    sdr: bool = False,
+    sdr_open_hosts: Sequence[str] = (),
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
@@ -244,7 +257,8 @@ def collect(
                           take_port=take_port,
                           esp32=esp32 or host in reads or host in radios or host in gpses,
                           esp32_read=reads.get(host, ()), esp32_radio=radios.get(host, ()),
-                          force_offline=offline, esp32_gps=gpses.get(host, ()))
+                          force_offline=offline, esp32_gps=gpses.get(host, ()),
+                          sdr=sdr, sdr_open=host in sdr_open_hosts)
 
     results: list[Result] = []
     with ThreadPoolExecutor(max_workers=workers) as pool:

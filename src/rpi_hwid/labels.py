@@ -1387,6 +1387,9 @@ JEDEC_PART = {
     # Micron's N25Q128 and its second generation, the MT25QL128: pi3's Arty.
     # The extended id tells them apart (MICRON_GENERATION below).
     0x20BA18: "N25Q128/MT25QL128",
+    # Adesto (now Renesas) AT25SL321, filed under Atmel's JEP106 code as
+    # Linux's spi-nor atmel.c files it: rpi-sdr-xsdr's XSDR
+    0x1F4216: "AT25SL321",
     0xEF4016: "W25Q32xx",      # BV, FV and JV-IQ; the Cynthion's
     0xEF4017: "W25Q64xx",      # BV, CV and FV; pi-sw1-p38's PCILeech card
     0xEF4018: "W25Q128xx",     # BV, FV and JV-IQ
@@ -2066,7 +2069,7 @@ def usb_records(docs):
 
 # --- assembly -----------------------------------------------------------------
 
-KINDS = ("fpga", "tt", "rpi", "opi", "riscv", "x86", "usb")
+KINDS = ("fpga", "tt", "rpi", "opi", "riscv", "x86", "usb", "sdr")
 # A host can carry more than one FPGA board -- rpi5-netv2 has a NeTV2 and a
 # Cynthion -- so "fpga" is not fine enough to print one sticker. Naming a kind
 # selects that board alone; "fpga" still means all of them.
@@ -2112,7 +2115,7 @@ def all_labels(docs, only, pinned_names=None, order=None):
 
 
 # The summary list each attached record kind comes from.
-LIST_OF = {"fpga": "fpga", "tt": "tinytapeout", "usb": "usb_net"}
+LIST_OF = {"fpga": "fpga", "tt": "tinytapeout", "usb": "usb_net", "sdr": "sdr"}
 
 
 def whole_labels(docs, only, pinned_names=None, order=None, hosts=None):
@@ -2158,7 +2161,8 @@ def whole_labels(docs, only, pinned_names=None, order=None, hosts=None):
     for record_kind, records in (
             ("fpga", fpga_records(docs, pinned_names) if any_fpga else ()),
             ("tt", tinytapeout_records(docs) if "tt" in only else ()),
-            ("usb", usb_records(docs) if "usb" in only else ())):
+            ("usb", usb_records(docs) if "usb" in only else ()),
+            ("sdr", sdr_records(docs, hosts) if "sdr" in only else ())):
         for r in records:
             n = position.get((record_kind, r.host), 0)
             position[(record_kind, r.host)] = n + 1
@@ -2197,6 +2201,8 @@ def whole_labels(docs, only, pinned_names=None, order=None, hosts=None):
                 ident = r.ident or r.serial or ""
                 row = (r.kind, f"{r.name or r.model} {ident}".strip(),
                        draw_fpga, r)
+            elif record_kind == "sdr":
+                row = sdr_row(r)
             elif record_kind == "tt":
                 row = ("tt", f"{r.headline} {r.usb_serial or ''}".strip(), draw_tinytapeout, r)
             else:
@@ -2231,6 +2237,22 @@ def whole_labels(docs, only, pinned_names=None, order=None, hosts=None):
                 yield host, b.kind, f"{b.short} {b.memory} {b.serial}", draw_board, b
         for row in attached.get(host, ()):
             yield (host,) + row
+
+
+def sdr_records(docs, hosts=None):
+    """The radios' records, of the `hosts` named where they are
+    (rpi_hwid.sdr_labels, which draws with this module and so is imported
+    late)."""
+    from rpi_hwid import sdr_labels
+    return sdr_labels.sdr_records(docs, hosts)
+
+
+def sdr_row(r):
+    from rpi_hwid import sdr_labels
+    why = sdr_labels.unreadable(r)
+    if why:
+        raise IdentifierNotReadError(why)
+    return ("sdr", "%s %s" % (r.title, r.ident or r.shared), sdr_labels.draw_sdr, r)
 
 
 def label_origin(index):
@@ -2427,7 +2449,8 @@ def main(argv=None):
     from rpi_hwid import micro
     micro_kinds = list(micro.kinds())
     ap.add_argument("--only", action="append", choices=list(ONLY_CHOICES) + micro_kinds,
-                    metavar="KIND", help="rpi|opi|riscv|x86|fpga|tt|usb, or one FPGA board kind "
+                    metavar="KIND",
+                    help="rpi|opi|riscv|x86|fpga|tt|usb|sdr, or one FPGA board kind "
                                          "(%s)" % "|".join(FPGA_KINDS))
     ap.add_argument("--start", type=int, default=0,
                     help="leave the first N positions of the first sheet blank")

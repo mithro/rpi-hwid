@@ -15,7 +15,9 @@ HOST` for a host whose Cynthion should give up its ECP5 TraceID (which stops its
 capture for a few seconds and may drop power to its TARGET port, so it is never
 part of `--fpga` or `--jtag`); the Tiny Tapeout module with
 `--tinytapeout`, which on a rig stops `fpgas-tt.service` for the length of its
-read unless `--no-stop-service` is given (see [PROBE.md](PROBE.md#a-port-a-service-already-holds)).
+read unless `--no-stop-service` is given (see [PROBE.md](PROBE.md#a-port-a-service-already-holds));
+the SDR module with `--sdr`, which opens no radio, or `--sdr-open HOST` to open a
+free usdr card on that host as well (see [PROBE.md](PROBE.md#software-defined-radios)).
 A login banner before the JSON is skipped.
 
 ```
