@@ -42,6 +42,8 @@ import time
 
 GPS_COMMANDS = (("GpsConfig", "GpsConfig"), ("GpsStatus", "GpsStatus"),
                 ("Status 2", "StatusFWR"))
+GPS_SETTLE = 0.2           # seconds of whatever the port was already saying, dropped
+GPS_ANSWER_WAIT = 3.0      # seconds each command's answer is waited for, at most
 
 
 class NoGpsAnswerError(Exception):
@@ -141,7 +143,7 @@ def gps_drain(fd, secs, until=None):
     return buf.decode("utf-8", "replace")
 
 
-def read_gps(port, answer_wait=3.0):
+def read_gps(port, answer_wait=GPS_ANSWER_WAIT):
     """Ask the node on `port` the commands, without a reset:
     {port, tty, gps (see summarise_gps) or None, error, answers}."""
     out = {"port": port, "tty": os.path.realpath(port), "gps": None, "error": None,
@@ -152,7 +154,7 @@ def read_gps(port, answer_wait=3.0):
         out["error"] = "cannot open %s: %s" % (port, exc)
         return out
     try:
-        gps_drain(fd, 0.2)      # whatever was waiting from before
+        gps_drain(fd, GPS_SETTLE)      # whatever was waiting from before
         answers = ""
         for cmd, key in GPS_COMMANDS:
             os.write(fd, ("\r\n" + cmd + "\r\n").encode("ascii"))

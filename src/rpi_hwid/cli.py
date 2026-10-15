@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from rpi_hwid import names, revision
-from rpi_hwid.collect import DEFAULT_USERS
+from rpi_hwid.collect import BASE_TIMEOUT, DEFAULT_USERS
 
 
 def fpga_module_pins() -> str:
@@ -160,6 +160,17 @@ def cmd_esp32(args: argparse.Namespace) -> int:
     return 0
 
 
+def _seconds(text: str) -> int:
+    """--timeout's value: a whole number of seconds, and some time at all."""
+    try:
+        secs = int(text)
+    except ValueError:
+        secs = 0
+    if secs <= 0:
+        raise argparse.ArgumentTypeError(f"wants a whole number of seconds above 0, not {text!r}")
+    return secs
+
+
 def cmd_collect(args: argparse.Namespace) -> int:
     from rpi_hwid.collect import collect, esp32_reads, offline_read_problem, resolve_host
 
@@ -184,6 +195,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         force_offline_hosts=tuple(sorted(offline)),
         esp32_gps=tuple(args.esp32_gps or ()), sdr=args.sdr,
         sdr_open_hosts=tuple(sorted(sdr_open)),
+        base_timeout=args.timeout,
     )
     failed = 0
     for r in results:
@@ -400,6 +412,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="also open this host's radios that nothing holds (usdr, RTL2832U), for "
                         "what only an open radio says (implies --sdr for it)")
     p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--timeout", type=_seconds, metavar="SECONDS", default=BASE_TIMEOUT,
+                   help=f"each host's ssh timeout (default {BASE_TIMEOUT}), before the "
+                        "time every --esp32-read, --esp32-radio and --esp32-gps of it may "
+                        "take is added")
     p.set_defaults(func=cmd_collect)
 
     p = sub.add_parser("esp32", help="which ESP32s are on USB (run on the Pi)")

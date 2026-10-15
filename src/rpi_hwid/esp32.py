@@ -42,6 +42,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 ROOT = ""   # tests point this at a fake sysfs
 
@@ -60,6 +61,16 @@ BRIDGES = {
     "0403:6014": "FT232H",
     "0403:6015": "FT231X",
 }
+
+# How long one --read may take, at most: finding an interpreter that can
+# import esptool -- all of them together, however many there are to try --
+# then the read itself (its reset, the ROM's answers and the listen after the
+# reset back into the application). The collector's ssh timeout allows this
+# much for each port it asks to be read.
+ESPTOOL_CHECK_TIMEOUT = 60
+READ_TIMEOUT = 120
+# The interpreter found, kept for the next port: [] until one is.
+ESPTOOL_FOUND = []
 
 MAC_RE = re.compile(r"^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$")
 
@@ -400,15 +411,25 @@ def esptool_pythons():
 
 
 def esptool_python():
-    """The first interpreter that can import esptool and espefuse, or None."""
+    """The first interpreter that can import esptool and espefuse, or None.
+    The whole search has ESPTOOL_CHECK_TIMEOUT, not each interpreter: an
+    import that hangs takes the time the rest would have had. The one found
+    is remembered, so only the first port read pays for the search."""
+    if ESPTOOL_FOUND:
+        return ESPTOOL_FOUND[0]
+    end = time.time() + ESPTOOL_CHECK_TIMEOUT
     for python in esptool_pythons():
+        left = end - time.time()
+        if left <= 0:
+            break
         try:
             r = subprocess.run([python, "-c", "import esptool, espefuse"],
                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                               timeout=60)
+                               timeout=left)
         except (OSError, subprocess.TimeoutExpired):
             continue
         if r.returncode == 0:
+            ESPTOOL_FOUND.append(python)
             return python
     return None
 
@@ -421,7 +442,7 @@ def error_line(text):
     return (errors or lines or ["no output"])[-1]
 
 
-def run_read(port, timeout=120):
+def run_read(port, timeout=READ_TIMEOUT):
     """Run the read on one port: (result or None, error or None, output)."""
     python = esptool_python()
     if python is None:

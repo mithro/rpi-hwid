@@ -47,6 +47,10 @@ import termios
 import time
 
 COMMANDS = ("Radio", "CcStatus", "SxStatus")
+SETTLE = 0.2           # seconds of whatever the port was already saying, dropped
+RESET_PULSE = 0.1      # seconds the chip is held in reset
+LISTEN = 12.0          # seconds of boot output kept after the reset
+ANSWER_WAIT = 3.0      # seconds each command's answer is waited for, at most
 LOG_PREFIX = "CC1: "
 
 
@@ -180,7 +184,7 @@ def pulse_reset(fd):
     and RTS low lets it boot its application, as esptool's hard reset does."""
     _modem(fd, termios.TIOCM_DTR, False)
     _modem(fd, termios.TIOCM_RTS, True)
-    time.sleep(0.1)
+    time.sleep(RESET_PULSE)
     _modem(fd, termios.TIOCM_RTS, False)
 
 
@@ -205,7 +209,7 @@ def drain(fd, secs, until=None):
     return buf.decode("utf-8", "replace")
 
 
-def read_radio(port, listen=12.0, answer_wait=3.0):
+def read_radio(port, listen=LISTEN, answer_wait=ANSWER_WAIT):
     """Reset the node on `port`, keep its boot, ask it the commands:
     {port, radio (see summarise) or None, error, boot, answers}."""
     out = {"port": port, "tty": os.path.realpath(port), "radio": None, "error": None,
@@ -216,7 +220,7 @@ def read_radio(port, listen=12.0, answer_wait=3.0):
         out["error"] = "cannot open %s: %s" % (port, exc)
         return out
     try:
-        drain(fd, 0.2)          # whatever was waiting from before
+        drain(fd, SETTLE)       # whatever was waiting from before
         pulse_reset(fd)
         out["boot"] = drain(fd, listen)
         answers = ""
