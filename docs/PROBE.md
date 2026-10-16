@@ -53,11 +53,26 @@ their pads' drive at 12 mA where it was 4 mA, and the `i2c_designware`
 modules loaded (17 Oct 2026).
 
 Whichever way a bus is read, its pins are left as they were found: each pin's
-function and pad are read first (from debugfs and raspi-utils' `pinctrl get`),
-and any that differ afterwards -- a kernel node's driver muxes them to its I2C
-function, and on a Pi 5 a freed GPIO line stays a GPIO -- are put back with
-`sudo pinctrl set` and read again. Pins whose state cannot be read are not
-touched. The loaded i2c modules (`/sys/module/i2c_*`) and the `/dev/i2c-*`
+function and pad (pull, slew, drive strength) are read first, and any that
+differ afterwards -- a kernel node's driver muxes them to its I2C function, and
+on a Pi 5 a freed GPIO line stays a GPIO -- are put back with `sudo -n pinctrl
+set` and read again. The pad is read from the kernel's debugfs
+(`/sys/kernel/debug/pinctrl/<device>/pins` and `pinconf-pins`), directly when
+the probe runs as root and otherwise through `sudo -n ls` and `sudo -n cat`,
+which never ask for a password; raspi-utils' `pinctrl get` adds the pad's
+input on/off state where it is installed. debugfs is required: `pinctrl get`
+alone does not show a pad's drive strength or slew, so where debugfs cannot be
+read either way the bus is not touched and the probe stops, saying why. (A
+BCM2835's debugfs shows no pad config at all; that is its state, not an
+error.) A drive strength the read changed cannot be put back -- `pinctrl set`
+does not set one -- and is reported as not put back.
+
+So to read the header a Pi needs either root, or passwordless `sudo` for `ls`
+and `cat` on debugfs; and, wherever a read changes a pin (always on a Pi 5,
+whose firmware leaves GPIO0-3 with no function, and through a Pi 4's
+`/dev/i2c-0`), raspi-utils' `pinctrl` and passwordless `sudo` for `pinctrl
+set`. Without them the read stops with exit status 1 and the reason, rather
+than leave the host changed or claim it was not. The loaded i2c modules (`/sys/module/i2c_*`) and the `/dev/i2c-*`
 nodes are compared before and after each read too. Lines in use by something
 else, an I2C adapter without its `/dev` node, a line held low, pins that cannot
 be read or put back, or a kernel not as it was found stop the probe with the

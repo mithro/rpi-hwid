@@ -22,14 +22,13 @@ them out of anything public.
 - The board's ssh host key, so the station can recognise it.
 - The printer's IPP address, and label stock for its manual feed.
 
-The board needs the `i2c` and `gpio` groups for the header. With passwordless
-`sudo` there it reports more, because the firmware tools want it: `vcgencmd`,
-and `modprobe i2c-dev` for a camera's lens. Driving JTAG wants `sudo` too, and
-so does `pinctrl set`, which puts a header bus's pins back as they were found
-(no `dtparam` and no `modprobe` is run for the header). Without any of it the
-read still works and says less -- except where reading a header bus changed a
-pin's function (always on a Pi 5): the pin cannot be put back, and the read
-stops with the failed command named rather than leave the host changed.
+The board needs the `i2c` and `gpio` groups for the header, and passwordless
+`sudo` (or root): a header bus's pins are read from the kernel's debugfs
+before the bus is touched (`sudo -n ls`, `sudo -n cat`) and put back after with
+`sudo -n pinctrl set`, and without it a Pi's header read stops with the reason
+rather than leave the host changed (no `dtparam` and no `modprobe` is run for
+the header). The firmware tools want `sudo` too: `vcgencmd`, and `modprobe
+i2c-dev` for a camera's lens. Driving JTAG wants `sudo`.
 
 Nothing here is specific to one board. Any host the station reaches through the
 gateway can be labelled the same way.

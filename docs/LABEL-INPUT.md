@@ -54,7 +54,7 @@ rpi-hwid, whether running it leaves the host as it was found:
 
 | value | |
 |---|---|
-| `"as-found"` | every header-bus read ran no `dtparam` and no `modprobe`; it read each bus's pins' function and pad first and put back and checked any that differed afterwards (on a board that declares the bus's GPIO lines: every Pi), and checked that the loaded i2c modules (`/sys/module/i2c_*`) and the `/dev/i2c-*` nodes were as they were. A host it could not show to be as found made it print no document and exit 1. |
+| `"as-found"` | every header-bus read ran no `dtparam` and no `modprobe`; on a board that declares the bus's GPIO lines (every Pi) it read each pin's function and pad -- pull, slew and drive strength, from the kernel's debugfs, as root or through `sudo -n`, on every run -- before touching the bus, and afterwards put back any that differed (`sudo -n pinctrl set`) and read them again; and it checked that the loaded i2c modules (`/sys/module/i2c_*`) and the `/dev/i2c-*` nodes were as they were. A bus whose pins' debugfs state could not be read was not touched, and a host it could not show to be as found (a drive strength left changed, say), made it print no document and exit 1. |
 | absent | an older rpi-hwid (0.0.post597 and before), whose `--user-bus` applied `dtparam i2c_arm=on` and loaded `i2c-dev`, and which compared only `i2c-dev`, `/dev/i2c-*` and `dtparam -l`; or a document built elsewhere (the site's) |
 
 `rpi-hwid label-input --pi-only` and `--this-host` write it, and `--from` a
@@ -235,18 +235,22 @@ What it does:
   GPIO0-3 with no function at all (`pinctrl get 0-1`: `no pu | --`, input
   off and pulled up), and the RP1 driver frees a pin as a GPIO input. So
   each pin's function and pad are read before the bus is touched and after
-  the read, every way the host allows: the kernel's debugfs
-  (`/sys/kernel/debug/pinctrl/<device>/pins` and `pinconf-pins`, root's:
-  the function, and the RP1's pull, slew and drive strength) and
-  raspi-utils' `pinctrl get` (the function, the pull and the input's on/off
-  state, which debugfs does not show). A pin that differs is put back with
-  `sudo pinctrl set <n> <function>` (`no` for no function; its pull too
-  where that changed) and read once more. A BCM2835's pins are GPIO inputs
-  before and after a GPIO read, and need nothing. Pins whose function
-  cannot be read at all are not touched: the bus is not read, and the run
-  stops saying so. Pins that cannot be put back (a drive strength `pinctrl
-  set` cannot set, say), or read again, stop the run with each pin's state
-  before and after.
+  the read: always from the kernel's debugfs
+  (`/sys/kernel/debug/pinctrl/<device>/pins` and `pinconf-pins`: the
+  function, and the RP1's pull, slew and drive strength), which is root's
+  and is read directly as root and otherwise through `sudo -n ls` and
+  `sudo -n cat`; and from raspi-utils' `pinctrl get` where it is installed
+  (the function, the pull and the input's on/off state, which debugfs does
+  not show). A pin that differs is put back with `sudo -n pinctrl set <n>
+  <function>` (`no` for no function; its pull too where that changed) and
+  read once more. A BCM2835's pins are GPIO inputs before and after a GPIO
+  read, and need nothing; its debugfs shows no pad config, which is its
+  state, not an error. Pins whose debugfs state cannot be read are not
+  touched: the bus is not read, and the run stops saying so -- `pinctrl
+  get` alone does not show a pad's drive strength or slew, so the pins
+  could not be shown to be as found. Pins that cannot be put back (a drive
+  strength, which `pinctrl set` cannot set), or read again, stop the run
+  with each pin's state before and after.
 * **The kernel is checked to be as it was found**: the loaded i2c modules
   (`/sys/module/i2c_*`) and the `/dev/i2c-*` nodes are read before each
   header-bus read and after it, and any difference -- whatever caused it --
@@ -261,9 +265,11 @@ exit status 1:
 * Its pins in use (GPIO0/1 for the ID bus, GPIO2/3 for the user bus), by a
   kernel driver or another program: it names the consumer the kernel gives
   and leaves the lines alone.
-* Its pins' function cannot be read, neither from debugfs nor with
-  `pinctrl get`: neither the node nor the lines are touched, since the pins
-  could not be shown to be put back.
+* Its pins' function and pad cannot be read from debugfs, as root or with
+  `sudo -n` (debugfs not mounted, or no passwordless sudo): neither the node
+  nor the lines are touched, since the pins could not be shown to be put
+  back. `pinctrl get` alone is not enough: it does not show a pad's drive
+  strength or slew.
 * An I2C adapter on its pins (i2c-0 or i2c-1) with no `/dev/i2c-N`, because
   `i2c-dev` is not loaded: the pins are the kernel's, and the probe neither
   loads the module nor takes them.
