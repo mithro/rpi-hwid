@@ -37,14 +37,14 @@ def pi5(tmp_path, monkeypatch):
     def no_bus(bus, addr):
         buses.append(bus)  # and answer as a bus with nothing on it
 
-    def id_lines(chip, offsets):
-        assert offsets == (0, 1)
-        buses.append(0)
+    def header_lines(chip, bus):
+        assert bus.gpio == {0: (0, 1), 1: (2, 3)}[bus.number]
+        buses.append(bus.number)
         return SimBus()    # pulled up, and nothing on it
 
     monkeypatch.setattr(probe, "sh", fake_sh)
     monkeypatch.setattr(probe, "i2c_open", no_bus)
-    monkeypatch.setattr(probe, "open_id_lines", id_lines)
+    monkeypatch.setattr(probe, "open_lines", header_lines)
     monkeypatch.setattr(fpga, "collect_fpga", lambda *a, **k: pytest.fail("FPGA probed"))
     monkeypatch.setattr(tinytapeout, "collect_tinytapeout",
                         lambda *a, **k: pytest.fail("Tiny Tapeout board probed"))
@@ -75,7 +75,7 @@ def test_the_id_bus_is_read_with_no_command_at_all(pi5):
 def test_a_hat_on_the_id_bus_is_named(pi5, monkeypatch):
     """A HAT EEPROM the firmware does not read (Waveshare's PoE M.2 HAT+ (B)
     at 0x52), found through the GPIO lines."""
-    monkeypatch.setattr(probe, "open_id_lines", lambda chip, offsets: eeprom_bus(0x52))
+    monkeypatch.setattr(probe, "open_lines", lambda chip, bus: eeprom_bus(0x52))
     s = cli.pi_only_label_input("p48")["summary"]
     assert s["header"] == ["Waveshare PoE M.2 HAT+ (B)"]
     assert s["hat_uuid"] == "9729525c-eeee-98e9-f348-a0720f4c16eb"
@@ -121,29 +121,16 @@ def test_a_hat_the_firmware_read_is_still_named(pi5):
 
 # --- --user-bus (contract 18) ------------------------------------------------
 
-def test_user_bus_scans_it_and_puts_back_what_it_brought_up(pi5, monkeypatch):
+def test_user_bus_off_is_scanned_through_its_gpio_lines_with_no_command(pi5):
+    """The user bus off, as most of the fleet has it: GPIO2/3 are driven
+    from user space, and nothing in the kernel is changed for it (no
+    `dtparam i2c_arm=on`, which on a Pi 5 left the pins, pads and modules
+    changed; no `modprobe i2c-dev`)."""
     root, calls, buses = pi5
-    (root / "dev/i2c-1").unlink()                     # off, as most of the fleet has it
-
-    def sh(args, timeout=15):
-        calls.append(args)
-        if args == ["sudo", "dtparam", "i2c_arm=on"]:
-            _w(root, "/dev/i2c-1", "")
-            overlays.append("dtparam i2c_arm=on")
-        elif args == ["sudo", "dtparam", "-l"]:
-            return "\n".join(f"{i}:  {o}" for i, o in enumerate(overlays))
-        elif args[:3] == ["sudo", "dtparam", "-r"]:
-            overlays.pop(int(args[3]))
-            (root / "dev/i2c-1").unlink()
-        elif args[-1:] == ["pmic_read_adc"]:
-            return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
-        return ""
-    overlays = []
-    monkeypatch.setattr(probe, "sh", sh)
+    (root / "dev/i2c-1").unlink()
     doc = cli.pi_only_label_input("p48", user_bus=True)
-    assert 1 in buses, "the user bus was scanned"
-    assert ["sudo", "dtparam", "i2c_arm=on"] in calls
-    assert overlays == []
+    assert buses == [0, 1], "both buses read through their GPIO lines"
+    assert [c for c in calls if c[0] == "sudo" and "pmic_read_adc" not in c] == []
     assert not (root / "dev/i2c-1").exists(), "left as it was found"
     # read, and nothing there: a bare header, which the Pi label can say
     assert doc["summary"]["header"] == []
@@ -289,86 +276,82 @@ def test_a_pi_4s_fan_is_sent_as_read_and_none():
 # --- label-input fails loud (mithro/rpi-hwid issue #91) ----------------------
 
 
-def _user_bus_host(root, calls, overlays):
-    """A Pi whose user bus is off and comes up with `dtparam i2c_arm=on`."""
+def test_a_module_left_loaded_makes_label_input_fail_and_say_so(pi5, monkeypatch, capsys):
+    """What the Pi 5's runtime i2c_arm overlay did (2026-10-17): the
+    i2c_designware modules stayed loaded and rpi-hwid exited 0. A user-bus
+    read that leaves an i2c module loaded now prints no document, exits 1,
+    and stderr says the host is not as it was found and what differs."""
+    root, _, _ = pi5
     (root / "dev/i2c-1").unlink()
 
-    def sh(args, timeout=15):
-        calls.append(list(args))
-        if args == ["sudo", "dtparam", "i2c_arm=on"]:
-            _w(root, "/dev/i2c-1", "")
-            overlays.append("dtparam i2c_arm=on")
-        elif args == ["sudo", "dtparam", "-l"]:
-            return "\n".join(f"{i}:  {o}" for i, o in enumerate(overlays))
-        elif args[:3] == ["sudo", "dtparam", "-r"]:
-            overlays.pop(int(args[3]))
-            (root / "dev/i2c-1").unlink()
-        elif args[-1:] == ["pmic_read_adc"]:
-            return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
-        return ""
-    return sh
-
-
-def test_an_undo_that_hangs_makes_label_input_fail_and_say_so(pi5, monkeypatch, capsys):
-    """What happened on the Pi 3B+ in issue #91, with the user bus's
-    overlay: its removal timed out. No document, exit 1, and stderr names
-    the command and says the host is not as it was found."""
-    root, calls, _ = pi5
-    overlays = []
-    sh = _user_bus_host(root, calls, overlays)
-
-    def sh_checked(args, timeout=15):
-        if args[:3] == ["sudo", "dtparam", "-r"]:
-            raise probe.CommandFailedError(
-                f"`{' '.join(args)}` did not finish within {timeout} s; it was killed, "
-                "and what it started may still be running")
-        return sh(args, timeout)
-    monkeypatch.setattr(probe, "sh", sh)
-    monkeypatch.setattr(probe, "sh_checked", sh_checked)
+    def open_lines(chip, bus):
+        if bus.role == "user":
+            (root / "sys/module/i2c_designware_core").mkdir(parents=True)
+        return SimBus()
+    monkeypatch.setattr(probe, "open_lines", open_lines)
     rc = cli.main(["label-input", "--pi-only", "--user-bus", "--host", "p48"])
     out, err = capsys.readouterr()
     assert rc == 1
     assert out == ""
-    assert err.startswith("label-input: the host is not as it was found, after "
-                          "`sudo modprobe i2c-dev`, `sudo dtparam i2c_arm=on`: ")
-    assert "`sudo dtparam -r 0` did not finish within 15 s" in err
-    assert 'dtparam -l was [] and is now ["dtparam i2c_arm=on"]' in err
+    assert err == ("label-input: the host is not as it was found, after reading the header's "
+                   'user bus: /sys/module/i2c_* was [] and is now ["i2c_designware_core"]\n')
+
+
+def test_pins_not_put_back_make_label_input_fail(pi5, monkeypatch, capsys):
+    """GPIO2/3 left changed by the read, and `pinctrl set` cannot put them
+    back: no document, exit 1, naming the bus and the pins."""
+    def changed(label, bus, sources=None):
+        fn = "gpio_in" if not seen else "alt0"
+        seen.append(bus.role)
+        return {o: {"debugfs": {"function": fn, "config": "", "pull": None}} for o in bus.gpio}
+    seen: list[str] = []
+    monkeypatch.setattr(probe, "pin_states", changed)
+
+    def no_pinctrl(args, timeout=15):
+        raise probe.CommandFailedError(f"`{' '.join(args)}` exited 1: no pinctrl")
+    monkeypatch.setattr(probe, "sh_checked", no_pinctrl)
+    rc = cli.main(["label-input", "--pi-only", "--host", "p48"])
+    out, err = capsys.readouterr()
+    assert rc == 1
+    assert out == ""
+    assert err.startswith("label-input: the host is not as it was found, after reading the "
+                          "HAT ID bus on GPIO0/1: putting it back failed: `sudo "
+                          "/usr/bin/pinctrl set 0 ip` exited 1: no pinctrl")
+    assert "GPIO0 was function gpio_in (no pad config shown), and is now function alt0" in err
 
 
 def test_a_host_changed_meanwhile_makes_label_input_fail(pi5, monkeypatch, capsys):
-    """Every undo step succeeded, and the host still differs from how it was
-    found: that is said too, never passed off as put back."""
-    root, calls, _ = pi5
-    overlays = []
-    monkeypatch.setattr(probe, "sh", _user_bus_host(root, calls, overlays))
+    """A node that turned up while the user bus was read through /dev/i2c-1
+    (someone loading a driver meanwhile): the host differs from how it was
+    found, and that is said, never passed off as put back."""
+    root, _, _ = pi5
 
     def scan(bus, **kw):
-        overlays.append("dtoverlay spi0-1cs")      # someone else's, meanwhile
+        _w(root, "/dev/i2c-22", "")
         return []
     monkeypatch.setattr(probe, "i2c_scan", scan)
     assert cli.main(["label-input", "--pi-only", "--user-bus", "--host", "p48"]) == 1
     out, err = capsys.readouterr()
     assert out == ""
-    assert 'dtparam -l was [] and is now ["dtoverlay spi0-1cs"]' in err
+    assert '/dev/i2c-* was ["i2c-1"] and is now ["i2c-1", "i2c-22"]' in err
 
 
-def test_a_host_put_back_exits_zero(pi5, monkeypatch, capsys):
+def test_a_host_left_as_found_exits_zero(pi5, capsys):
     root, calls, _ = pi5
-    overlays = []
-    monkeypatch.setattr(probe, "sh", _user_bus_host(root, calls, overlays))
+    (root / "dev/i2c-1").unlink()
     assert cli.main(["label-input", "--pi-only", "--user-bus", "--host", "p48"]) == 0
     out, err = capsys.readouterr()
     assert err == ""
     assert json.loads(out)["summary"]["header"] == []
-    assert overlays == []
+    assert [c for c in calls if "dtparam" in c or "modprobe" in c] == []
 
 
 def test_an_id_bus_in_use_makes_label_input_fail(pi5, monkeypatch, capsys):
     """GPIO0/1 held by a kernel driver or another program: the read is not
     made, and not passed off as a header with nothing on it."""
-    def busy(chip, offsets):
+    def busy(chip, bus):
         raise probe.IdBusError("GPIO0/1 are in use by i2c-gpio: the HAT ID bus was not read")
-    monkeypatch.setattr(probe, "open_id_lines", busy)
+    monkeypatch.setattr(probe, "open_lines", busy)
     assert cli.main(["label-input", "--pi-only", "--host", "p48"]) == 1
     out, err = capsys.readouterr()
     assert out == ""

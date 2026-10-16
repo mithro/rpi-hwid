@@ -4,7 +4,7 @@
 This module is deliberately a single, dependency-free file that runs on any
 Raspberry Pi with python3 >= 3.5 (sudo is wanted for the Pi's own firmware
 tools; the I2C header is read directly, through /dev/i2c-* or, for the
-HAT ID bus where the kernel has none, /dev/gpiochip*, needing neither sudo
+a header bus where the kernel has none, /dev/gpiochip*, needing neither sudo
 nor i2c-tools), so it can be
 sent to a host over ssh without installing anything:
 
@@ -112,7 +112,7 @@ Other boards: the Orange Pi PC (Xunlong, Allwinner H3, Armbian)
     then its last four (02:81:2e:b7:a3:4e from 02c000812eb7a34e on
     pi-sw2-p22), so the MAC is not independent evidence. RAM is MemTotal
     rounded up to the fitted size and the Armbian release is
-    /etc/armbian-release. The Pi-only pokes (dtparam, vcgencmd) are
+    /etc/armbian-release. The Pi-only pokes (vcgencmd) are
     skipped: an H3 has no PMIC and no firmware power report, so unless a
     HAT names the supply nothing here can say what powers it.
 
@@ -199,7 +199,7 @@ def sh(args, timeout=15):
 class ProbeError(Exception):
     """The probe stops rather than print a document it cannot stand behind:
     a command that changes the host failed, the host was not left as it
-    was found, or the HAT ID bus could not be read for a reason it names."""
+    was found, or a header bus could not be read for a reason it names."""
 
 
 class CommandFailedError(ProbeError):
@@ -212,8 +212,16 @@ class HostNotAsFoundError(ProbeError):
     it back."""
 
 
-class IdBusError(ProbeError):
+class HeaderBusError(ProbeError):
+    """One of the 40-pin header's I2C buses could not be read, and why."""
+
+
+class IdBusError(HeaderBusError):
     """The HAT ID bus (GPIO0/1) could not be read, and why."""
+
+
+class UserBusError(HeaderBusError):
+    """The header's user bus (GPIO2/3) could not be read, and why."""
 
 
 def sh_checked(args, timeout=15):
@@ -630,56 +638,87 @@ def eeprom_decode(blob):
 #   Xunlong Orange Pi PC    id 1 (i2c@1c2b000, PA18/PA19), user 0
 #                           (i2c@1c2ac00, PA11/PA12) -- the reverse of the Pi
 #
-# "id_gpio" is the ID bus as lines (SDA, SCL) of the header's GPIO chip:
-# where the kernel has no I2C bus up on them, the probe reads the EEPROM by
-# driving the two lines itself (id_bus_scan), and changes nothing in the
-# kernel to do it. It used to apply `dtparam i2c_vc=on` instead, and taking
-# that out again hangs in the kernel on a Pi 3B+ (mithro/rpi-hwid issue #91).
+# "id_gpio" and "user_gpio" are the two buses as lines (SDA, SCL) of the
+# header's GPIO chip. Each bus is read the same way (header_bus_read), and
+# nothing in the kernel is changed to read it: no overlay, no module.
+#   * /dev/i2c-N there: read through it.
+#   * the kernel has the adapter but no node (i2c-dev not loaded): an error
+#     naming it. The pins belong to a kernel driver, and a GPIO request on a
+#     Pi's pinctrl, which does not refuse one, would take them.
+#   * neither, on a board that declares the bus's GPIO lines: the probe is
+#     the I2C master itself, driving the two lines from user space.
+#   * neither, on a board that declares none (an Orange Pi): not read.
+# The probe used to bring a bus up with a runtime overlay (`dtparam
+# i2c_vc=on`, `dtparam i2c_arm=on`) and i2c-dev. Taking an overlay out again
+# hangs in the kernel on a Pi 3B+ until a power cycle (mithro/rpi-hwid issue
+# #91), and on a Pi 5 the i2c_arm one left GPIO2/3 GPIO inputs (they had
+# no function), the pads' drive at 12 mA (it was 4 mA) and the
+# i2c_designware modules loaded, none of which it noticed (2026-10-17).
 #
-# "enable_user" brings the user bus up when it is not already there, and is
-# the board's own command: the Pi's dtparam does not exist on Armbian, which
-# needs a reboot to add an overlay, so an Orange Pi takes the buses it has.
+# Wherever the bus's lines are declared, the pins' function and pad are read
+# before the bus is touched, through a node or not, and put back and checked
+# afterwards (put_pins_back): reading through a Pi 4's /dev/i2c-0 leaves
+# GPIO0/1 alt0 where the firmware left them gpio_in. The i2c kernel modules
+# and the /dev/i2c-* nodes are compared too (HostChanges). A host not left
+# as it was found stops the probe (HostNotAsFoundError).
+#
 # Most of the fleet leaves the user bus off -- 12 of the 35 Pis had no
-# /dev/i2c-1 -- and without an enable those hosts were never looked at, so a
-# Waveshare PoE HAT (B), which is known only by the devices it puts there,
-# could not have been seen on any of them. Whatever this brings up is put
-# back afterwards, and the host's state is compared before and after: a
-# host not left as it was found stops the probe (HostChanges).
+# /dev/i2c-1 -- and a Waveshare PoE HAT (B), which is known only by the
+# devices it puts there, is seen on those hosts only through the GPIO lines.
 #
 # Only a declared bus is ever scanned. An undeclared one may be an HDMI DDC
 # line -- the Orange Pi's i2c-3 acknowledges all 117 addresses -- and
 # scanning it would invent a HAT out of an empty socket.
 HEADER_BUSES = {
-    "rpi": {"id": 0, "user": 1, "id_gpio": (0, 1),
-            "enable_user": ["sudo", "dtparam", "i2c_arm=on"]},
-    "opi": {"id": 1, "user": 0, "id_gpio": None, "enable_user": None},
+    "rpi": {"id": 0, "user": 1, "id_gpio": (0, 1), "user_gpio": (2, 3)},
+    "opi": {"id": 1, "user": 0, "id_gpio": None, "user_gpio": None},
 }
 
+# The 40-pin header's pin for each of the Pi's GPIO lines the buses use.
+HEADER_PINS = {0: 27, 1: 28, 2: 3, 3: 5}
 
-# How long a node may take to appear after its overlay is applied. udev
-# makes /dev/i2c-N after dtparam has returned, and on a Pi Zero late enough
-# that looking straight away missed it (rpiz-4, 2026-09-26).
+
+class HeaderBus(object):
+    """One of the header's two I2C buses, as the probe reads it: its role
+    ("id" or "user"), its kernel bus number, its GPIO lines (SDA, SCL) or
+    None, and the words every message about it uses."""
+
+    NAMES = {"id": "the HAT ID bus", "user": "the header's user bus"}
+    ERRORS = {"id": IdBusError, "user": UserBusError}
+    CONSUMERS = {"id": b"rpi-hwid HAT ID bus", "user": b"rpi-hwid user bus"}
+
+    def __init__(self, role, number, gpio=None):
+        self.role, self.number = role, number
+        self.gpio = tuple(gpio) if gpio else None
+        self.name = self.NAMES[role]
+        self.error = self.ERRORS[role]
+        self.consumer = self.CONSUMERS[role]
+
+    def line(self, i):
+        """"SDA (GPIO0, pin 27)": line `i` (0 SDA, 1 SCL) by its GPIO and
+        its header pin."""
+        offset = self.gpio[i]
+        pin = HEADER_PINS.get(offset)
+        return "%s (GPIO%d%s)" % (("SDA", "SCL")[i], offset,
+                                  ", pin %d" % pin if pin is not None else "")
+
+    def gpio_text(self):
+        """"GPIO0/1"."""
+        return "GPIO" + "/".join(str(o) for o in self.gpio)
+
+
+# The ID bus as a Pi has it: what BitBangI2C names when it is not told.
+ID_BUS = HeaderBus("id", 0, (0, 1))
+
+
+# How long a node may take to appear once the kernel has the adapter and
+# i2c-dev is loaded: udev makes /dev/i2c-N after the fact, and on a Pi Zero
+# late enough that looking straight away missed it (rpiz-4, 2026-09-26).
 BUS_SETTLE_S = 5.0
 
 
 I2C_DEV_LOAD = ["sudo", "modprobe", "i2c-dev"]
 I2C_DEV_UNLOAD = ["sudo", "modprobe", "-r", "i2c-dev"]
-DTPARAM_LIST = ["sudo", "dtparam", "-l"]
-# An undo step that takes out the one runtime dtparam this probe applied,
-# rather than a command: see remove_own_dtparam.
-DTPARAM_UNDO = "dtparam-undo"
-
-
-def dtparams_loaded():
-    """The runtime overlays and dtparams, in load order, as `dtparam -l`
-    prints them: [(index, "dtparam i2c_arm=on"), ...], whitespace folded.
-    The format is dtoverlay_list() in raspberrypi/utils
-    dtmerge/dtoverlay_main.c: "%d:  %s %s" per entry, after a header line,
-    or "No overlays loaded". A `dtparam -l` that fails is an error, never
-    an empty list: the list is what the probe puts the host back by."""
-    out = sh_checked(DTPARAM_LIST)
-    return [(int(m.group(1)), " ".join(m.group(2).split()))
-            for m in re.finditer(r"^\s*(\d+):\s+(\S.*)$", out, re.M)]
 
 
 def i2c_dev_loaded():
@@ -688,45 +727,47 @@ def i2c_dev_loaded():
     return os.path.exists(ROOT + "/sys/module/i2c_dev")
 
 
-def host_state(overlays):
-    """What a header-bus or lens read may change, as it is now: whether
-    i2c-dev is loaded, the /dev/i2c-* nodes, and with `overlays` the runtime
-    dtparams (`dtparam -l`, a Pi's alone)."""
-    state = {"i2c-dev loaded": i2c_dev_loaded(),
-             "/dev/i2c-*": sorted(os.path.basename(p) for p in glob.glob(ROOT + "/dev/i2c-*"))}
-    if overlays:
-        state["dtparam -l"] = [text for _, text in dtparams_loaded()]
-    return state
+def host_state():
+    """What a header-bus or lens read may change in the kernel, as it is
+    now: the /dev/i2c-* nodes and the loaded i2c modules (/sys/module/i2c_*:
+    i2c_dev, i2c_designware_core, i2c_mux_pinctrl and the like, by name)."""
+    return {"/dev/i2c-*": sorted(os.path.basename(p) for p in glob.glob(ROOT + "/dev/i2c-*")),
+            "/sys/module/i2c_*": sorted(os.path.basename(p)
+                                        for p in glob.glob(ROOT + "/sys/module/i2c_*"))}
 
 
-def undo_text(step):
-    if step[0] == DTPARAM_UNDO:
-        return "dtparam -r <the index of %s>" % step[1]
-    return " ".join(step)
+# the start of every HostNotAsFoundError's message, left out of a second one
+# joined to the first
+NOT_AS_FOUND = "the host is not as it was found, "
 
 
 class HostChanges(object):
     """The commands a read runs that change the host, and their undoing.
 
-    The host's state (host_state) is read before the first command and
-    again after the last undo. Every command and every undo step goes
-    through sh_checked. put_back() raises HostNotAsFoundError, naming what was
-    run, when an undo step failed or the state afterwards differs from the
-    state before; it never reports success on a host it did not put back."""
+    The host's state (host_state) is read before the read (begin) or before
+    the first command, and again after the last undo. Every command and
+    every undo step goes through sh_checked. put_back() raises
+    HostNotAsFoundError, naming what was run (or `what`, the read, where
+    nothing was), when an undo step failed or the state afterwards differs
+    from the state before; it never reports success on a host it did not
+    put back."""
 
-    def __init__(self, overlays):
-        self.overlays = overlays
+    def __init__(self, what=None):
+        self.what = what
         self.before = None
         self.ran = []
         self.undo = []
+
+    def begin(self):
+        """Read the state, before anything changes."""
+        if self.before is None:
+            self.before = host_state()
 
     def run(self, cmd, undo=None):
         """Run `cmd`; its `undo` (a command, run first among the undo
         steps) is recorded only once `cmd` has succeeded. One that failed
         part way is caught by the comparison in put_back."""
-        if self.before is None:
-            # read before anything changes: if this fails, nothing has
-            self.before = host_state(self.overlays)
+        self.begin()
         self.ran.append(" ".join(cmd))
         out = sh_checked(cmd)
         if undo:
@@ -739,23 +780,17 @@ class HostChanges(object):
         the read itself raised, if any, for the message."""
         if self.before is None:
             return
-        failed, after, unread = None, None, None
+        failed = None
         for i, step in enumerate(self.undo):
             try:
-                if step[0] == DTPARAM_UNDO:
-                    remove_own_dtparam(step[1])
-                else:
-                    sh_checked(step)
+                sh_checked(step)
             except CommandFailedError as e:
                 # no further undo on a host whose last step failed: an unload
                 # behind a removal stuck in the kernel can hang the same way
-                failed = (e, [undo_text(s) for s in self.undo[i + 1:]])
+                failed = (e, [" ".join(s) for s in self.undo[i + 1:]])
                 break
-        try:
-            after = host_state(self.overlays)
-        except CommandFailedError as e:
-            unread = e
-        if failed is None and unread is None and after == self.before:
+        after = host_state()
+        if failed is None and after == self.before:
             return
         why = []
         if cause is not None:
@@ -765,54 +800,13 @@ class HostChanges(object):
             if failed[1]:
                 why.append("not tried after that: %s" % ", ".join(
                     "`%s`" % s for s in failed[1]))
-        if unread is not None:
-            why.append("its state could not be read again: %s" % unread)
-        if after is not None:
-            for key in sorted(self.before):
-                if after.get(key) != self.before[key]:
-                    why.append("%s was %s and is now %s" % (key, json.dumps(self.before[key]),
-                                                            json.dumps(after.get(key))))
-        raise HostNotAsFoundError("the host is not as it was found, after %s: %s" % (
-            ", ".join("`%s`" % c for c in self.ran), "; ".join(why)))
-
-
-def apply_dtparam(changes, enable):
-    """Run `enable` (["sudo", "dtparam", "<param>"]) and record the undo
-    step for exactly what it added.
-
-    A bare `dtparam -r` removes the LAST runtime overlay, whoever applied
-    it (dtoverlay_remove() in raspberrypi/utils dtmerge/dtoverlay_main.c:
-    with no argument, rmpos = count - 1). So the probe looks at the list
-    before and after and takes its own entry to be the one new entry, at the
-    end, naming its parameter. When that is not what it finds (something
-    else changed the list meanwhile, or the apply added nothing), it records
-    no undo and raises: put_back then compares the host with how it was
-    found and says what differs."""
-    before = dtparams_loaded()
-    changes.run(enable)
-    after = dtparams_loaded()
-    mine = "dtparam " + enable[-1]
-    if len(after) == len(before) + 1 and after[:-1] == before and after[-1][1] == mine:
-        changes.undo.insert(0, [DTPARAM_UNDO, mine])
-        return
-    raise CommandFailedError("`%s` exited 0, but `dtparam -l` does not show it as the one new "
-                        "entry: before %s, after %s" % (
-                            " ".join(enable), json.dumps([t for _, t in before]),
-                            json.dumps([t for _, t in after])))
-
-
-def remove_own_dtparam(mine):
-    """Take out the most recent runtime entry that is `mine` ("dtparam
-    i2c_arm=on"), by its index. `dtparam -r <index>` removes that entry
-    alone and reapplies the ones after it, renumbered (and_later is 0 for
-    -r in dtoverlay_remove()), so an overlay something else applied since
-    stays. An entry no longer there is an error: something else removed
-    it, and the probe will not guess at what."""
-    entries = [i for i, text in dtparams_loaded() if text == mine]
-    if not entries:
-        raise CommandFailedError("`%s` is no longer in `dtparam -l`, so there is nothing of the "
-                            "probe's to remove" % mine)
-    sh_checked(["sudo", "dtparam", "-r", str(entries[-1])])
+        for key in sorted(self.before):
+            if after.get(key) != self.before[key]:
+                why.append("%s was %s and is now %s" % (key, json.dumps(self.before[key]),
+                                                        json.dumps(after.get(key))))
+        raise HostNotAsFoundError(NOT_AS_FOUND + "after %s: %s" % (
+            ", ".join("`%s`" % c for c in self.ran) if self.ran else self.what,
+            "; ".join(why)))
 
 
 def wait_for(path, seconds):
@@ -823,118 +817,145 @@ def wait_for(path, seconds):
     return os.path.exists(path)
 
 
-def open_bus(bus, enable, changes):
-    """Make /dev/i2c-<bus> readable, recording in `changes` what that took;
-    whether it is there now.
+def read_as_found(bus, read, label=None):
+    """read() on `bus`, with the host checked around it: the kernel's i2c
+    modules and nodes (HostChanges), and, with `label` (the header's GPIO
+    chip), the function and pad of the bus's pins, read first -- nothing is
+    touched when they cannot be -- and put back afterwards (put_pins_back).
+    What read() returns, or what it raised; HostNotAsFoundError when the
+    host is not as it was found, naming the read's own error too, and both
+    problems where both arise."""
+    changes = HostChanges("reading %s" % bus.name)
+    changes.begin()
+    before = pin_states(label, bus) if label else None
+    failed, result = None, None
+    try:
+        result = read()
+    except BaseException as e:
+        failed = e
+    problems = []
+    if isinstance(failed, HostNotAsFoundError):
+        problems.append(str(failed))
 
-    A bus already there is left alone. Otherwise the cheap step first: a
-    controller can be up (config.txt's dtparam=i2c_arm=on) with no node,
-    because nothing loaded i2c-dev, which makes the nodes -- rpi3-netv2,
-    2026-10-01, where the probe's dtparam then hung in the kernel,
-    unkillable, until the Pi was power-cycled. So i2c-dev is loaded, where
-    it is not already, and the board's enable (dtparam) is reached for only
-    when the module alone brings no bus up. The caller puts back what this
-    did (changes.put_back), the overlay before the module, whether or not
-    the node ever turned up."""
-    path = ROOT + "/dev/i2c-%d" % bus
-    if os.path.exists(path):
-        return True
-    # A board with no enable (the Orange Pi) takes the buses it has and
-    # runs no sudo at all, the module included.
-    if not enable:
-        return False
-    # /sys/bus/i2c/devices/i2c-N: there on 4.19 and 6.18 alike, where
-    # /sys/class/i2c-adapter is gone from the newer kernels
-    adapter = os.path.exists(ROOT + "/sys/bus/i2c/devices/i2c-%d" % bus)
-    if not i2c_dev_loaded():
-        changes.run(I2C_DEV_LOAD, I2C_DEV_UNLOAD)
-        # the module makes nodes only for adapters already there: wait for
-        # udev only if this bus has one
-        if wait_for(path, BUS_SETTLE_S if adapter else 0):
-            return True
-    apply_dtparam(changes, enable)
-    return wait_for(path, BUS_SETTLE_S)
+    def check(put_back):
+        try:
+            put_back(None if problems else failed)
+        except HostNotAsFoundError as e:
+            problems.append(str(e) if not problems else str(e).replace(NOT_AS_FOUND, "", 1))
+    if before is not None:
+        # whatever the read or the lines' close raised, the pins are put back
+        check(lambda cause: put_pins_back(label, bus, before, cause))
+    check(changes.put_back)
+    if problems:
+        raise HostNotAsFoundError("; and ".join(problems))
+    if failed is not None:
+        raise failed
+    return result
+
+
+def header_bus_read(bus, through_node, through_lines, nothing):
+    """One header bus read, as (what was found, whether it could be read).
+
+    Nothing here changes the kernel: no overlay, no module.
+      * /dev/i2c-<bus> there: through_node(bus number).
+      * the kernel has the adapter but no node: the bus's error, with
+        nothing touched. The pins belong to a kernel driver, and a GPIO
+        request on a Pi's pinctrl, which does not refuse one, would take them.
+      * no adapter, on a board that gives the bus as GPIO lines: through_lines
+        (a BitBangI2C on those lines), the lines released and freed on every
+        path and checked (GpioLines.close).
+      * otherwise (an Orange Pi without the bus): `nothing`, not read.
+    Either read is made through read_as_found: where the bus's GPIO lines
+    are declared its pins are put back as they were, and on every board the
+    kernel's i2c modules and nodes are checked to be as they were."""
+    node = ROOT + "/dev/i2c-%d" % bus.number
+    adapter = ROOT + "/sys/bus/i2c/devices/i2c-%d" % bus.number
+    if bus.gpio and not os.path.exists(node) and os.path.exists(adapter) and i2c_dev_loaded():
+        # the adapter is there and so is the module: udev is still making the node
+        wait_for(node, BUS_SETTLE_S)
+    if os.path.exists(node):
+        label = header_gpiochip(bus)[1] if bus.gpio else None
+        return read_as_found(bus, lambda: through_node(bus.number), label), True
+    if not bus.gpio:
+        return nothing, False
+    if os.path.exists(adapter):
+        raise bus.error(
+            "the kernel's I2C adapter i2c-%d (%s) is on %s, but there is no /dev/i2c-%d "
+            "to read it through (i2c-dev is %s): %s was not read. The probe neither "
+            "loads modules for it nor drives pins a kernel driver has" % (
+                bus.number, read(adapter + "/name") or "no name", bus.gpio_text(), bus.number,
+                "loaded, and no node came" if i2c_dev_loaded() else "not loaded", bus.name))
+    chip, label = header_gpiochip(bus)
+
+    def through_gpio():
+        lines = open_lines(chip, bus)
+        failed, result = None, None
+        try:
+            result = through_lines(BitBangI2C(lines, bus=bus))
+        except BaseException as e:
+            failed = e
+        # released and freed whatever happened; a HostNotAsFoundError from
+        # here names `failed` too
+        lines.close(failed)
+        if failed is not None:
+            raise failed
+        return result
+    return read_as_found(bus, through_gpio, label), True
 
 
 def id_bus_scan(bus, gpio=None):
-    """HAT ID EEPROMs on `bus`, as (found, whether the bus could be read).
+    """HAT ID EEPROMs on `bus`, as (found, whether the bus could be read),
+    read as header_bus_read says; `gpio` is the bus's GPIO lines (SDA, SCL)
+    where the board declares them.
 
     Keyed by address, as the HAT spec allows 0x50 through 0x57. Only a blob
     carrying the R-Pi magic counts, so a bus that answers at every address
     yields nothing rather than eight HATs -- and nothing found is reported
-    apart from no bus to look at, because only the first rules a HAT out.
+    apart from no bus to look at, because only the first rules a HAT out."""
+    def through_node(number):
+        return dict(("0x%02x" % addr, info) for addr, info in (
+            (addr, eeprom_decode(eeprom_read(number, addr, EEPROM_LENGTH)))
+            for addr in ID_EEPROM_ADDRS) if info)
 
-    Nothing here changes the kernel: no overlay, no module.
-      * /dev/i2c-<bus> there (a camera overlay's i2c0mux, or
-        dtparam=i2c_vc=on in config.txt): read through it.
-      * the kernel has the adapter but no node (i2c-dev not loaded): an
-        IdBusError. The pins belong to a kernel driver, and a GPIO request
-        on a Pi's pinctrl, which does not refuse one, would take them.
-      * no adapter, on a board that gives the bus as GPIO lines (`gpio`,
-        (SDA, SCL)): read by driving those lines from user space
-        (id_bus_gpio_scan).
-      * otherwise (an Orange Pi without the bus): not read."""
-    node = ROOT + "/dev/i2c-%d" % bus
-    adapter = ROOT + "/sys/bus/i2c/devices/i2c-%d" % bus
-    if gpio and not os.path.exists(node) and os.path.exists(adapter) and i2c_dev_loaded():
-        # the adapter is there and so is the module: udev is still making the node
-        wait_for(node, BUS_SETTLE_S)
-    if os.path.exists(node):
-        found = {}
-        for addr in ID_EEPROM_ADDRS:
-            info = eeprom_decode(eeprom_read(bus, addr, EEPROM_LENGTH))
-            if info:
-                found["0x%02x" % addr] = info
-        return found, True
-    if not gpio:
-        return {}, False
-    if os.path.exists(adapter):
-        raise IdBusError(
-            "the kernel's I2C adapter i2c-%d (%s) is on GPIO0/1, but there is no /dev/i2c-%d "
-            "to read it through (i2c-dev is %s): the HAT ID bus was not read. The probe neither "
-            "loads modules for it nor drives pins a kernel driver has" % (
-                bus, read(adapter + "/name") or "no name", bus,
-                "loaded, and no node came" if i2c_dev_loaded() else "not loaded"))
-    return id_bus_gpio_scan(gpio), True
+    def through_lines(i2c):
+        return dict(("0x%02x" % addr, info) for addr, info in (
+            (addr, eeprom_decode(i2c.read_eeprom(addr, EEPROM_LENGTH)))
+            for addr in ID_EEPROM_ADDRS) if info)
+    return header_bus_read(HeaderBus("id", bus, gpio), through_node, through_lines, {})
 
 
-def user_bus_scan(bus, enable=None):
-    """What answers on the header's user bus, as (addresses, could be read).
+def user_bus_scan(bus, gpio=None):
+    """What answers on the header's user bus, as (addresses, could be read),
+    read as header_bus_read says; `gpio` is the bus's GPIO lines (SDA, SCL)
+    where the board declares them. Every address 0x03-0x77 is asked for one
+    byte, as `i2cdetect -r` does, whichever way the bus is reached.
 
     The same distinction the ID bus makes: a HAT that carries devices
-    rather than an EEPROM is invisible on a bus that was never opened.
-    Whatever is brought up for the scan is put back, and a host not left as
-    it was found raises HostNotAsFoundError (HostChanges)."""
-    changes = HostChanges(overlays=True)
-    try:
-        if open_bus(bus, enable, changes):
-            result = i2c_scan(bus), True
-        else:
-            result = None, False
-    except BaseException as e:
-        changes.put_back(e)
-        raise
-    changes.put_back()
-    return result
+    rather than an EEPROM is invisible on a bus that was never read."""
+    return header_bus_read(HeaderBus("user", bus, gpio), i2c_scan,
+                           lambda i2c: i2c.scan(), None)
 
 
-# --- the HAT ID bus through the GPIO character device ----------------------------
+# --- a header bus through the GPIO character device -------------------------------
 #
-# Where the kernel has no I2C controller on GPIO0/1, the probe is the I2C
-# master itself: it asks the kernel for the two lines through
-# /dev/gpiochipN and drives them from user space, so nothing in the kernel
-# changes and there is nothing to undo but closing a file. (The overlay it
-# used to apply instead cannot always be taken out again: on a Pi 3B+ the
-# removal hangs, uninterruptible, until a power cycle -- issue #91.)
+# Where the kernel has no I2C controller on a header bus's pins (GPIO0/1 for
+# the ID bus, GPIO2/3 for the user bus), the probe is the I2C master itself:
+# it asks the kernel for the two lines through /dev/gpiochipN and drives
+# them from user space, so nothing in the kernel's configuration changes.
+# (The overlays it used to apply instead cannot always be taken out again:
+# on a Pi 3B+ the removal hangs, uninterruptible, until a power cycle --
+# issue #91.) Asking for the lines can still change the pins' function,
+# which is put back afterwards (put_pins_back).
 #
 # The lines are requested open-drain: a 1 releases the line and a 0 pulls it
 # low, which on a chip without open-drain outputs (the Pi's) the kernel
 # does by switching the line to an input for a 1 (gpiolib's open-drain
-# emulation). The high level comes from the pull-ups: the HAT spec puts
-# 3.9K on the HAT, and the Pi's own pins come out of reset pulled up
-# (BCM2835 peripherals, table 6-31: GPIO0-8 pull high). No bias is
-# requested, so the pins' pull setting is left as it was. Reading a line
-# reads the pin, whichever way it is driven.
+# emulation). The high level comes from the pull-ups: on the ID bus the HAT
+# spec puts 3.9K on the HAT, and the Pi's own pins come out of reset pulled
+# up (BCM2835 peripherals, table 6-31: GPIO0-8 pull high); GPIO2/3 have
+# 1.8K pull-ups on the Pi itself. No bias is requested, so the pins' pull
+# setting is left as it was. Reading a line reads the pin, whichever way it
+# is driven.
 #
 # The uAPI is v2 (GPIO_V2_GET_LINE_IOCTL), in the kernel since 5.10 and in
 # every 6.12 build; v1 is deprecated there and a kernel may be built
@@ -945,7 +966,7 @@ def user_bus_scan(bus, enable=None):
 # line's consumer.
 
 # <linux/gpio.h>; the same numbers and layouts on 32- and 64-bit ARM
-ID_GPIO_CHIPINFO_IOCTL = 0x8044B401            # _IOR(0xB4, 0x01, gpiochip_info), 68 bytes
+GPIO_CHIPINFO_IOCTL = 0x8044B401               # _IOR(0xB4, 0x01, gpiochip_info), 68 bytes
 GPIO_V2_GET_LINEINFO_IOCTL = 0xC100B405        # _IOWR(0xB4, 0x05, gpio_v2_line_info), 256
 GPIO_V2_GET_LINE_IOCTL = 0xC250B407            # _IOWR(0xB4, 0x07, gpio_v2_line_request), 592
 GPIO_V2_LINE_GET_VALUES_IOCTL = 0xC010B40E     # _IOWR(0xB4, 0x0E, gpio_v2_line_values), 16
@@ -969,15 +990,14 @@ GPIOHANDLE_REQUEST_OPEN_DRAIN = 1 << 3
 # finds it (measured 2026-09-16: pinctrl-bcm2835 on a 3B+, pinctrl-bcm2711
 # on a Pi 4, both gpiochip0; pinctrl-rp1 on a Pi 5, gpiochip15 on 6.12).
 # On all three, header GPIO n is the chip's line n.
-ID_BUS_CHIP_LABELS = ("pinctrl-rp1", "pinctrl-bcm2711", "pinctrl-bcm2835")
-ID_BUS_CONSUMER = b"rpi-hwid HAT ID bus"
+HEADER_CHIP_LABELS = ("pinctrl-rp1", "pinctrl-bcm2711", "pinctrl-bcm2835")
 
 # Every wait on the bus has a deadline. Standard-mode I2C wants the clock
 # low for 4.7 us and high for 4 us; python's ioctls take longer than that,
 # and the half period is a floor for a faster host. A slave may stretch the
 # clock by holding SCL low; SMBus gives up at 25 ms, and so does this.
-ID_BUS_HALF_PERIOD_S = 5e-6
-ID_BUS_STRETCH_S = 0.025
+I2C_HALF_PERIOD_S = 5e-6
+I2C_STRETCH_S = 0.025
 
 
 def gpio_ioctl(fd, request, buf):
@@ -985,12 +1005,12 @@ def gpio_ioctl(fd, request, buf):
     return fcntl.ioctl(fd, request, buf)
 
 
-def id_bus_gpiochip():
+def header_gpiochip(bus):
     """(the /dev path, the label) of the GPIO chip that has the 40-pin
-    header, found by its label (ID_BUS_CHIP_LABELS), never by its number:
-    the Pi 5's is gpiochip15, or another number on another kernel. An
-    IdBusError naming what was found when there is none, or a chip could
-    not be asked."""
+    header, found by its label (HEADER_CHIP_LABELS), never by its number:
+    the Pi 5's is gpiochip15, or another number on another kernel. `bus`'s
+    error, naming what was found, when there is none, or a chip could not
+    be asked."""
     found, refused = {}, []
     for dev in sorted(glob.glob(ROOT + "/dev/gpiochip*")):
         try:
@@ -999,18 +1019,18 @@ def id_bus_gpiochip():
             refused.append("%s: %s" % (dev[len(ROOT):], e.strerror))
             continue
         try:
-            info = gpio_ioctl(fd, ID_GPIO_CHIPINFO_IOCTL, b"\0" * 68)
+            info = gpio_ioctl(fd, GPIO_CHIPINFO_IOCTL, b"\0" * 68)
         except (OSError, IOError) as e:
             refused.append("%s: %s" % (dev[len(ROOT):], e.strerror))
             continue
         finally:
             os.close(fd)
         found.setdefault(_cstr(info[32:64]), dev)
-    for want in ID_BUS_CHIP_LABELS:
+    for want in HEADER_CHIP_LABELS:
         if want in found:
             return found[want], want
-    raise IdBusError("no GPIO chip labelled %s to read the HAT ID bus on (found %s%s)" % (
-        " or ".join(ID_BUS_CHIP_LABELS),
+    raise bus.error("no GPIO chip labelled %s to read %s on (found %s%s)" % (
+        " or ".join(HEADER_CHIP_LABELS), bus.name,
         ", ".join("%s at %s" % (lab, dev[len(ROOT):]) for lab, dev in sorted(found.items()))
         or "no chip",
         "; could not ask " + ", ".join(refused) if refused else ""))
@@ -1021,17 +1041,18 @@ def _cstr(raw):
 
 
 class GpioLines(object):
-    """Lines of one GPIO chip, requested open-drain and released (1), with
-    set(i, value), get(i) and close(); `i` indexes `offsets`. The uAPI
-    version is the subclass's, and open_id_lines picks it.
+    """A header bus's lines (`bus.gpio`) of one GPIO chip, requested
+    open-drain and released (1), with set(i, value), get(i) and close(); `i`
+    indexes the lines, 0 SDA and 1 SCL. The uAPI version is the subclass's,
+    and open_lines picks it.
 
     close() releases the lines and frees them, whatever happened before,
     then asks the kernel whether they are as they were before the request
     (`before`, from info()): not in use, and each in its old direction.
     Anything else raises HostNotAsFoundError."""
 
-    def __init__(self, chip_fd, chip, offsets):
-        self.chip_fd, self.chip, self.offsets = chip_fd, chip, tuple(offsets)
+    def __init__(self, chip_fd, chip, bus):
+        self.chip_fd, self.chip, self.bus, self.offsets = chip_fd, chip, bus, bus.gpio
         self.before = None
         self.fd = None
 
@@ -1073,9 +1094,8 @@ class GpioLines(object):
         if after is not None:
             why.append("they were %s and are now %s" % (self.describe(self.before),
                                                         self.describe(after)))
-        raise HostNotAsFoundError("the host is not as it was found, after reading the HAT ID bus "
-                             "on GPIO%s: %s" % ("/".join(str(o) for o in self.offsets),
-                                                "; ".join(why)))
+        raise HostNotAsFoundError(NOT_AS_FOUND + "after reading %s on %s: %s" % (
+            self.bus.name, self.bus.gpio_text(), "; ".join(why)))
 
 
 class GpioLinesV2(GpioLines):
@@ -1098,7 +1118,7 @@ class GpioLinesV2(GpioLines):
         config = (struct.pack("=QI20x", GPIO_V2_LINE_FLAG_OUTPUT | GPIO_V2_LINE_FLAG_OPEN_DRAIN,
                               1) + attr + b"\0" * (24 * 9))
         req = (struct.pack("=64I", *(list(self.offsets) + [0] * (64 - n)))
-               + ID_BUS_CONSUMER.ljust(32, b"\0")[:32] + config
+               + self.bus.consumer.ljust(32, b"\0")[:32] + config
                + struct.pack("=II20xi", n, 0, 0))
         out = gpio_ioctl(self.chip_fd, GPIO_V2_GET_LINE_IOCTL, req)
         self.fd = struct.unpack_from("=i", out, 588)[0]
@@ -1114,7 +1134,9 @@ class GpioLinesV2(GpioLines):
     def set_all_released(self):
         """Let both lines go, then make them inputs: where the chip has
         open-drain outputs of its own, a released line is still an output,
-        and it is left as an input, as the firmware leaves GPIO0/1."""
+        and it is left as an input, as the firmware leaves GPIO0/1. (A
+        function the freeing does not restore is put back by
+        put_pins_back.)"""
         mask = (1 << len(self.offsets)) - 1
         gpio_ioctl(self.fd, GPIO_V2_LINE_SET_VALUES_IOCTL, struct.pack("=QQ", mask, mask))
         gpio_ioctl(self.fd, GPIO_V2_LINE_SET_CONFIG_IOCTL,
@@ -1138,7 +1160,7 @@ class GpioLinesV1(GpioLines):
         req = (struct.pack("=64I", *(list(self.offsets) + [0] * (64 - n)))
                + struct.pack("=I", GPIOHANDLE_REQUEST_OUTPUT | GPIOHANDLE_REQUEST_OPEN_DRAIN)
                + bytes(bytearray([1] * n + [0] * (64 - n)))
-               + ID_BUS_CONSUMER.ljust(32, b"\0")[:32] + struct.pack("=Ii", n, 0))
+               + self.bus.consumer.ljust(32, b"\0")[:32] + struct.pack("=Ii", n, 0))
         out = gpio_ioctl(self.chip_fd, GPIO_V1_GET_LINEHANDLE_IOCTL, req)
         self.fd = struct.unpack_from("=i", out, 360)[0]
         self.values = [1] * n
@@ -1160,46 +1182,49 @@ class GpioLinesV1(GpioLines):
         self.write_values()
 
 
-def lines_in_use(states):
-    return "GPIO%s %s in use by %s: the HAT ID bus was not read" % (
+def lines_in_use(states, bus):
+    return "GPIO%s %s in use by %s: %s was not read" % (
         "/".join(str(o) for o, _ in states), "is" if len(states) == 1 else "are",
-        ", ".join(sorted(set(s[2] or "the kernel (no consumer named)" for _, s in states))))
+        ", ".join(sorted(set(s[2] or "the kernel (no consumer named)" for _, s in states))),
+        bus.name)
 
 
-def open_id_lines(chip, offsets):
-    """`offsets` of `chip` (a /dev/gpiochipN), requested for the ID bus, as
-    a GpioLines. v2 where the kernel has it; v1 only where asking for a v2
-    line's info is refused as an unknown request (EINVAL or ENOTTY), which
-    is what a kernel before 5.10 answers. Lines in use -- by a kernel
-    driver or another program -- are an IdBusError naming the consumer,
-    before the request, and when the request finds them busy (EBUSY)."""
+def open_lines(chip, bus):
+    """`bus`'s lines (`bus.gpio`) of `chip` (a /dev/gpiochipN), requested
+    for it, as a GpioLines. v2 where the kernel has it; v1 only where asking
+    for a v2 line's info is refused as an unknown request (EINVAL or
+    ENOTTY), which is what a kernel before 5.10 answers. Lines in use -- by
+    a kernel driver or another program -- are the bus's error naming the
+    consumer, before the request, and when the request finds them busy
+    (EBUSY)."""
+    offsets = bus.gpio
     try:
         chip_fd = os.open(chip, os.O_RDWR)
     except OSError as e:
-        raise IdBusError("cannot open %s to read the HAT ID bus: %s" % (
-            chip[len(ROOT):], e.strerror))
+        raise bus.error("cannot open %s to read %s: %s" % (
+            chip[len(ROOT):], bus.name, e.strerror))
     try:
-        lines = GpioLinesV2(chip_fd, chip, offsets)
+        lines = GpioLinesV2(chip_fd, chip, bus)
         try:
             lines.before = [lines.info(o) for o in offsets]
         except (OSError, IOError) as e:
             if e.errno not in (errno.EINVAL, errno.ENOTTY):
                 raise
-            lines = GpioLinesV1(chip_fd, chip, offsets)
+            lines = GpioLinesV1(chip_fd, chip, bus)
             lines.before = [lines.info(o) for o in offsets]
         busy = [(o, s) for o, s in zip(offsets, lines.before) if s[0]]
         if busy:
-            raise IdBusError(lines_in_use(busy))
+            raise bus.error(lines_in_use(busy, bus))
         try:
             lines.request()
         except (OSError, IOError) as e:
             if e.errno != errno.EBUSY:
                 raise
-            raise IdBusError(lines_in_use([(o, lines.info(o)) for o in offsets]))
+            raise bus.error(lines_in_use([(o, lines.info(o)) for o in offsets], bus))
     except (OSError, IOError) as e:
         os.close(chip_fd)
-        raise IdBusError("%s refused the HAT ID bus's lines GPIO%s: %s" % (
-            chip[len(ROOT):], "/".join(str(o) for o in offsets), e.strerror or e))
+        raise bus.error("%s refused %s's lines %s: %s" % (
+            chip[len(ROOT):], bus.name, bus.gpio_text(), e.strerror or e))
     except BaseException:
         os.close(chip_fd)
         raise
@@ -1215,15 +1240,18 @@ class BitBangI2C(object):
     Every wait has a deadline. A released SCL that stays low past the clock
     stretch limit, an SDA that will not come free after nine clocks, or a
     line that reads low while this side releases it to send a 1 (another
-    master, or a driver, on the bus) raises IdBusError saying which:
-    nothing here can hang."""
+    master, or a driver, on the bus) raises the bus's error (IdBusError,
+    UserBusError) saying which, naming the line by its GPIO and header pin:
+    nothing here can hang. `bus` is the HeaderBus the lines are, the ID bus
+    on GPIO0/1 where it is not given."""
 
     SDA, SCL = 0, 1
 
-    def __init__(self, lines, half_period=None, stretch=None, clock=None):
+    def __init__(self, lines, half_period=None, stretch=None, clock=None, bus=None):
         self.lines = lines
-        self.half = ID_BUS_HALF_PERIOD_S if half_period is None else half_period
-        self.stretch = ID_BUS_STRETCH_S if stretch is None else stretch
+        self.bus = bus or ID_BUS
+        self.half = I2C_HALF_PERIOD_S if half_period is None else half_period
+        self.stretch = I2C_STRETCH_S if stretch is None else stretch
         self.clock = clock or time.monotonic
 
     def pause(self):
@@ -1237,9 +1265,10 @@ class BitBangI2C(object):
         deadline = self.clock() + self.stretch
         while not self.lines.get(self.SCL):
             if self.clock() >= deadline:
-                raise IdBusError("SCL (GPIO1, pin 28) stayed low for %d ms after it was "
-                                 "released: something holds the HAT ID bus's clock down, or "
-                                 "nothing pulls it up" % round(self.stretch * 1000))
+                raise self.bus.error(
+                    "%s stayed low for %d ms after it was released: something holds %s's "
+                    "clock down, or nothing pulls it up" % (
+                        self.bus.line(self.SCL), round(self.stretch * 1000), self.bus.name))
         self.pause()
 
     def scl_low(self):
@@ -1265,9 +1294,10 @@ class BitBangI2C(object):
             self.scl_high()
             if self.lines.get(self.SDA):
                 return
-        raise IdBusError("SDA (GPIO0, pin 27) stayed low through nine clocks with this side "
-                         "releasing it: something holds the HAT ID bus's data line down, or "
-                         "nothing pulls it up")
+        raise self.bus.error(
+            "%s stayed low through nine clocks with this side releasing it: something holds "
+            "%s's data line down, or nothing pulls it up" % (
+                self.bus.line(self.SDA), self.bus.name))
 
     def stop(self):
         self.lines.set(self.SDA, 0)
@@ -1276,16 +1306,17 @@ class BitBangI2C(object):
         self.lines.set(self.SDA, 1)
         self.pause()
         if not self.lines.get(self.SDA):
-            raise IdBusError("SDA (GPIO0, pin 27) stayed low after a STOP: something holds "
-                             "the HAT ID bus's data line down")
+            raise self.bus.error("%s stayed low after a STOP: something holds %s's data line "
+                                 "down" % (self.bus.line(self.SDA), self.bus.name))
 
     def write_bit(self, bit):
         self.lines.set(self.SDA, bit)
         self.pause()
         self.scl_high()
         if bit and not self.lines.get(self.SDA):
-            raise IdBusError("SDA (GPIO0, pin 27) read low while this side released it to "
-                             "send a 1: something else drives the HAT ID bus")
+            raise self.bus.error("%s read low while this side released it to send a 1: "
+                                 "something else drives %s" % (
+                                     self.bus.line(self.SDA), self.bus.name))
         self.scl_low()
 
     def read_bit(self):
@@ -1327,13 +1358,33 @@ class BitBangI2C(object):
         self.stop()
         return data
 
+    def present(self, addr):
+        """Whether `addr` answers a one-byte read, as i2c_present asks it:
+        START, the address with the read bit, and where that is ACKed one
+        byte read and NACKed; then STOP. Nothing is ever written to a
+        device."""
+        self.start()
+        acked = self.write_byte((addr << 1) | 1)
+        if acked:
+            self.read_byte(False)
+        self.stop()
+        return acked
+
+    def scan(self, first=0x03, last=0x77):
+        """The addresses answering, as i2c_scan gives them."""
+        return ["%02x" % a for a in range(first, last + 1) if self.present(a)]
+
 
 # --- the pins' function and pad, before and after ----------------------------
 #
-# Asking for a line through the GPIO character device can change the pin's
-# function, and freeing it need not change it back. On the Pi 5 the firmware
-# leaves GPIO0/1 with no function ("none"), the pad's input off and pulled
-# up. The RP1 driver makes a pin a GPIO whenever its direction is set
+# Reading a header bus can change its pins' function, and nothing need change
+# it back. Through a kernel node, the bus's driver muxes the pins to its I2C
+# function for the transfer: a Pi 4's /dev/i2c-0 (the i2c0mux) left GPIO0/1
+# alt0 where the firmware had left them gpio_in (2026-10-17). Through the
+# GPIO character device, asking for a line can change the pin's function,
+# and freeing it need not change it back. On the Pi 5 the firmware leaves
+# GPIO0/1 and GPIO2/3 with no function ("none"), the pad's input off and
+# pulled up. The RP1 driver makes a pin a GPIO whenever its direction is set
 # (rp1_gpio_direction_input/_output, and rp1_pmx_gpio_set_direction), turns
 # its input on whenever it sets a function (rp1_set_fsel), and on free
 # leaves it a GPIO input (rp1_pmx_gpio_disable_free -> rp1_pmx_free): never
@@ -1341,8 +1392,10 @@ class BitBangI2C(object):
 # BCM2835/2711 driver frees a pin to a GPIO input (bcm2835_pmx_free), which
 # is how the firmware leaves GPIO0/1 there. Neither touches the pull.
 #
-# So each pin is read before the lines are asked for and after they are
-# freed, in every way this host allows, and the two must agree:
+# So each pin of a bus whose GPIO lines the board declares is read before
+# the bus is touched (the lines asked for, or the node opened) and after
+# (the lines freed, or the node's reads done), in every way this host
+# allows, and the two must agree:
 #   * the kernel's debugfs (root's): pinctrl/<device>/pins gives the
 #     function (the driver's pin_dbg_show: "function none (none) in hi;
 #     ..." on the RP1, "function gpio_in in hi; ..." on a BCM2835) and
@@ -1458,10 +1511,12 @@ PIN_READERS = (("debugfs", lambda label, offsets: pins_from_debugfs(label, offse
                ("pinctrl", lambda label, offsets: pins_from_pinctrl(offsets)))
 
 
-def pin_states(label, offsets, sources=None):
-    """{offset: {source: state}} read every way there is (`sources` None),
-    or exactly the ways in `sources`, so that before and after are read
-    alike. An IdBusError when none can be read, or one of `sources` cannot."""
+def pin_states(label, bus, sources=None):
+    """{offset: {source: state}} for `bus`'s pins (`bus.gpio`) of the GPIO
+    chip `label`, read every way there is (`sources` None), or exactly the
+    ways in `sources`, so that before and after are read alike. The bus's
+    error when none can be read, or one of `sources` cannot."""
+    offsets = bus.gpio
     states = dict((o, {}) for o in offsets)
     why = []
     for name, reader in PIN_READERS:
@@ -1476,9 +1531,9 @@ def pin_states(label, offsets, sources=None):
             states[o][name] = pins[o]
     read_by = set(name for o in offsets for name in states[o])
     if not read_by or (sources is not None and read_by != set(sources)):
-        raise IdBusError("the function of GPIO%s cannot be read, so it could not be put "
-                         "back after the HAT ID bus was read: %s" % (
-                             "/".join(str(o) for o in offsets), "; ".join(why)))
+        raise bus.error("the function of %s cannot be read, so it could not be put "
+                        "back after %s was read: %s" % (
+                            bus.gpio_text(), bus.name, "; ".join(why)))
     return states
 
 
@@ -1515,12 +1570,13 @@ def pinctrl_set_args(offset, before, after):
     return args
 
 
-def put_pins_back(label, offsets, before, cause=None):
-    """Read the pins again, the same ways; put back any that differ from
-    `before` and read once more. HostNotAsFoundError, naming each pin's
-    state before and after, when they cannot be read again, cannot be put
-    back, or still differ. `cause` is the error the read itself raised, if
-    any, for the message."""
+def put_pins_back(label, bus, before, cause=None):
+    """Read `bus`'s pins again, the same ways; put back any that differ from
+    `before` and read once more. HostNotAsFoundError, naming the bus and
+    each pin's state before and after, when they cannot be read again,
+    cannot be put back, or still differ. `cause` is the error the read
+    itself raised, if any, for the message."""
+    offsets = bus.gpio
     sources = sorted(set(name for o in offsets for name in before[o]))
 
     def different(after):
@@ -1530,16 +1586,16 @@ def put_pins_back(label, offsets, before, cause=None):
         if cause is not None:
             why = ["the read failed: %s" % cause] + why
         raise HostNotAsFoundError(
-            "the host is not as it was found, after reading the HAT ID bus on GPIO%s: %s%s" % (
-                "/".join(str(o) for o in offsets), "; ".join(why),
+            NOT_AS_FOUND + "after reading %s on %s: %s%s" % (
+                bus.name, bus.gpio_text(), "; ".join(why),
                 "".join("; GPIO%d was %s, and is now %s" % (
                     o, describe_pin(before[o]), describe_pin(after[o]))
                     for o in (different(after) if after else ()))))
 
     def read_again():
         try:
-            return pin_states(label, offsets, sources)
-        except IdBusError as e:
+            return pin_states(label, bus, sources)
+        except HeaderBusError as e:
             return fail(None, ["the pins could not be read again: %s" % e])
 
     after = read_again()
@@ -1558,44 +1614,6 @@ def put_pins_back(label, offsets, before, cause=None):
     again = read_again()
     if why or different(again):
         fail(again, why or ["`pinctrl set` did not put them back"])
-
-
-def id_bus_gpio_scan(gpio):
-    """HAT ID EEPROMs read through the header's GPIO lines `gpio` (SDA,
-    SCL), as id_bus_scan's `found`. The pins' function and pad are read
-    first (nothing is touched if they cannot be); the lines are released and
-    freed on every path and checked (GpioLines.close), and the pins put back
-    as they were (put_pins_back). Both problems are said when both arise."""
-    chip, label = id_bus_gpiochip()
-    before = pin_states(label, gpio)
-    lines = open_id_lines(chip, gpio)
-    failed, found = None, {}
-    try:
-        bus = BitBangI2C(lines)
-        for addr in ID_EEPROM_ADDRS:
-            info = eeprom_decode(bus.read_eeprom(addr, EEPROM_LENGTH))
-            if info:
-                found["0x%02x" % addr] = info
-    except BaseException as e:
-        failed = e
-    problems = []
-    try:
-        try:
-            lines.close(failed)
-        except HostNotAsFoundError as e:
-            problems.append(str(e))
-    finally:
-        # whatever the close raised, the pins are put back
-        try:
-            put_pins_back(label, gpio, before, None if problems else failed)
-        except HostNotAsFoundError as e:
-            problems.append(str(e) if not problems else
-                            str(e).replace("the host is not as it was found, ", "", 1))
-    if problems:
-        raise HostNotAsFoundError("; and ".join(problems))
-    if failed is not None:
-        raise failed
-    return found
 
 
 # --- CSI cameras ----------------------------------------------------------------
@@ -1684,15 +1702,17 @@ def v4l_subdevs():
 def lens_chip_probe(bus):
     """Whether anything answers at the lens address on `bus`: "ack", "nak",
     or "unread: why". Loads i2c-dev for the read where it is not loaded, and
-    takes it out again; a host not left as it was found raises
-    HostNotAsFoundError (HostChanges). The reader itself only reads, and what it
-    could not read is said as "unread"."""
-    changes = HostChanges(overlays=False)
+    takes it out again; the kernel's i2c modules and nodes are compared
+    before and after, whether or not it loaded anything, and a host not left
+    as it was found raises HostNotAsFoundError (HostChanges). The reader
+    itself only reads, and what it could not read is said as "unread"."""
+    changes = HostChanges("reading 0x%02x on i2c-%d" % (LENS_ADDR, bus))
+    changes.begin()
     try:
         if not i2c_dev_loaded():
             changes.run(I2C_DEV_LOAD, I2C_DEV_UNLOAD)
             # the module makes the node through udev, which is slow; only worth
-            # waiting for where the adapter is there to get one (as open_bus)
+            # waiting for where the adapter is there to get one
             adapter = os.path.exists(ROOT + "/sys/bus/i2c/devices/i2c-%d" % bus)
             wait_for(ROOT + "/dev/i2c-%d" % bus, BUS_SETTLE_S if adapter else 0)
         out = sh(["sudo", sys.executable or "python3", "-c", LENS_READER,
@@ -2105,13 +2125,13 @@ def collect(user_bus=None, cameras=True):
     `user_bus` unset scans the header's buses on every board but a Compute
     Module, whose GPIO0-3 go wherever its carrier takes them (on a Compute
     Blade wired to an SQRL Acorn, GPIO2 and GPIO3 are the JTAG wires TDI and
-    TDO): there neither header bus is brought up or scanned unless
+    TDO): there neither header bus is read unless
     `user_bus=True` asks for it -- `user_bus=False` included -- and the
     document says they were left alone. A HAT on a carrier that has a header
     is then seen only if the firmware read its EEPROM itself.
 
     `user_bus=False` leaves the header's user bus (pins 3/5, GPIO2/3 on a
-    Pi) entirely alone: no dtparam for it, no open, no scan. On an
+    Pi) entirely alone: no open, no GPIO request, no scan. On an
     fpgas.online rig those pins are wired to the board under test (an
     Acorn's J5 is on GPIO3, a Pmod HAT's lines are on the header), so a
     probe made while that board may be in use must not drive them. A HAT
@@ -2181,9 +2201,9 @@ def collect(user_bus=None, cameras=True):
         d["hat_eeproms"], id_read = id_bus_scan(header_buses["id"], header_buses["id_gpio"])
         if user_bus:
             d["header_i2c"], user_read = user_bus_scan(header_buses["user"],
-                                                       header_buses["enable_user"])
+                                                       header_buses["user_gpio"])
         else:
-            # Not opened, not scanned, not enabled: see collect()'s docstring.
+            # Not opened, not scanned, not driven: see collect()'s docstring.
             d["header_i2c"], user_read = None, False
         d["header_buses_read"] = {"id": id_read, "user": user_read}
     else:

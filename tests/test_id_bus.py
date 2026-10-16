@@ -118,7 +118,7 @@ def test_another_driver_on_the_bus_is_an_error():
         master(bus).read_eeprom(0x50, 256)
 
 
-# --- the GPIO character device, behind open_id_lines --------------------------
+# --- the GPIO character device, behind open_lines ------------------------------
 
 
 @pytest.fixture
@@ -126,9 +126,10 @@ def chip(tmp_path, monkeypatch, real_gpio):
     """A Pi 3B+'s tree with no I2C bus on the ID pins, its GPIO chips as the
     kernel answers for them, and a bus behind lines 0 and 1."""
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
-    monkeypatch.setattr(probe, "ID_BUS_HALF_PERIOD_S", 0)
+    monkeypatch.setattr(probe, "I2C_HALF_PERIOD_S", 0)
 
     def make(bus=None, **kw):
+        """`offsets=(2, 3)` puts the bus on the user bus's lines."""
         fake = FakeGpioChip(tmp_path, bus if bus is not None else SimBus(), **kw)
         monkeypatch.setattr(probe, "gpio_ioctl", fake)
         monkeypatch.setattr(probe, "sh", fake.pinctrl_sh)
@@ -176,13 +177,13 @@ def test_v1_where_the_kernel_has_no_v2(chip):
 def test_v2_is_used_where_there_is_v2(chip, monkeypatch):
     chip(eeprom_bus(0x50))
     seen = []
-    real = probe.open_id_lines
+    real = probe.open_lines
 
-    def spy(chip_path, offsets):
-        lines = real(chip_path, offsets)
+    def spy(chip_path, bus):
+        lines = real(chip_path, bus)
         seen.append(lines.uapi)
         return lines
-    monkeypatch.setattr(probe, "open_id_lines", spy)
+    monkeypatch.setattr(probe, "open_lines", spy)
     probe.id_bus_scan(0, (0, 1))
     assert seen == ["v2"]
 
@@ -238,7 +239,7 @@ def test_the_header_chip_is_found_by_its_label_not_its_number(chip):
          chips={11: "gpio-brcmstb@107d517c00", 12: "gpio-brcmstb@107d517c20",
                 13: "gpio-brcmstb@107d508500", 14: "gpio-brcmstb@107d508520",
                 15: "pinctrl-rp1"}, pinctrl=True)
-    path, label = probe.id_bus_gpiochip()
+    path, label = probe.header_gpiochip(probe.ID_BUS)
     assert path.endswith("/dev/gpiochip15")
     assert label == "pinctrl-rp1"
     assert list(probe.id_bus_scan(0, (0, 1))[0]) == ["0x50"]
@@ -360,13 +361,13 @@ def test_pins_that_cannot_be_read_at_all_are_not_touched(chip):
 
 def test_pins_that_cannot_be_read_again_are_loud(chip, monkeypatch):
     fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True)
-    real_open = probe.open_id_lines
+    real_open = probe.open_lines
 
-    def open_then_lose_pinctrl(path, offsets):
-        lines = real_open(path, offsets)
+    def open_then_lose_pinctrl(path, bus):
+        lines = real_open(path, bus)
         (fake.root / "usr/bin/pinctrl").unlink()
         return lines
-    monkeypatch.setattr(probe, "open_id_lines", open_then_lose_pinctrl)
+    monkeypatch.setattr(probe, "open_lines", open_then_lose_pinctrl)
     with pytest.raises(probe.HostNotAsFoundError, match=r"the pins could not be read again: "
                        r".*pinctrl: /usr/bin/pinctrl is not there"):
         probe.id_bus_scan(0, (0, 1))
@@ -438,7 +439,7 @@ def test_an_i2c_0_already_there_is_read_through_and_the_gpio_left_alone(
     read = []
     monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length: read.append(
         (bus, addr, length)) or (WAVESHARE_BLOB if addr == 0x52 else None))
-    monkeypatch.setattr(probe, "open_id_lines", lambda *a: pytest.fail("GPIO requested"))
+    monkeypatch.setattr(probe, "open_lines", lambda *a: pytest.fail("GPIO requested"))
     found, readable = probe.id_bus_scan(0, (0, 1))
     assert readable is True
     assert list(found) == ["0x52"]
@@ -449,8 +450,8 @@ def test_with_no_i2c_0_the_gpio_lines_are_read(tmp_path, monkeypatch, no_command
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
     monkeypatch.setattr(probe, "eeprom_read", lambda *a: pytest.fail("i2c-dev read"))
     asked = []
-    monkeypatch.setattr(probe, "open_id_lines",
-                        lambda chip, offsets: asked.append((chip, offsets)) or eeprom_bus(0x50))
+    monkeypatch.setattr(probe, "open_lines",
+                        lambda chip, bus: asked.append((chip, bus.gpio)) or eeprom_bus(0x50))
     found, readable = probe.id_bus_scan(0, (0, 1))
     assert readable is True
     assert list(found) == ["0x50"]
@@ -467,7 +468,7 @@ def test_a_kernel_adapter_with_no_node_is_an_error_and_its_pins_are_left_alone(
     _w(tmp_path, "/sys/bus/i2c/devices/i2c-0/name", "i2c-11-mux (chan_id 0)\n")
     if loaded:
         (tmp_path / "sys/module/i2c_dev").mkdir(parents=True)
-    monkeypatch.setattr(probe, "open_id_lines", lambda *a: pytest.fail("GPIO requested"))
+    monkeypatch.setattr(probe, "open_lines", lambda *a: pytest.fail("GPIO requested"))
     with pytest.raises(probe.IdBusError, match=r"the kernel's I2C adapter i2c-0 \(i2c-11-mux "
                        r"\(chan_id 0\)\) is on GPIO0/1, but there is no /dev/i2c-0"):
         probe.id_bus_scan(0, (0, 1))
@@ -486,7 +487,7 @@ def test_a_board_without_gpio_lines_for_it_takes_the_bus_it_has(tmp_path, monkey
                                                                 no_commands):
     """The Orange Pi: no node, no enable, no GPIO read -- not read."""
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
-    monkeypatch.setattr(probe, "open_id_lines", lambda *a: pytest.fail("GPIO requested"))
+    monkeypatch.setattr(probe, "open_lines", lambda *a: pytest.fail("GPIO requested"))
     assert probe.id_bus_scan(1, None) == ({}, False)
 
 
@@ -586,7 +587,7 @@ def test_a_child_that_cannot_be_killed_is_a_timeout_not_could_not_be_run(real_sh
 
 def test_the_chip_is_closed_whatever_the_release_raises(monkeypatch):
     closed = []
-    lines = probe.GpioLinesV2(41, "gpiochip0", (0, 1))
+    lines = probe.GpioLinesV2(41, "gpiochip0", probe.ID_BUS)
     lines.fd = 42
     monkeypatch.setattr(lines, "set_all_released", lambda: (_ for _ in ()).throw(ValueError("bug")))
     monkeypatch.setattr(probe.os, "close", closed.append)
@@ -616,3 +617,220 @@ def test_no_command_that_changes_the_host_goes_through_the_lenient_sh():
     assert lenient, "the reads are found"
     for call in lenient:
         assert not re.search(r"dtparam|modprobe|I2C_DEV|DTPARAM|enable", call), call
+
+
+# --- a kernel node already there: read through it, pins put back -------------
+#
+# A Pi 4 whose /dev/i2c-0 is there (the i2c0mux, for a camera): reading the
+# ID bus through it left GPIO0/1 alt0, where the firmware had left them
+# gpio_in, and rpi-hwid exited 0 (2026-10-17). The same holds for the user
+# bus's /dev/i2c-1. Either read now puts the pins back and checks them.
+
+BUSES = {
+    "id": (0, (0, 1), "the HAT ID bus", "GPIO0/1"),
+    "user": (1, (2, 3), "the header's user bus", "GPIO2/3"),
+}
+
+
+def _scan(role, number, gpio):
+    if role == "id":
+        return probe.id_bus_scan(number, gpio)
+    return probe.user_bus_scan(number, gpio)
+
+
+@pytest.fixture
+def through_node(chip, tmp_path, monkeypatch):
+    """A bus's /dev/i2c-N there, the GPIO chip behind its pins, and a read
+    through the node that muxes the pins as the kernel's driver does."""
+    def make(role, **kw):
+        number, gpio, _, _ = BUSES[role]
+        fake = chip(offsets=gpio, **kw)
+        _w(tmp_path, f"/dev/i2c-{number}", "")
+        monkeypatch.setattr(probe, "open_lines", lambda *a: pytest.fail("GPIO requested"))
+        reads = []
+
+        def eeprom_read(bus, addr, length=256):
+            reads.append(bus)
+            fake.driver_muxes()
+            return WAVESHARE_BLOB if addr == 0x52 else None
+
+        def i2c_scan(bus, first=0x03, last=0x77):
+            reads.append(bus)
+            fake.driver_muxes()
+            return ["20", "3c"]
+        monkeypatch.setattr(probe, "eeprom_read", eeprom_read)
+        monkeypatch.setattr(probe, "i2c_scan", i2c_scan)
+        return fake, reads
+    return make
+
+
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_pins_a_node_read_muxed_are_put_back(through_node, role):
+    fake, reads = through_node(role, pinctrl=True)
+    number, gpio, _, _ = BUSES[role]
+    assert fake.function == ["gpio_in", "gpio_in"]
+    found, readable = _scan(role, number, gpio)
+    assert readable is True
+    assert found == ({"0x52": probe.eeprom_decode(WAVESHARE_BLOB)} if role == "id"
+                     else ["20", "3c"])
+    assert reads, "read through the node"
+    assert set(reads) == {number}
+    assert fake.pinctrl_sets == [["sudo", probe.PINCTRL, "set", str(o), "ip"] for o in gpio]
+    assert fake.function == ["gpio_in", "gpio_in"], "as the firmware left them"
+
+
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_pins_a_node_read_muxed_that_cannot_be_put_back_are_loud(through_node, role):
+    fake, _ = through_node(role, pinctrl=True, pinctrl_set_fails=True)
+    number, gpio, name, pins = BUSES[role]
+    with pytest.raises(probe.HostNotAsFoundError) as err:
+        _scan(role, number, gpio)
+    msg = str(err.value)
+    assert msg.startswith(f"the host is not as it was found, after reading {name} on {pins}: "
+                          f"putting it back failed: `sudo /usr/bin/pinctrl set {gpio[0]} ip` "
+                          "exited 1: failed")
+    assert (f"GPIO{gpio[0]} was function gpio_in (no pad config shown); pinctrl ip pull "
+            "unknown, input on, and is now function alt0 (no pad config shown); pinctrl a0 pull "
+            "unknown, input on") in msg
+    assert fake.function == ["alt0", "alt0"]
+
+
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_a_node_read_that_leaves_the_pins_alone_puts_nothing_back(chip, tmp_path, monkeypatch,
+                                                                  role):
+    number, gpio, _, _ = BUSES[role]
+    fake = chip(offsets=gpio, pinctrl=True)
+    _w(tmp_path, f"/dev/i2c-{number}", "")
+    monkeypatch.setattr(probe, "eeprom_read", lambda *a, **kw: None)
+    monkeypatch.setattr(probe, "i2c_scan", lambda *a, **kw: [])
+    assert _scan(role, number, gpio)[1] is True
+    assert fake.pinctrl_sets == []
+
+
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_a_node_read_whose_pins_cannot_be_read_is_not_made(chip, tmp_path, monkeypatch, role):
+    """No debugfs and no pinctrl: nothing says what the pins were, so the
+    node is not even read."""
+    number, gpio, name, pins = BUSES[role]
+    chip(offsets=gpio, debugfs=False)
+    _w(tmp_path, f"/dev/i2c-{number}", "")
+    monkeypatch.setattr(probe, "eeprom_read", lambda *a, **kw: pytest.fail("read"))
+    monkeypatch.setattr(probe, "i2c_scan", lambda *a, **kw: pytest.fail("read"))
+    error = probe.IdBusError if role == "id" else probe.UserBusError
+    with pytest.raises(error, match=f"the function of {pins} cannot be read, so it could not "
+                       f"be put back after {name} was read"):
+        _scan(role, number, gpio)
+
+
+# --- the user bus through its GPIO lines (GPIO2/3) ----------------------------
+
+
+def test_the_user_bus_is_scanned_through_its_gpio_lines(chip):
+    """A Waveshare PoE HAT (B)'s two chips, found by the same one-byte read
+    `i2cdetect -r` makes, and nothing written to either."""
+    devices = [SimEeprom(0x20, b"\x5a"), SimEeprom(0x3C, b"\x00")]
+    fake = chip(SimBus(devices), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True,
+                offsets=(2, 3))
+    found, readable = probe.user_bus_scan(1, (2, 3))
+    assert (found, readable) == (["20", "3c"], True)
+    assert [d.writes for d in devices] == [[], []], "nothing written"
+    assert all(d.mode == "idle" for d in devices), "every transfer ended with a STOP"
+    assert fake.consumer == "rpi-hwid user bus"
+    assert len(fake.requests) == 1
+    assert not fake.requested(), "the lines are released and freed"
+    assert fake.bus.master == [1, 1]
+    # the Pi 5: GPIO2/3 had no function, and have none again
+    assert fake.pinctrl_sets == [["sudo", probe.PINCTRL, "set", "2", "no"],
+                                 ["sudo", probe.PINCTRL, "set", "3", "no"]]
+    assert fake.function == ["none", "none"]
+    assert fake.input_on == [False, False]
+
+
+def test_a_bare_user_bus_is_read_and_empty(chip):
+    fake = chip(SimBus(), offsets=(2, 3), pinctrl=True)
+    assert probe.user_bus_scan(1, (2, 3)) == ([], True)
+    assert not fake.requested()
+    assert fake.function == ["gpio_in", "gpio_in"]
+    assert [fake.info(o) for o in (2, 3)] == [(False, "input", "")] * 2
+
+
+def test_the_bit_banged_scan_asks_every_address_once():
+    bus = SimBus()
+    asked = []
+    real = probe.BitBangI2C.present
+
+    def spy(self, addr):
+        asked.append(addr)
+        return real(self, addr)
+    i2c = master(bus)
+    i2c.present = spy.__get__(i2c)
+    assert i2c.scan() == []
+    assert asked == list(range(0x03, 0x78))
+
+
+def test_user_bus_errors_name_its_pins_and_bus(chip):
+    chip(SimBus(stuck={SCL}), offsets=(2, 3), pinctrl=True)
+    with pytest.raises(probe.UserBusError, match=r"SCL \(GPIO3, pin 5\) stayed low for 25 ms "
+                       r"after it was released: something holds the header's user bus's clock "
+                       "down"):
+        probe.user_bus_scan(1, (2, 3))
+    bus = SimBus(stuck={SDA})
+    with pytest.raises(probe.UserBusError, match=r"SDA \(GPIO2, pin 3\) stayed low through "
+                       "nine clocks with this side releasing it: something holds the header's "
+                       "user bus's data line down"):
+        probe.BitBangI2C(bus, half_period=0, bus=probe.HeaderBus("user", 1, (2, 3))).scan()
+
+
+@pytest.mark.parametrize("uapi", ["v2", "v1"])
+def test_user_bus_lines_another_driver_has_are_not_taken(chip, uapi):
+    fake = chip(uapi=uapi, offsets=(2, 3), busy={2: "i2c-gpio", 3: "i2c-gpio"})
+    with pytest.raises(probe.UserBusError, match="GPIO2/3 are in use by i2c-gpio: the header's "
+                       "user bus was not read"):
+        probe.user_bus_scan(1, (2, 3))
+    assert fake.requests == []
+
+
+def test_a_user_bus_release_that_fails_names_the_user_bus(chip):
+    chip(SimBus(), offsets=(2, 3), fail_release=True)
+    with pytest.raises(probe.HostNotAsFoundError, match="after reading the header's user bus on "
+                       "GPIO2/3: releasing them failed"):
+        probe.user_bus_scan(1, (2, 3))
+
+
+def test_user_bus_pins_not_put_back_are_loud_and_name_the_user_bus(chip):
+    fake = chip(SimBus(), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True, offsets=(2, 3),
+                pinctrl_set_fails=True)
+    with pytest.raises(probe.HostNotAsFoundError) as err:
+        probe.user_bus_scan(1, (2, 3))
+    msg = str(err.value)
+    assert msg.startswith("the host is not as it was found, after reading the header's user bus "
+                          "on GPIO2/3: putting it back failed: `sudo /usr/bin/pinctrl set 2 no` "
+                          "exited 1: failed")
+    assert "GPIO2 was function none (" in msg
+    assert fake.function == ["gpio", "gpio"]
+
+
+def test_user_bus_pins_that_cannot_be_read_are_not_touched(chip):
+    fake = chip(SimBus(), header="pinctrl-rp1", chips=RP1_CHIPS, debugfs=False, offsets=(2, 3))
+    with pytest.raises(probe.UserBusError, match="the function of GPIO2/3 cannot be read, so it "
+                       "could not be put back after the header's user bus was read"):
+        probe.user_bus_scan(1, (2, 3))
+    assert fake.requests == []
+
+
+def test_no_header_chip_for_the_user_bus_names_it(chip):
+    chip(chips={3: "some-other-gpio"}, offsets=(2, 3))
+    with pytest.raises(probe.UserBusError, match=r"no GPIO chip labelled .* to read the header's "
+                       r"user bus on"):
+        probe.user_bus_scan(1, (2, 3))
+
+
+@pytest.mark.parametrize(("role", "want"), [
+    ("id", ("SDA (GPIO0, pin 27)", "SCL (GPIO1, pin 28)", "the HAT ID bus", "GPIO0/1",
+            b"rpi-hwid HAT ID bus")),
+    ("user", ("SDA (GPIO2, pin 3)", "SCL (GPIO3, pin 5)", "the header's user bus", "GPIO2/3",
+              b"rpi-hwid user bus")),
+])
+def test_each_bus_is_named_by_its_own_pins(role, want):
+    bus = probe.HeaderBus(role, 0, {"id": (0, 1), "user": (2, 3)}[role])
+    assert (bus.line(0), bus.line(1), bus.name, bus.gpio_text(), bus.consumer) == want

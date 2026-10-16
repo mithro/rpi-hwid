@@ -78,28 +78,29 @@ def probe_commands_through_sh(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def bare_id_bus(request, monkeypatch):
-    """The HAT ID bus's GPIO lines, where a fake tree has no /dev/i2c-0: a
-    simulated bus with its pull-ups and nothing on it, as on a Pi without a
-    HAT (tests/id_bus_fixtures.py). A test that drives the real GPIO layer
-    against a fake character device asks for the `real_gpio` fixture."""
+def bare_header_buses(request, monkeypatch):
+    """The header buses' GPIO lines, where a fake tree has no /dev/i2c-N
+    for them: a simulated bus with its pull-ups and nothing on it, as on a
+    Pi without a HAT (tests/id_bus_fixtures.py), and the pins as a BCM2835's
+    debugfs shows them, before and after alike, through a node or not. A
+    test that drives the real GPIO layer against a fake character device
+    asks for the `real_gpio` fixture."""
     if "real_gpio" in request.fixturenames:
         return
     from id_bus_fixtures import SimBus
     from rpi_hwid import probe
 
-    monkeypatch.setattr(probe, "id_bus_gpiochip",
-                        lambda: (probe.ROOT + "/dev/gpiochip0", "pinctrl-bcm2835"))
-    monkeypatch.setattr(probe, "open_id_lines", lambda chip, offsets: SimBus())
-    # the pins as a BCM2835's debugfs shows them, before and after alike
-    monkeypatch.setattr(probe, "pin_states", lambda label, offsets, sources=None: {
+    monkeypatch.setattr(probe, "header_gpiochip",
+                        lambda bus: (probe.ROOT + "/dev/gpiochip0", "pinctrl-bcm2835"))
+    monkeypatch.setattr(probe, "open_lines", lambda chip, bus: SimBus())
+    monkeypatch.setattr(probe, "pin_states", lambda label, bus, sources=None: {
         o: {"debugfs": {"function": "gpio_in", "config": "", "pull": None}}
-        for o in offsets})
+        for o in bus.gpio})
 
 
 @pytest.fixture
 def real_gpio():
-    """Leave the probe's GPIO layer as it is (see bare_id_bus)."""
+    """Leave the probe's GPIO layer as it is (see bare_header_buses)."""
 
 
 @pytest.fixture

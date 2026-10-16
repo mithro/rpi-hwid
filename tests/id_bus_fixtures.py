@@ -1,5 +1,6 @@
-"""The HAT ID bus without a Pi: the two wires with their pull-ups, an I2C
-EEPROM on them that answers as a 24C32 does, and the kernel's GPIO
+"""The header's I2C buses without a Pi: the two wires with their pull-ups,
+an I2C EEPROM on them that answers as a 24C32 does (or, with one byte of
+memory, any device that answers a one-byte read), and the kernel's GPIO
 character device in front of them, so the probe's own I2C master and its
 GPIO requests run against something that behaves like the hardware.
 
@@ -10,8 +11,9 @@ anyone does. A slave sees START, STOP and the clock's edges from the levels,
 as a real one does from the pins.
 
 FakeGpioChip is /dev/gpiochipN: the probe's ioctls (probe.gpio_ioctl) are
-decoded with <linux/gpio.h>'s layouts, v2 by default or v1 alone, and its
-two lines are the SimBus's SDA and SCL.
+decoded with <linux/gpio.h>'s layouts, v2 by default or v1 alone, and two
+of its lines (GPIO0/1, the ID bus, unless told otherwise) are the SimBus's
+SDA and SCL.
 """
 
 from __future__ import annotations
@@ -195,6 +197,7 @@ def eeprom_bus(addr=0x50, memory=WAVESHARE_BLOB, **kw):
 V2_LINEINFO, V2_GET_LINE = probe.GPIO_V2_GET_LINEINFO_IOCTL, probe.GPIO_V2_GET_LINE_IOCTL
 V2_GET, V2_SET = probe.GPIO_V2_LINE_GET_VALUES_IOCTL, probe.GPIO_V2_LINE_SET_VALUES_IOCTL
 V2_SET_CONFIG = probe.GPIO_V2_LINE_SET_CONFIG_IOCTL
+CHIPINFO = probe.GPIO_CHIPINFO_IOCTL
 V1_LINEINFO, V1_HANDLE = probe.GPIO_V1_GET_LINEINFO_IOCTL, probe.GPIO_V1_GET_LINEHANDLE_IOCTL
 V1_GET, V1_SET = probe.GPIOHANDLE_GET_LINE_VALUES_IOCTL, probe.GPIOHANDLE_SET_LINE_VALUES_IOCTL
 OUTPUT_OPEN_DRAIN_V2 = probe.GPIO_V2_LINE_FLAG_OUTPUT | probe.GPIO_V2_LINE_FLAG_OPEN_DRAIN
@@ -212,7 +215,9 @@ class FakeGpioChip:
     """One or more GPIO chips under root/dev, answering the probe's ioctls.
 
     `chips` is {number: label}; the chip labelled `header` has the bus on
-    its lines 0 (SDA) and 1 (SCL). `uapi` "v1" makes every v2 request an
+    its lines `offsets` (SDA, SCL): 0 and 1, the ID bus, unless told
+    otherwise (2 and 3, the user bus). Its lists (`function`, `direction`,
+    `input_on`) are by the bus's line, SDA then SCL. `uapi` "v1" makes every v2 request an
     EINVAL, as a kernel before 5.10 answers. `busy` is {line: consumer}
     for lines already in use; `busy_on_request` makes the request itself
     fail EBUSY with that consumer, the race after a clean line info.
@@ -220,7 +225,7 @@ class FakeGpioChip:
     close's release, and nothing else -- fail EIO.
 
     The pins' function and pad follow the header chip's driver, as the
-    kernel source has them: on "pinctrl-rp1" GPIO0/1 start as the firmware
+    kernel source has them: on "pinctrl-rp1" GPIO0-3 start as the firmware
     leaves them on a Pi 5 ("none", input off, pulled up), become a GPIO with
     its input on when a direction is set (rp1_gpio_direction_input ->
     rp1_set_fsel), and stay a GPIO when freed (rp1_pmx_free); on a BCM2835
@@ -232,8 +237,10 @@ class FakeGpioChip:
 
     def __init__(self, root, bus, chips=None, header="pinctrl-bcm2835", uapi="v2",
                  busy=None, busy_on_request=None, fail_release=False, debugfs=True,
-                 pinctrl=False, pinctrl_set_fails=False):
+                 pinctrl=False, pinctrl_set_fails=False, offsets=(0, 1)):
         self.root, self.bus, self.uapi = root, bus, uapi
+        self.offsets = tuple(offsets)
+        self.consumer = ""
         self.rp1 = header == "pinctrl-rp1"
         self.function = ["none", "none"] if self.rp1 else ["gpio_in", "gpio_in"]
         self.input_on = [not self.rp1, not self.rp1]
@@ -242,7 +249,7 @@ class FakeGpioChip:
         self.pinctrl_sets: list[list[str]] = []
         self.chips = chips if chips is not None else {0: header, 1: "raspberrypi-exp-gpio"}
         self.header = header
-        self.busy = dict(busy or {})
+        self.busy = dict(busy or {})          # by offset
         self.busy_on_request = busy_on_request
         self.fail_release = fail_release
         self.fds: dict[int, int] = {}          # chip fd -> chip number, by path
@@ -257,6 +264,13 @@ class FakeGpioChip:
         if pinctrl:
             (root / "usr/bin").mkdir(parents=True, exist_ok=True)
             (root / "usr/bin/pinctrl").write_bytes(b"")
+        self.sync()
+
+    def driver_muxes(self, function="alt0"):
+        """What a kernel I2C driver's transfer does to the pins: its own
+        function, input on (a Pi 4's i2c0mux leaves GPIO0/1 alt0)."""
+        self.function = [function, function]
+        self.input_on = [True, True]
         self.sync()
 
     def as_gpio(self, i):
@@ -275,8 +289,9 @@ class FakeGpioChip:
         d.mkdir(parents=True, exist_ok=True)
         pins = ["registered pins: 54"]
         conf = ["Pin config settings per pin", "Format: pin (name): configs"]
-        for n in range(3):
-            fn = self.function[n] if n < 2 else ("alt5" if self.rp1 else "gpio_in")
+        for n in range(max(self.offsets) + 2):
+            fn = (self.function[self.offsets.index(n)] if n in self.offsets
+                  else ("alt5" if self.rp1 else "gpio_in"))
             shown = f"function {fn} ({fn})" if self.rp1 else f"function {fn}"
             pins.append(f"pin {n} (gpio{n}) {n}:{self.header} {shown} in hi; irq 0 (none)")
             # a flag is printed whatever its value (pinconf_generic_dump_one)
@@ -294,19 +309,21 @@ class FakeGpioChip:
             "irq 0 (none)\npin 1 (gpio1) 1:gpio-brcmstb@107d508500 function gpio in lo; "
             "irq 0 (none)\n")
 
-    def pinctrl_get_line(self, n):
-        if self.rp1:
+    def pinctrl_get_line(self, offset):
+        n = self.offsets.index(offset)
+        if self.function[n].startswith("alt"):          # an I2C driver's, say
+            fs = "a" + self.function[n][3:]
+        elif self.rp1:
             fs = {"none": "no", "gpio": "op" if self.direction[n] == "output" else "ip"}[
                 self.function[n]]
-            pull = "pu"
         else:
             fs = {"gpio_in": "ip", "gpio_out": "op"}[self.function[n]]
-            pull = "--"
+        pull = "pu" if self.rp1 else "--"
         drive = "dh" if fs == "op" else "  "
         level = "hi" if self.input_on[n] else "--"
-        name = ("ID_SDA/GPIO0", "ID_SCL/GPIO1")[n]
-        fname = {"no": "none", "ip": "input", "op": "output"}[fs]
-        return f"{n:2d}: {fs:>2s} {drive} {pull} | {level} // {name} = {fname}"
+        name = {0: "ID_SDA/GPIO0", 1: "ID_SCL/GPIO1", 2: "SDA1/GPIO2", 3: "SCL1/GPIO3"}[offset]
+        fname = {"no": "none", "ip": "input", "op": "output"}.get(fs, ("SDA", "SCL")[n])
+        return f"{offset:2d}: {fs:>2s} {drive} {pull} | {level} // {name} = {fname}"
 
     def pinctrl_sh(self, args, timeout=15):
         """`pinctrl get` and `sudo pinctrl set` as raspi-utils answers them."""
@@ -321,7 +338,7 @@ class FakeGpioChip:
                     "command not found")
             if self.pinctrl_set_fails:
                 raise probe.CommandFailedError(f"`{' '.join(args)}` exited 1: failed")
-            n, fs = int(args[3]), args[4]
+            n, fs = self.offsets.index(int(args[3])), args[4]
             if fs == "no":
                 self.function[n], self.input_on[n] = "none", False
             elif fs == "ip":
@@ -353,11 +370,13 @@ class FakeGpioChip:
 
     def info(self, offset):
         self.free_if_closed()
-        if self.requested() and offset in (0, 1):
-            return True, self.direction[offset], "rpi-hwid HAT ID bus"
+        if self.requested() and offset in self.offsets:
+            return True, self.direction[self.offsets.index(offset)], self.consumer
         if offset in self.busy:
             return True, "input", self.busy[offset]
-        return False, self.direction[offset] if offset in (0, 1) else "input", ""
+        if offset in self.offsets:
+            return False, self.direction[self.offsets.index(offset)], ""
+        return False, "input", ""
 
     def drive(self, i, value):
         self.bus.set(i, value)
@@ -370,7 +389,7 @@ class FakeGpioChip:
         if fd == self.line_fd:
             return self.line_ioctl(request, buf)
         chip = self.chip_of(fd)
-        if request == probe.ID_GPIO_CHIPINFO_IOCTL:
+        if request == CHIPINFO:
             return (f"gpiochip{chip}".encode().ljust(32, b"\0")
                     + self.chips[chip].encode().ljust(32, b"\0") + struct.pack("=I", 54))
         assert self.chips[chip] == self.header, "asked a chip that is not the header's"
@@ -400,7 +419,7 @@ class FakeGpioChip:
             attr_id, _pad, values, mask = struct.unpack_from("=IIQQ", buf, 320)
             assert flags == OUTPUT_OPEN_DRAIN_V2, "requested open-drain outputs"
             assert (nattrs, attr_id, values, mask) == (1, 2, 3, 3), "both start released"
-            return self.grant(buf, offsets, 588)
+            return self.grant(buf, offsets, 588, buf[256:288])
         if request == V1_HANDLE:
             assert len(buf) == 364
             n = struct.unpack_from("=I", buf, 356)[0]
@@ -408,14 +427,15 @@ class FakeGpioChip:
             flags = struct.unpack_from("=I", buf, 256)[0]
             assert flags == probe.GPIOHANDLE_REQUEST_OUTPUT | probe.GPIOHANDLE_REQUEST_OPEN_DRAIN
             assert buf[260:262] == b"\x01\x01", "both start released"
-            return self.grant(buf, offsets, 360)
+            return self.grant(buf, offsets, 360, buf[324:356])
         raise AssertionError(f"unexpected ioctl {request:#x}")
 
-    def grant(self, buf, offsets, fd_at):
-        assert tuple(offsets) == (0, 1), offsets
+    def grant(self, buf, offsets, fd_at, consumer):
+        assert tuple(offsets) == self.offsets, offsets
         self.requests.append(buf)
+        self.consumer = consumer.split(b"\0")[0].decode()
         if self.busy_on_request:
-            self.busy = {0: self.busy_on_request, 1: self.busy_on_request}
+            self.busy = dict.fromkeys(self.offsets, self.busy_on_request)
             raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
         if any(o in self.busy for o in offsets):
             raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
