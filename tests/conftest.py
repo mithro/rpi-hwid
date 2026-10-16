@@ -88,8 +88,13 @@ def bare_id_bus(request, monkeypatch):
     from id_bus_fixtures import SimBus
     from rpi_hwid import probe
 
-    monkeypatch.setattr(probe, "id_bus_gpiochip", lambda: probe.ROOT + "/dev/gpiochip0")
+    monkeypatch.setattr(probe, "id_bus_gpiochip",
+                        lambda: (probe.ROOT + "/dev/gpiochip0", "pinctrl-bcm2835"))
     monkeypatch.setattr(probe, "open_id_lines", lambda chip, offsets: SimBus())
+    # the pins as a BCM2835's debugfs shows them, before and after alike
+    monkeypatch.setattr(probe, "pin_states", lambda label, offsets, sources=None: {
+        o: {"debugfs": {"function": "gpio_in", "config": "", "pull": None}}
+        for o in offsets})
 
 
 @pytest.fixture

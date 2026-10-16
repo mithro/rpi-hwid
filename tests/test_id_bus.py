@@ -131,6 +131,7 @@ def chip(tmp_path, monkeypatch, real_gpio):
     def make(bus=None, **kw):
         fake = FakeGpioChip(tmp_path, bus if bus is not None else SimBus(), **kw)
         monkeypatch.setattr(probe, "gpio_ioctl", fake)
+        monkeypatch.setattr(probe, "sh", fake.pinctrl_sh)
         return fake
     return make
 
@@ -236,8 +237,10 @@ def test_the_header_chip_is_found_by_its_label_not_its_number(chip):
     chip(eeprom_bus(0x50), header="pinctrl-rp1",
          chips={11: "gpio-brcmstb@107d517c00", 12: "gpio-brcmstb@107d517c20",
                 13: "gpio-brcmstb@107d508500", 14: "gpio-brcmstb@107d508520",
-                15: "pinctrl-rp1"})
-    assert probe.id_bus_gpiochip().endswith("/dev/gpiochip15")
+                15: "pinctrl-rp1"}, pinctrl=True)
+    path, label = probe.id_bus_gpiochip()
+    assert path.endswith("/dev/gpiochip15")
+    assert label == "pinctrl-rp1"
     assert list(probe.id_bus_scan(0, (0, 1))[0]) == ["0x50"]
 
 
@@ -252,6 +255,166 @@ def test_a_board_with_no_gpio_chips_at_all_is_an_error(tmp_path, monkeypatch, re
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
     with pytest.raises(probe.IdBusError, match=r"\(found no chip\)"):
         probe.id_bus_scan(0, (0, 1))
+
+
+# --- the pins' function, before and after ------------------------------------
+#
+# Requesting GPIO0/1 makes them GPIOs. On a BCM2835 that is what they were
+# (the firmware leaves them gpio_in), and freeing them makes them gpio_in
+# again. On a Pi 5's RP1 the firmware leaves them with no function ("none",
+# input off, pulled up) and freeing them leaves them GPIO inputs
+# (pinctrl-rp1.c rp1_pmx_free), so they must be put back.
+
+RP1_CHIPS = {0: "gpio-brcmstb@107d508500", 15: "pinctrl-rp1"}
+
+
+def test_a_bcm2835s_pins_are_as_they_were_with_nothing_to_put_back(chip):
+    fake = chip(eeprom_bus(0x50), pinctrl=True)
+    found, _ = probe.id_bus_scan(0, (0, 1))
+    assert list(found) == ["0x50"]
+    assert fake.pinctrl_sets == []
+    assert fake.function == ["gpio_in", "gpio_in"]
+
+
+def test_an_rp1s_pins_are_put_back_to_no_function(chip):
+    """The Pi 5 in the #92 proof: `pinctrl get 0-1` gave "no pu | --"."""
+    fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True)
+    assert fake.pinctrl_get_line(0) == " 0: no    pu | -- // ID_SDA/GPIO0 = none"
+    found, readable = probe.id_bus_scan(0, (0, 1))
+    assert readable is True
+    assert list(found) == ["0x50"]
+    assert fake.pinctrl_sets == [["sudo", probe.PINCTRL, "set", "0", "no"],
+                                 ["sudo", probe.PINCTRL, "set", "1", "no"]]
+    assert fake.function == ["none", "none"]
+    assert fake.input_on == [False, False], "the pads' input is off again"
+
+
+def test_with_debugfs_alone_a_changed_function_is_seen_and_said(chip):
+    """No raspi-utils: the kernel's view shows the function changed, and with
+    nothing to put it back with, that is said, not passed over."""
+    fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS)
+    with pytest.raises(probe.HostNotAsFoundError) as err:
+        probe.id_bus_scan(0, (0, 1))
+    msg = str(err.value)
+    assert ("putting it back failed: `sudo /usr/bin/pinctrl set 0 no` could not be run"
+            in msg)
+    assert "GPIO0 was function none (" in msg
+    assert "and is now function gpio (" in msg
+    assert fake.function == ["gpio", "gpio"]
+
+
+def test_with_pinctrl_alone_the_function_is_still_put_back(chip):
+    """No debugfs (not root): raspi-utils' `pinctrl get` reads the pins."""
+    fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, debugfs=False,
+                pinctrl=True)
+    probe.id_bus_scan(0, (0, 1))
+    assert fake.function == ["none", "none"]
+    assert fake.input_on == [False, False]
+
+
+def test_a_put_back_that_fails_is_loud_and_names_the_pins(chip):
+    fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True,
+                pinctrl_set_fails=True)
+    with pytest.raises(probe.HostNotAsFoundError) as err:
+        probe.id_bus_scan(0, (0, 1))
+    msg = str(err.value)
+    assert msg.startswith("the host is not as it was found, after reading the HAT ID bus on "
+                          "GPIO0/1: putting it back failed: `sudo /usr/bin/pinctrl set 0 no` "
+                          "exited 1: failed")
+    assert ("GPIO0 was function none (input bias disabled, input bias pull down (0 ohms), "
+            "input bias pull up (1 ohms)") in msg
+    assert "pinctrl no pu, input off, and is now function gpio (" in msg
+    assert "pinctrl ip pu, input on" in msg
+    assert fake.function == ["gpio", "gpio"]
+
+
+def test_a_put_back_that_changes_nothing_is_loud(chip, monkeypatch):
+    fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True)
+    real = fake.pinctrl_sh
+
+    def set_does_nothing(args, timeout=15):
+        if args[2:3] == ["set"]:
+            fake.pinctrl_sets.append(list(args))
+            return ""
+        return real(args, timeout)
+    monkeypatch.setattr(probe, "sh", set_does_nothing)
+    with pytest.raises(probe.HostNotAsFoundError, match="`pinctrl set` did not put them back; "
+                       r"GPIO0 was function none"):
+        probe.id_bus_scan(0, (0, 1))
+
+
+def test_pins_that_cannot_be_read_at_all_are_not_touched(chip):
+    """No debugfs and no pinctrl: nothing says what the pins were, so the
+    lines are not even asked for -- never "assumed fine"."""
+    fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, debugfs=False)
+    with pytest.raises(probe.IdBusError) as err:
+        probe.id_bus_scan(0, (0, 1))
+    msg = str(err.value)
+    assert msg.startswith("the function of GPIO0/1 cannot be read, so it could not be put "
+                          "back after the HAT ID bus was read: debugfs: "
+                          "/sys/kernel/debug/pinctrl: No such file or directory")
+    assert "pinctrl: /usr/bin/pinctrl is not there" in msg
+    assert fake.requests == []
+    assert fake.function == ["none", "none"]
+
+
+def test_pins_that_cannot_be_read_again_are_loud(chip, monkeypatch):
+    fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True)
+    real_open = probe.open_id_lines
+
+    def open_then_lose_pinctrl(path, offsets):
+        lines = real_open(path, offsets)
+        (fake.root / "usr/bin/pinctrl").unlink()
+        return lines
+    monkeypatch.setattr(probe, "open_id_lines", open_then_lose_pinctrl)
+    with pytest.raises(probe.HostNotAsFoundError, match=r"the pins could not be read again: "
+                       r".*pinctrl: /usr/bin/pinctrl is not there"):
+        probe.id_bus_scan(0, (0, 1))
+
+
+def test_a_read_that_fails_still_puts_the_pins_back_and_raises_its_own_error(chip):
+    fake = chip(SimBus(stuck={SCL}), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True)
+    with pytest.raises(probe.IdBusError, match="SCL"):
+        probe.id_bus_scan(0, (0, 1))
+    assert fake.function == ["none", "none"]
+    assert not fake.requested()
+
+
+def test_a_read_that_fails_and_pins_not_put_back_say_both(chip):
+    chip(SimBus(stuck={SCL}), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True,
+         pinctrl_set_fails=True)
+    with pytest.raises(probe.HostNotAsFoundError, match=r"the read failed: SCL \(GPIO1.*"
+                       "putting it back failed"):
+        probe.id_bus_scan(0, (0, 1))
+
+
+@pytest.mark.parametrize(("line", "want"), [
+    # the #92 proof's Pi 5 and Pi 3B+, as printed
+    ("0: no    pu | -- // ID_SDA/GPIO0 = none", (0, "no", "pu", "--")),
+    (" 1: ip    -- | hi // ID_SCL/GPIO1 = input", (1, "ip", "--", "hi")),
+    (" 4: op dh pd | hi // GPIO4 = output", (4, "op", "pd", "hi")),
+    ("27: a3    pn | lo // GPIO27 = SD0_DAT3", (27, "a3", "pn", "lo")),
+])
+def test_pinctrl_get_lines_are_read_as_raspi_utils_prints_them(line, want):
+    m = probe.PINCTRL_GET_LINE.match(line)
+    assert (int(m.group(1)), m.group(2), m.group(3), m.group(4)) == want
+
+
+@pytest.mark.parametrize(("config", "pull"), [
+    # the RP1: every bias item, the one set at 1 (pinctrl-rp1.c rp1_pinconf_get)
+    ("input bias disabled, input bias pull down (0 ohms), input bias pull up (1 ohms), "
+     "input enabled", "pu"),
+    ("input bias disabled, input bias pull down (1 ohms), input bias pull up (0 ohms)", "pd"),
+    ("input bias disabled, input bias pull down (0 ohms), input bias pull up (0 ohms)", "pn"),
+    # a BCM2711: only the one that is set (bcm2711_pinconf_get)
+    ("input bias pull up (50000 ohms)", "pu"),
+    ("input bias disabled", "pn"),
+    # a BCM2835: no pull can be read back (bcm2835_pinconf_get)
+    ("", None),
+    (None, None),
+])
+def test_the_pull_is_read_from_the_generic_pinconf_dump(config, pull):
+    assert probe.debugfs_pull(config) == pull
 
 
 # --- which way a Pi's ID bus is read ------------------------------------------

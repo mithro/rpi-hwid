@@ -986,10 +986,11 @@ def gpio_ioctl(fd, request, buf):
 
 
 def id_bus_gpiochip():
-    """The /dev path of the GPIO chip that has the 40-pin header, found by
-    its label (ID_BUS_CHIP_LABELS), never by its number: the Pi 5's is
-    gpiochip15, or another number on another kernel. An IdBusError naming
-    what was found when there is none, or a chip could not be asked."""
+    """(the /dev path, the label) of the GPIO chip that has the 40-pin
+    header, found by its label (ID_BUS_CHIP_LABELS), never by its number:
+    the Pi 5's is gpiochip15, or another number on another kernel. An
+    IdBusError naming what was found when there is none, or a chip could
+    not be asked."""
     found, refused = {}, []
     for dev in sorted(glob.glob(ROOT + "/dev/gpiochip*")):
         try:
@@ -1007,7 +1008,7 @@ def id_bus_gpiochip():
         found.setdefault(_cstr(info[32:64]), dev)
     for want in ID_BUS_CHIP_LABELS:
         if want in found:
-            return found[want]
+            return found[want], want
     raise IdBusError("no GPIO chip labelled %s to read the HAT ID bus on (found %s%s)" % (
         " or ".join(ID_BUS_CHIP_LABELS),
         ", ".join("%s at %s" % (lab, dev[len(ROOT):]) for lab, dev in sorted(found.items()))
@@ -1327,22 +1328,273 @@ class BitBangI2C(object):
         return data
 
 
+# --- the pins' function and pad, before and after ----------------------------
+#
+# Asking for a line through the GPIO character device can change the pin's
+# function, and freeing it need not change it back. On the Pi 5 the firmware
+# leaves GPIO0/1 with no function ("none"), the pad's input off and pulled
+# up. The RP1 driver makes a pin a GPIO whenever its direction is set
+# (rp1_gpio_direction_input/_output, and rp1_pmx_gpio_set_direction), turns
+# its input on whenever it sets a function (rp1_set_fsel), and on free
+# leaves it a GPIO input (rp1_pmx_gpio_disable_free -> rp1_pmx_free): never
+# "none" again (raspberrypi/linux rpi-6.12.y drivers/pinctrl/pinctrl-rp1.c). The
+# BCM2835/2711 driver frees a pin to a GPIO input (bcm2835_pmx_free), which
+# is how the firmware leaves GPIO0/1 there. Neither touches the pull.
+#
+# So each pin is read before the lines are asked for and after they are
+# freed, in every way this host allows, and the two must agree:
+#   * the kernel's debugfs (root's): pinctrl/<device>/pins gives the
+#     function (the driver's pin_dbg_show: "function none (none) in hi;
+#     ..." on the RP1, "function gpio_in in hi; ..." on a BCM2835) and
+#     pinconf-pins the pad (the generic dump: the RP1's pull, slew and drive
+#     as values; a flag such as "input enabled" is printed whatever its
+#     value, so the input's state is not there; a BCM2711's pull when it has
+#     one; nothing on a BCM2835, whose pulls cannot be read back);
+#   * raspi-utils' `pinctrl get`, which reads the registers itself
+#     ("0: no    pu | -- // ID_SDA/GPIO0 = none": function, pull, and the
+#     level, "--" where the RP1 pad's input is off).
+# None of them at all is an error: nothing is taken to be unchanged. A pin
+# left different is put back with `pinctrl set` (`no` is the RP1's "none",
+# which turns its input off again; the pull with it where that changed) and
+# read once more.
+
+DEBUGFS_PINCTRL = "/sys/kernel/debug/pinctrl"
+PINCTRL = "/usr/bin/pinctrl"                 # raspi-utils
+
+# the kernel's function names as `pinctrl set` takes them
+PINCTRL_FUNCTIONS = {"none": "no", "gpio_in": "ip", "gpio_out": "op"}
+PINCTRL_GET_LINE = re.compile(
+    r"^\s*(\d+): (\S+)\s+(?:d[hl]\s+)?(pu|pd|pn|--) \| (hi|lo|--) // (.*)$")
+
+
+class PinsUnreadableError(Exception):
+    """The pins' state could not be read this way, and why."""
+
+
+def debugfs_pull(config):
+    """"pu", "pd", "pn" or None (not shown) from a generic pinconf dump."""
+    if not config:
+        return None
+    up = re.search(r"input bias pull up \((\d+) ohms\)", config)
+    down = re.search(r"input bias pull down \((\d+) ohms\)", config)
+    if up and int(up.group(1)):
+        return "pu"
+    if down and int(down.group(1)):
+        return "pd"
+    if up or down or "input bias disabled" in config:
+        # the RP1 shows both at 0; a BCM2711 shows "disabled" only when it is
+        return "pn"
+    return None
+
+
+def pins_from_debugfs(label, offsets):
+    """{offset: {"function", "config", "pull"}} for lines `offsets` of the
+    GPIO chip `label`, from debugfs; PinsUnreadableError saying why not."""
+    base = ROOT + DEBUGFS_PINCTRL
+    try:
+        devices = sorted(os.listdir(base))
+    except OSError as e:
+        raise PinsUnreadableError("%s: %s" % (DEBUGFS_PINCTRL, e.strerror))
+    for dev in devices:
+        try:
+            with open(base + "/" + dev + "/pins") as f:
+                pins = f.read()
+        except (OSError, IOError) as e:
+            raise PinsUnreadableError("%s/%s/pins: %s" % (DEBUGFS_PINCTRL, dev, e.strerror))
+        rows = {}
+        for m in re.finditer(r"^pin (\d+) \([^)]*\) (\d+):(\S+) (.*)$", pins, re.M):
+            if m.group(3) == label and int(m.group(2)) in offsets:
+                rows[int(m.group(2))] = (int(m.group(1)), m.group(4))
+        if len(rows) != len(offsets):
+            continue
+        configs = {}
+        if os.path.exists(base + "/" + dev + "/pinconf-pins"):
+            try:
+                with open(base + "/" + dev + "/pinconf-pins") as f:
+                    text = f.read()
+            except (OSError, IOError) as e:
+                raise PinsUnreadableError("%s/%s/pinconf-pins: %s" % (
+                    DEBUGFS_PINCTRL, dev, e.strerror))
+            configs = dict((int(m.group(1)), m.group(2).strip()) for m in
+                           re.finditer(r"^pin (\d+) \([^)]*\): ?(.*)$", text, re.M))
+        out = {}
+        for o in offsets:
+            pin, shown = rows[o]
+            m = re.match(r"function (\S+)", shown)
+            if not m:
+                raise PinsUnreadableError("%s/%s/pins gives no function for GPIO%d: %r" % (
+                    DEBUGFS_PINCTRL, dev, o, shown))
+            config = configs.get(pin)
+            out[o] = {"function": m.group(1), "config": config, "pull": debugfs_pull(config)}
+        return out
+    raise PinsUnreadableError("no pin controller under %s shows GPIO%s of %s" % (
+        DEBUGFS_PINCTRL, "/".join(str(o) for o in offsets), label))
+
+
+def pins_from_pinctrl(offsets):
+    """{offset: {"function", "pull", "input"}} from `pinctrl get`: the
+    function as it names it, the pull ("--", where it cannot say, is None),
+    and whether the input is on (a level of "--" is an input that is off)."""
+    if not os.path.exists(ROOT + PINCTRL):
+        raise PinsUnreadableError("%s is not there" % PINCTRL)
+    try:
+        out = sh_checked([PINCTRL, "get", ",".join(str(o) for o in offsets)])
+    except CommandFailedError as e:
+        raise PinsUnreadableError(str(e))
+    pins = {}
+    for line in out.split("\n"):
+        m = PINCTRL_GET_LINE.match(line)
+        if m and int(m.group(1)) in offsets:
+            pins[int(m.group(1))] = {"function": m.group(2),
+                                     "pull": None if m.group(3) == "--" else m.group(3),
+                                     "input": m.group(4) != "--"}
+    if len(pins) != len(offsets):
+        raise PinsUnreadableError("`%s get` gave no state for every one of GPIO%s: %r" % (
+            PINCTRL, "/".join(str(o) for o in offsets), out))
+    return pins
+
+
+PIN_READERS = (("debugfs", lambda label, offsets: pins_from_debugfs(label, offsets)),
+               ("pinctrl", lambda label, offsets: pins_from_pinctrl(offsets)))
+
+
+def pin_states(label, offsets, sources=None):
+    """{offset: {source: state}} read every way there is (`sources` None),
+    or exactly the ways in `sources`, so that before and after are read
+    alike. An IdBusError when none can be read, or one of `sources` cannot."""
+    states = dict((o, {}) for o in offsets)
+    why = []
+    for name, reader in PIN_READERS:
+        if sources is not None and name not in sources:
+            continue
+        try:
+            pins = reader(label, offsets)
+        except PinsUnreadableError as e:
+            why.append("%s: %s" % (name, e))
+            continue
+        for o in offsets:
+            states[o][name] = pins[o]
+    read_by = set(name for o in offsets for name in states[o])
+    if not read_by or (sources is not None and read_by != set(sources)):
+        raise IdBusError("the function of GPIO%s cannot be read, so it could not be put "
+                         "back after the HAT ID bus was read: %s" % (
+                             "/".join(str(o) for o in offsets), "; ".join(why)))
+    return states
+
+
+def describe_pin(state):
+    parts = []
+    k = state.get("debugfs")
+    if k:
+        parts.append("function %s (%s)" % (k["function"], k["config"] or "no pad config shown"))
+    p = state.get("pinctrl")
+    if p:
+        parts.append("pinctrl %s %s, input %s" % (
+            p["function"], p["pull"] or "pull unknown", "on" if p["input"] else "off"))
+    return "; ".join(parts)
+
+
+def pinctrl_set_args(offset, before, after):
+    """The `pinctrl set` that puts `offset` back to `before`, or None where
+    its function has no name `pinctrl set` takes."""
+    fn = None
+    if "pinctrl" in before:
+        fn = before["pinctrl"]["function"]
+    elif "debugfs" in before:
+        kernel = before["debugfs"]["function"]
+        m = re.match(r"alt(\d)$", kernel)
+        fn = "a" + m.group(1) if m else PINCTRL_FUNCTIONS.get(kernel)
+    if not fn or fn in ("??", "gp"):
+        return None
+    args = ["sudo", PINCTRL, "set", str(offset), fn]
+    pulls = [(s.get("pull"), after.get(name, {}).get("pull"))
+             for name, s in before.items()]
+    changed = [b for b, a in pulls if b and b != a]
+    if changed:
+        args.append(changed[0])
+    return args
+
+
+def put_pins_back(label, offsets, before, cause=None):
+    """Read the pins again, the same ways; put back any that differ from
+    `before` and read once more. HostNotAsFoundError, naming each pin's
+    state before and after, when they cannot be read again, cannot be put
+    back, or still differ. `cause` is the error the read itself raised, if
+    any, for the message."""
+    sources = sorted(set(name for o in offsets for name in before[o]))
+
+    def different(after):
+        return [o for o in offsets if after[o] != before[o]]
+
+    def fail(after, why):
+        if cause is not None:
+            why = ["the read failed: %s" % cause] + why
+        raise HostNotAsFoundError(
+            "the host is not as it was found, after reading the HAT ID bus on GPIO%s: %s%s" % (
+                "/".join(str(o) for o in offsets), "; ".join(why),
+                "".join("; GPIO%d was %s, and is now %s" % (
+                    o, describe_pin(before[o]), describe_pin(after[o]))
+                    for o in (different(after) if after else ()))))
+
+    def read_again():
+        try:
+            return pin_states(label, offsets, sources)
+        except IdBusError as e:
+            return fail(None, ["the pins could not be read again: %s" % e])
+
+    after = read_again()
+    if not different(after):
+        return
+    why = []
+    for o in different(after):
+        args = pinctrl_set_args(o, before[o], after[o])
+        if args is None:
+            why.append("GPIO%d's function has no `pinctrl set` name to put it back with" % o)
+            continue
+        try:
+            sh_checked(args)
+        except CommandFailedError as e:
+            why.append("putting it back failed: %s" % e)
+    again = read_again()
+    if why or different(again):
+        fail(again, why or ["`pinctrl set` did not put them back"])
+
+
 def id_bus_gpio_scan(gpio):
     """HAT ID EEPROMs read through the header's GPIO lines `gpio` (SDA,
-    SCL), as id_bus_scan's `found`. The lines are released and freed on
-    every path, and checked afterwards (GpioLines.close)."""
-    lines = open_id_lines(id_bus_gpiochip(), gpio)
+    SCL), as id_bus_scan's `found`. The pins' function and pad are read
+    first (nothing is touched if they cannot be); the lines are released and
+    freed on every path and checked (GpioLines.close), and the pins put back
+    as they were (put_pins_back). Both problems are said when both arise."""
+    chip, label = id_bus_gpiochip()
+    before = pin_states(label, gpio)
+    lines = open_id_lines(chip, gpio)
+    failed, found = None, {}
     try:
         bus = BitBangI2C(lines)
-        found = {}
         for addr in ID_EEPROM_ADDRS:
             info = eeprom_decode(bus.read_eeprom(addr, EEPROM_LENGTH))
             if info:
                 found["0x%02x" % addr] = info
     except BaseException as e:
-        lines.close(e)
-        raise
-    lines.close()
+        failed = e
+    problems = []
+    try:
+        try:
+            lines.close(failed)
+        except HostNotAsFoundError as e:
+            problems.append(str(e))
+    finally:
+        # whatever the close raised, the pins are put back
+        try:
+            put_pins_back(label, gpio, before, None if problems else failed)
+        except HostNotAsFoundError as e:
+            problems.append(str(e) if not problems else
+                            str(e).replace("the host is not as it was found, ", "", 1))
+    if problems:
+        raise HostNotAsFoundError("; and ".join(problems))
+    if failed is not None:
+        raise failed
     return found
 
 

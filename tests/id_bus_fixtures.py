@@ -217,11 +217,29 @@ class FakeGpioChip:
     for lines already in use; `busy_on_request` makes the request itself
     fail EBUSY with that consumer, the race after a clean line info.
     `fail_release` makes v2's setting of both lines high at once -- the
-    close's release, and nothing else -- fail EIO."""
+    close's release, and nothing else -- fail EIO.
+
+    The pins' function and pad follow the header chip's driver, as the
+    kernel source has them: on "pinctrl-rp1" GPIO0/1 start as the firmware
+    leaves them on a Pi 5 ("none", input off, pulled up), become a GPIO with
+    its input on when a direction is set (rp1_gpio_direction_input ->
+    rp1_set_fsel), and stay a GPIO when freed (rp1_pmx_free); on a BCM2835
+    they are gpio_in or gpio_out by direction and freed to gpio_in
+    (bcm2835_pmx_free), with no pull that can be read. `debugfs` writes
+    /sys/kernel/debug/pinctrl as the kernel shows them; `pinctrl` installs
+    /usr/bin/pinctrl, whose get and set `pinctrl_sh` answers as raspi-utils
+    does, `set` failing when `pinctrl_set_fails`."""
 
     def __init__(self, root, bus, chips=None, header="pinctrl-bcm2835", uapi="v2",
-                 busy=None, busy_on_request=None, fail_release=False):
+                 busy=None, busy_on_request=None, fail_release=False, debugfs=True,
+                 pinctrl=False, pinctrl_set_fails=False):
         self.root, self.bus, self.uapi = root, bus, uapi
+        self.rp1 = header == "pinctrl-rp1"
+        self.function = ["none", "none"] if self.rp1 else ["gpio_in", "gpio_in"]
+        self.input_on = [not self.rp1, not self.rp1]
+        self.debugfs, self.pinctrl = debugfs, pinctrl
+        self.pinctrl_set_fails = pinctrl_set_fails
+        self.pinctrl_sets: list[list[str]] = []
         self.chips = chips if chips is not None else {0: header, 1: "raspberrypi-exp-gpio"}
         self.header = header
         self.busy = dict(busy or {})
@@ -236,6 +254,83 @@ class FakeGpioChip:
             path = root / f"dev/gpiochip{n}"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"")
+        if pinctrl:
+            (root / "usr/bin").mkdir(parents=True, exist_ok=True)
+            (root / "usr/bin/pinctrl").write_bytes(b"")
+        self.sync()
+
+    def as_gpio(self, i):
+        """What setting a direction does to the pin's function and pad."""
+        if self.rp1:
+            self.function[i], self.input_on[i] = "gpio", True
+        else:
+            self.function[i] = "gpio_out" if self.direction[i] == "output" else "gpio_in"
+        self.sync()
+
+    def sync(self):
+        if not self.debugfs:
+            return
+        name = "1f000d0000.gpio" if self.rp1 else "3f200000.gpio"
+        d = self.root / "sys/kernel/debug/pinctrl" / f"{name}-{self.header}"
+        d.mkdir(parents=True, exist_ok=True)
+        pins = ["registered pins: 54"]
+        conf = ["Pin config settings per pin", "Format: pin (name): configs"]
+        for n in range(3):
+            fn = self.function[n] if n < 2 else ("alt5" if self.rp1 else "gpio_in")
+            shown = f"function {fn} ({fn})" if self.rp1 else f"function {fn}"
+            pins.append(f"pin {n} (gpio{n}) {n}:{self.header} {shown} in hi; irq 0 (none)")
+            # a flag is printed whatever its value (pinconf_generic_dump_one)
+            conf.append(f"pin {n} (gpio{n}): " + (
+                "input bias disabled, input bias pull down (0 ohms), input bias pull up "
+                "(1 ohms), input enabled, input schmitt enabled, output enabled, slew rate "
+                "(0x0), output drive strength (4 mA)" if self.rp1 else ""))
+        (d / "pins").write_text("\n".join(pins) + "\n")
+        (d / "pinconf-pins").write_text("\n".join(conf) + "\n")
+        # another controller, whose lines 0 and 1 are not the header's
+        other = self.root / "sys/kernel/debug/pinctrl/107d508500.gpio-pinctrl-bcm2712"
+        other.mkdir(parents=True, exist_ok=True)
+        (other / "pins").write_text(
+            "registered pins: 2\npin 0 (gpio0) 0:gpio-brcmstb@107d508500 function gpio in lo; "
+            "irq 0 (none)\npin 1 (gpio1) 1:gpio-brcmstb@107d508500 function gpio in lo; "
+            "irq 0 (none)\n")
+
+    def pinctrl_get_line(self, n):
+        if self.rp1:
+            fs = {"none": "no", "gpio": "op" if self.direction[n] == "output" else "ip"}[
+                self.function[n]]
+            pull = "pu"
+        else:
+            fs = {"gpio_in": "ip", "gpio_out": "op"}[self.function[n]]
+            pull = "--"
+        drive = "dh" if fs == "op" else "  "
+        level = "hi" if self.input_on[n] else "--"
+        name = ("ID_SDA/GPIO0", "ID_SCL/GPIO1")[n]
+        fname = {"no": "none", "ip": "input", "op": "output"}[fs]
+        return f"{n:2d}: {fs:>2s} {drive} {pull} | {level} // {name} = {fname}"
+
+    def pinctrl_sh(self, args, timeout=15):
+        """`pinctrl get` and `sudo pinctrl set` as raspi-utils answers them."""
+        self.free_if_closed()
+        if args[:2] == [probe.PINCTRL, "get"]:
+            return "\n".join(self.pinctrl_get_line(int(n)) for n in args[2].split(","))
+        if args[:3] == ["sudo", probe.PINCTRL, "set"]:
+            self.pinctrl_sets.append(list(args))
+            if not (self.root / "usr/bin/pinctrl").exists():
+                raise probe.CommandFailedError(
+                    f"`{' '.join(args)}` could not be run: sudo: {probe.PINCTRL}: "
+                    "command not found")
+            if self.pinctrl_set_fails:
+                raise probe.CommandFailedError(f"`{' '.join(args)}` exited 1: failed")
+            n, fs = int(args[3]), args[4]
+            if fs == "no":
+                self.function[n], self.input_on[n] = "none", False
+            elif fs == "ip":
+                self.direction[n] = "input"
+                self.function[n] = "gpio" if self.rp1 else "gpio_in"
+                self.input_on[n] = True
+            self.sync()
+            return ""
+        raise AssertionError(f"unexpected command {args!r}")
 
     def chip_of(self, fd):
         return int(os.readlink(f"/proc/self/fd/{fd}").rsplit("gpiochip", 1)[1])
@@ -246,9 +341,15 @@ class FakeGpioChip:
     def free_if_closed(self):
         if self.line_fd is not None and not _is_open(self.line_fd):
             # freed: the line keeps the direction it was last given, as
-            # gpiolib's flags do
+            # gpiolib's flags do; the pin is what the driver's free makes it
             self.line_fd = None
             self.bus.master = [1, 1]
+            for i in (0, 1):
+                if self.rp1:
+                    self.function[i] = "gpio"        # rp1_pmx_free: GPIO input
+                else:
+                    self.function[i] = "gpio_in"     # bcm2835_pmx_free
+            self.sync()
 
     def info(self, offset):
         self.free_if_closed()
@@ -262,6 +363,7 @@ class FakeGpioChip:
         self.bus.set(i, value)
         # gpiolib's open-drain emulation: a 1 is an input, a 0 an output low
         self.direction[i] = "input" if value else "output"
+        self.as_gpio(i)
 
     def __call__(self, fd, request, buf):
         buf = bytes(buf)
@@ -318,6 +420,8 @@ class FakeGpioChip:
         if any(o in self.busy for o in offsets):
             raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
         self.line_fd = os.open(os.devnull, os.O_RDONLY)
+        for i in (0, 1):
+            self.as_gpio(i)       # requested released: direction input
         return buf[:fd_at] + struct.pack("=i", self.line_fd) + buf[fd_at + 4:]
 
     def line_ioctl(self, request, buf):
@@ -337,6 +441,8 @@ class FakeGpioChip:
             self.direction = ["input", "input"]
             self.bus.master = [1, 1]
             self.reconfigured = True
+            for i in (0, 1):
+                self.as_gpio(i)
             return buf
         if request == V2_GET:
             _, mask = struct.unpack("=QQ", buf)
