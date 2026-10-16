@@ -62,6 +62,46 @@ def no_privileged_commands(monkeypatch):
         f"a test tried to run os.system({cmd!r}) on this machine"))
 
 
+@pytest.fixture(autouse=True)
+def probe_commands_through_sh(request, monkeypatch):
+    """The probe runs a command that changes the host through sh_checked,
+    and a read through sh. The tests' fake hosts are written as one `sh`
+    that answers every command, so by default sh_checked asks whatever
+    `probe.sh` is at the time, and an answer is a success. A test that
+    wants a checked command to fail patches probe.sh_checked itself, and
+    one that tests sh_checked itself asks for `real_sh_checked`."""
+    if "real_sh_checked" in request.fixturenames:
+        return
+    from rpi_hwid import probe
+
+    monkeypatch.setattr(probe, "sh_checked", lambda args, timeout=15: probe.sh(args, timeout))
+
+
+@pytest.fixture(autouse=True)
+def bare_id_bus(request, monkeypatch):
+    """The HAT ID bus's GPIO lines, where a fake tree has no /dev/i2c-0: a
+    simulated bus with its pull-ups and nothing on it, as on a Pi without a
+    HAT (tests/id_bus_fixtures.py). A test that drives the real GPIO layer
+    against a fake character device asks for the `real_gpio` fixture."""
+    if "real_gpio" in request.fixturenames:
+        return
+    from id_bus_fixtures import SimBus
+    from rpi_hwid import probe
+
+    monkeypatch.setattr(probe, "id_bus_gpiochip", lambda: probe.ROOT + "/dev/gpiochip0")
+    monkeypatch.setattr(probe, "open_id_lines", lambda chip, offsets: SimBus())
+
+
+@pytest.fixture
+def real_gpio():
+    """Leave the probe's GPIO layer as it is (see bare_id_bus)."""
+
+
+@pytest.fixture
+def real_sh_checked():
+    """Leave probe.sh_checked as it is (see probe_commands_through_sh)."""
+
+
 def _doc(model, serial, revision, header, power_class, fpga, macs, usb_net, rtc, fan, mc,
          compatible="", memory=None):
     return {

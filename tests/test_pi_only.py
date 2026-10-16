@@ -9,6 +9,7 @@ import typing
 
 import pytest
 
+from id_bus_fixtures import SimBus, eeprom_bus
 from rpi_hwid import cli, fpga, label_input, probe, tinytapeout
 from rpi_hwid.model import Summary
 from test_probe_collect import _pi5_tree, _w
@@ -16,35 +17,34 @@ from test_probe_collect import _pi5_tree, _w
 
 @pytest.fixture
 def pi5(tmp_path, monkeypatch):
-    """A Pi 5 whose ID bus is down and user bus is up, with every command
-    and every I2C access recorded."""
+    """A Pi 5 with no I2C bus on the ID pins (GPIO0/1) and its user bus
+    up, with every command and every I2C access recorded: a /dev/i2c-N
+    opened as N, the ID bus's GPIO lines requested as 0."""
     _pi5_tree(tmp_path)
     _w(tmp_path, "/dev/i2c-1", "")          # the user bus is up: tempting
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
     monkeypatch.setattr(probe, "BUS_SETTLE_S", 0.0)
-    calls, buses, overlays = [], [], []
+    calls, buses = [], []
 
     def fake_sh(args, timeout=15):
         calls.append(args)
-        if args == ["sudo", "dtparam", "i2c_vc=on"]:
-            _w(tmp_path, "/dev/i2c-0", "")
-            overlays.append("dtparam i2c_vc=on")
-        elif args == ["sudo", "dtparam", "-l"]:
-            return "\n".join(f"{i}:  {o}" for i, o in enumerate(overlays))
-        elif args[:3] == ["sudo", "dtparam", "-r"]:
-            overlays.pop(int(args[3]))
-            (tmp_path / "dev/i2c-0").unlink()
-        elif args[-1:] == ["pmic_read_adc"]:
+        if args[-1:] == ["pmic_read_adc"]:
             return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
-        elif args == ["vcgencmd", "get_throttled"]:
+        if args == ["vcgencmd", "get_throttled"]:
             return "throttled=0x0"
         return ""
 
     def no_bus(bus, addr):
         buses.append(bus)  # and answer as a bus with nothing on it
 
+    def id_lines(chip, offsets):
+        assert offsets == (0, 1)
+        buses.append(0)
+        return SimBus()    # pulled up, and nothing on it
+
     monkeypatch.setattr(probe, "sh", fake_sh)
     monkeypatch.setattr(probe, "i2c_open", no_bus)
+    monkeypatch.setattr(probe, "open_id_lines", id_lines)
     monkeypatch.setattr(fpga, "collect_fpga", lambda *a, **k: pytest.fail("FPGA probed"))
     monkeypatch.setattr(tinytapeout, "collect_tinytapeout",
                         lambda *a, **k: pytest.fail("Tiny Tapeout board probed"))
@@ -60,12 +60,25 @@ def test_the_user_bus_is_never_opened_enabled_or_scanned(pi5):
     assert ["sudo", "dtparam", "i2c_arm=on"] not in calls
 
 
-def test_what_it_brings_up_on_the_id_bus_it_puts_back(pi5):
-    root, calls, _ = pi5
+def test_the_id_bus_is_read_with_no_command_at_all(pi5):
+    """No overlay and no module for the ID bus: removing `dtparam i2c_vc=on`
+    hangs in the kernel on a Pi 3B+ (mithro/rpi-hwid issue #91). Its
+    GPIO lines are read from user space instead, and nothing is left to
+    put back."""
+    root, calls, buses = pi5
     cli.pi_only_label_input("p48")
-    assert calls.index(["sudo", "dtparam", "i2c_vc=on"]) < \
-        calls.index(["sudo", "dtparam", "-r", "0"])
-    assert not (root / "dev/i2c-0").exists(), "left as it was found"
+    assert buses == [0]
+    assert [c for c in calls if c[0] == "sudo" and "pmic_read_adc" not in c] == []
+    assert not (root / "dev/i2c-0").exists()
+
+
+def test_a_hat_on_the_id_bus_is_named(pi5, monkeypatch):
+    """A HAT EEPROM the firmware does not read (Waveshare's PoE M.2 HAT+ (B)
+    at 0x52), found through the GPIO lines."""
+    monkeypatch.setattr(probe, "open_id_lines", lambda chip, offsets: eeprom_bus(0x52))
+    s = cli.pi_only_label_input("p48")["summary"]
+    assert s["header"] == ["Waveshare PoE M.2 HAT+ (B)"]
+    assert s["hat_uuid"] == "9729525c-eeee-98e9-f348-a0720f4c16eb"
 
 
 def test_the_cameras_are_not_looked_for(pi5, monkeypatch):
@@ -117,14 +130,11 @@ def test_user_bus_scans_it_and_puts_back_what_it_brought_up(pi5, monkeypatch):
         if args == ["sudo", "dtparam", "i2c_arm=on"]:
             _w(root, "/dev/i2c-1", "")
             overlays.append("dtparam i2c_arm=on")
-        elif args == ["sudo", "dtparam", "i2c_vc=on"]:
-            _w(root, "/dev/i2c-0", "")
-            overlays.append("dtparam i2c_vc=on")
         elif args == ["sudo", "dtparam", "-l"]:
             return "\n".join(f"{i}:  {o}" for i, o in enumerate(overlays))
         elif args[:3] == ["sudo", "dtparam", "-r"]:
-            gone = overlays.pop(int(args[3]))
-            (root / ("dev/i2c-1" if gone.endswith("arm=on") else "dev/i2c-0")).unlink()
+            overlays.pop(int(args[3]))
+            (root / "dev/i2c-1").unlink()
         elif args[-1:] == ["pmic_read_adc"]:
             return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
         return ""
@@ -276,22 +286,6 @@ def test_a_pi_4s_fan_is_sent_as_read_and_none():
 
 
 
-def test_an_id_bus_that_did_not_come_up_leaves_the_header_unread(pi5, monkeypatch):
-    """dtparam i2c_vc=on brings no /dev/i2c-0 up: with --user-bus the user
-    bus is read and finds nothing, but the ID bus was not read, so the
-    header is not read -- not [], which would print "HAT none"."""
-    _, calls, _ = pi5
-
-    def sh(args, timeout=15):
-        calls.append(args)
-        if args[-1:] == ["pmic_read_adc"]:
-            return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
-        return ""                          # no overlay brings i2c-0 up
-    monkeypatch.setattr(probe, "sh", sh)
-    doc = cli.pi_only_label_input("p48", user_bus=True)
-    assert doc["summary"]["header"] is None
-
-
 def test_a_hat_the_firmware_read_settles_it_even_then(pi5, monkeypatch):
     root, _, _ = pi5
     monkeypatch.setattr(probe, "sh", lambda args, timeout=15: "")
@@ -349,4 +343,4 @@ def test_a_compute_modules_buses_are_read_when_asked(pi5):
     _cm5(root)
     cli.pi_only_label_input("pi16", user_bus=True)
     assert set(buses) == {0, 1}
-    assert ["sudo", "dtparam", "i2c_vc=on"] in calls
+    assert not any("i2c_vc=on" in c for c in calls)

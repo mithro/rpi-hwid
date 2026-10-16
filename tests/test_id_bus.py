@@ -1,0 +1,391 @@
+"""The HAT ID bus read without changing the kernel (mithro/rpi-hwid issue
+#91): the probe's own I2C master on the GPIO0/1 lines, the GPIO character
+device requests behind it, which path a Pi takes, and sh_checked, through
+which every command that does change a host now goes."""
+
+from __future__ import annotations
+
+import sys
+import time
+
+import pytest
+
+from id_bus_fixtures import (
+    SCL,
+    SDA,
+    WAVESHARE_BLOB,
+    FakeGpioChip,
+    SimBus,
+    SimEeprom,
+    eeprom_bus,
+)
+from rpi_hwid import probe
+from test_probe_collect import _w
+
+# a 24C32's worth of cells, each its own offset's low byte, so a read that
+# started anywhere but offset 0 shows it
+COUNTING = bytes(i & 0xFF for i in range(4096))
+
+
+def master(bus, **kw):
+    return probe.BitBangI2C(bus, half_period=0, **kw)
+
+
+# --- the I2C master against a simulated EEPROM --------------------------------
+
+
+def test_a_good_read_is_the_eeproms_first_bytes_from_offset_0():
+    eeprom = SimEeprom(0x50, COUNTING)
+    eeprom.ptr = 1234                       # wherever the last reader left it
+    bus = SimBus([eeprom])
+    assert master(bus).read_eeprom(0x50, 256) == COUNTING[:256]
+    assert eeprom.writes == [], "nothing is written but the offset"
+    assert eeprom.mode == "idle", "a STOP ended it"
+    assert bus.master == [1, 1], "both lines released after the STOP"
+
+
+def test_the_bytes_decode_as_eeprom_read_would_have_them():
+    found = probe.eeprom_decode(master(eeprom_bus(0x52)).read_eeprom(0x52, 256))
+    assert found["product"] == "Waveshare PoE M.2 HAT+ (B)"
+    assert found["pid"] == "0x6d87"
+
+
+def test_a_slave_that_stretches_the_clock_is_waited_for():
+    eeprom = SimEeprom(0x50, COUNTING)
+    bus = SimBus([eeprom], stretch=5)
+    assert master(bus).read_eeprom(0x50, 32) == COUNTING[:32]
+
+
+def test_an_address_with_nothing_there_is_a_nack_not_an_error():
+    bus = SimBus([SimEeprom(0x52, COUNTING)])
+    i2c = master(bus)
+    assert i2c.read_eeprom(0x50, 256) is None
+    assert i2c.read_eeprom(0x52, 4) == COUNTING[:4], "the bus is left usable"
+    assert bus.master == [1, 1]
+
+
+def test_an_offset_that_is_not_acked_is_no_read():
+    bus = SimBus([SimEeprom(0x50, COUNTING, nack_offset=True)])
+    assert master(bus).read_eeprom(0x50, 256) is None
+    assert bus.master == [1, 1]
+
+
+def test_a_bare_bus_nacks_every_address_quickly():
+    """No HAT: the pull-ups answer every bit with a 1, so every address is
+    a NACK and the scan is eight short transfers."""
+    bus = SimBus()
+    i2c = master(bus)
+    assert [i2c.read_eeprom(a, 256) for a in probe.ID_EEPROM_ADDRS] == [None] * 8
+    assert bus.ops < 8 * 60
+
+
+def test_a_clock_held_low_is_an_error_within_its_deadline():
+    bus = SimBus(stuck={SCL})
+    t = time.monotonic()
+    with pytest.raises(probe.IdBusError, match=r"SCL \(GPIO1, pin 28\) stayed low for 25 ms"):
+        master(bus).read_eeprom(0x50, 256)
+    assert time.monotonic() - t < 1.0
+
+
+def test_a_data_line_held_low_is_clocked_nine_times_then_an_error():
+    bus = SimBus(stuck={SDA})
+    with pytest.raises(probe.IdBusError, match=r"SDA \(GPIO0, pin 27\) stayed low through "
+                       "nine clocks"):
+        master(bus).read_eeprom(0x50, 256)
+
+
+def test_a_slave_left_part_way_through_a_byte_is_clocked_free():
+    """An earlier reader killed mid-read leaves the EEPROM driving a 0: the
+    bus clear's clocks finish its byte, it lets go, and the read goes on."""
+    eeprom = SimEeprom(0x50, COUNTING)
+    eeprom.ptr = 0
+    eeprom.load()
+    eeprom.out[SDA] = 0
+    eeprom.byte = 0                              # a byte of zeroes, part sent
+    bus = SimBus([eeprom])
+    assert master(bus).read_eeprom(0x50, 16) == COUNTING[:16]
+
+
+def test_another_driver_on_the_bus_is_an_error():
+    """SDA reads low while the master releases it to send a 1."""
+    class Contender(SimEeprom):
+        def falling(self):
+            self.out[SDA] = 0                     # drives the data line, always
+    bus = SimBus([Contender(0x50, COUNTING)])
+    bus.slaves[0].out[SDA] = 1
+    with pytest.raises(probe.IdBusError, match="something else drives the HAT ID bus"):
+        master(bus).read_eeprom(0x50, 256)
+
+
+# --- the GPIO character device, behind open_id_lines --------------------------
+
+
+@pytest.fixture
+def chip(tmp_path, monkeypatch, real_gpio):
+    """A Pi 3B+'s tree with no I2C bus on the ID pins, its GPIO chips as the
+    kernel answers for them, and a bus behind lines 0 and 1."""
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    monkeypatch.setattr(probe, "ID_BUS_HALF_PERIOD_S", 0)
+
+    def make(bus=None, **kw):
+        fake = FakeGpioChip(tmp_path, bus if bus is not None else SimBus(), **kw)
+        monkeypatch.setattr(probe, "gpio_ioctl", fake)
+        return fake
+    return make
+
+
+def test_a_hat_is_read_through_the_gpio_lines(chip):
+    fake = chip(eeprom_bus(0x50))
+    found, readable = probe.id_bus_scan(0, (0, 1))
+    assert readable is True
+    assert list(found) == ["0x50"]
+    assert found["0x50"]["product"] == "Waveshare PoE M.2 HAT+ (B)"
+    assert len(fake.requests) == 1, "one request for both lines, kept for the whole scan"
+
+
+def test_the_lines_are_released_and_freed_after_a_read(chip):
+    fake = chip(eeprom_bus(0x50))
+    probe.id_bus_scan(0, (0, 1))
+    assert not fake.requested(), "the line fd is closed"
+    assert fake.bus.master == [1, 1]
+    assert fake.direction == ["input", "input"]
+    assert fake.reconfigured, "made inputs before they were freed"
+    assert [fake.info(o) for o in (0, 1)] == [(False, "input", "")] * 2
+
+
+def test_the_lines_are_released_and_freed_after_a_bus_error(chip):
+    fake = chip(SimBus(stuck={SCL}))
+    with pytest.raises(probe.IdBusError, match="SCL"):
+        probe.id_bus_scan(0, (0, 1))
+    assert not fake.requested()
+    assert fake.direction == ["input", "input"]
+
+
+def test_v1_where_the_kernel_has_no_v2(chip):
+    """A kernel before 5.10 answers a v2 request EINVAL: the same read is
+    made through the v1 line handle."""
+    fake = chip(eeprom_bus(0x51), uapi="v1")
+    found, readable = probe.id_bus_scan(0, (0, 1))
+    assert readable is True
+    assert list(found) == ["0x51"]
+    assert not fake.requested()
+
+
+def test_v2_is_used_where_there_is_v2(chip, monkeypatch):
+    chip(eeprom_bus(0x50))
+    seen = []
+    real = probe.open_id_lines
+
+    def spy(chip_path, offsets):
+        lines = real(chip_path, offsets)
+        seen.append(lines.uapi)
+        return lines
+    monkeypatch.setattr(probe, "open_id_lines", spy)
+    probe.id_bus_scan(0, (0, 1))
+    assert seen == ["v2"]
+
+
+@pytest.mark.parametrize("uapi", ["v2", "v1"])
+def test_lines_another_driver_has_are_not_taken(chip, uapi):
+    """pinctrl-bcm2835 is not strict, so the kernel would hand over a pin a
+    driver has muxed; a GPIO driver's request shows in the line info."""
+    fake = chip(uapi=uapi, busy={0: "i2c-gpio", 1: "i2c-gpio"})
+    with pytest.raises(probe.IdBusError, match="GPIO0/1 are in use by i2c-gpio: the HAT ID "
+                       "bus was not read"):
+        probe.id_bus_scan(0, (0, 1))
+    assert fake.requests == [], "not even asked for"
+
+
+def test_a_request_refused_ebusy_names_who_has_the_lines(chip):
+    fake = chip(busy_on_request="w1-gpio")
+    with pytest.raises(probe.IdBusError, match="GPIO0/1 are in use by w1-gpio"):
+        probe.id_bus_scan(0, (0, 1))
+    assert len(fake.requests) == 1
+
+
+def test_a_release_that_fails_is_a_host_not_as_found(chip):
+    chip(eeprom_bus(0x50), fail_release=True)
+    with pytest.raises(probe.HostNotAsFoundError, match="after reading the HAT ID bus on "
+                       "GPIO0/1: releasing them failed"):
+        probe.id_bus_scan(0, (0, 1))
+
+
+def test_a_line_left_an_output_is_a_host_not_as_found(chip, monkeypatch):
+    """A read that dies in its START, with both lines pulled low, and a
+    release that cannot happen: the kernel then shows both outputs, and
+    that is said."""
+    chip(SimBus(), fail_release=True)
+    real_set = probe.GpioLinesV2.set
+
+    def set_then_die(self, i, value):
+        real_set(self, i, value)
+        if i == SCL and value == 0:
+            raise OSError(5, "Input/output error")
+    monkeypatch.setattr(probe.GpioLinesV2, "set", set_then_die)
+    with pytest.raises(probe.HostNotAsFoundError) as err:
+        probe.id_bus_scan(0, (0, 1))
+    msg = str(err.value)
+    assert "the read failed: [Errno 5] Input/output error" in msg
+    assert "releasing them failed: Input/output error" in msg
+    assert "they were GPIO0 input, GPIO1 input and are now GPIO0 output, GPIO1 output" in msg
+
+
+def test_the_header_chip_is_found_by_its_label_not_its_number(chip):
+    """A Pi 5 on 6.12: the RP1 is gpiochip15, after the SoC's four."""
+    chip(eeprom_bus(0x50), header="pinctrl-rp1",
+         chips={11: "gpio-brcmstb@107d517c00", 12: "gpio-brcmstb@107d517c20",
+                13: "gpio-brcmstb@107d508500", 14: "gpio-brcmstb@107d508520",
+                15: "pinctrl-rp1"})
+    assert probe.id_bus_gpiochip().endswith("/dev/gpiochip15")
+    assert list(probe.id_bus_scan(0, (0, 1))[0]) == ["0x50"]
+
+
+def test_no_header_chip_is_an_error_naming_what_there_is(chip):
+    chip(chips={3: "some-other-gpio"}, header="pinctrl-bcm2835")
+    with pytest.raises(probe.IdBusError, match=r"no GPIO chip labelled pinctrl-rp1 or "
+                       r"pinctrl-bcm2711 or pinctrl-bcm2835 .*some-other-gpio at /dev/gpiochip3"):
+        probe.id_bus_scan(0, (0, 1))
+
+
+def test_a_board_with_no_gpio_chips_at_all_is_an_error(tmp_path, monkeypatch, real_gpio):
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    with pytest.raises(probe.IdBusError, match=r"\(found no chip\)"):
+        probe.id_bus_scan(0, (0, 1))
+
+
+# --- which way a Pi's ID bus is read ------------------------------------------
+
+
+@pytest.fixture
+def no_commands(monkeypatch):
+    """Reading the ID bus runs no command: neither overlay nor module."""
+    def refuse(args, timeout=15):
+        pytest.fail(f"the ID bus read ran {args!r}")
+    monkeypatch.setattr(probe, "sh", refuse)
+    monkeypatch.setattr(probe, "sh_checked", refuse)
+
+
+def test_an_i2c_0_already_there_is_read_through_and_the_gpio_left_alone(
+        tmp_path, monkeypatch, no_commands):
+    """A camera Pi (its overlay brings up the i2c0mux) or one with
+    dtparam=i2c_vc=on in config.txt."""
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    _w(tmp_path, "/dev/i2c-0", "")
+    read = []
+    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length: read.append(
+        (bus, addr, length)) or (WAVESHARE_BLOB if addr == 0x52 else None))
+    monkeypatch.setattr(probe, "open_id_lines", lambda *a: pytest.fail("GPIO requested"))
+    found, readable = probe.id_bus_scan(0, (0, 1))
+    assert readable is True
+    assert list(found) == ["0x52"]
+    assert read == [(0, a, 256) for a in range(0x50, 0x58)]
+
+
+def test_with_no_i2c_0_the_gpio_lines_are_read(tmp_path, monkeypatch, no_commands):
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    monkeypatch.setattr(probe, "eeprom_read", lambda *a: pytest.fail("i2c-dev read"))
+    asked = []
+    monkeypatch.setattr(probe, "open_id_lines",
+                        lambda chip, offsets: asked.append((chip, offsets)) or eeprom_bus(0x50))
+    found, readable = probe.id_bus_scan(0, (0, 1))
+    assert readable is True
+    assert list(found) == ["0x50"]
+    assert asked == [(str(tmp_path) + "/dev/gpiochip0", (0, 1))]
+
+
+@pytest.mark.parametrize("loaded", [False, True])
+def test_a_kernel_adapter_with_no_node_is_an_error_and_its_pins_are_left_alone(
+        tmp_path, monkeypatch, no_commands, loaded):
+    """The i2c0mux bound with no i2c-dev: the pins are the kernel's, and the
+    probe neither loads the module nor takes them."""
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    monkeypatch.setattr(probe, "BUS_SETTLE_S", 0.0)
+    _w(tmp_path, "/sys/bus/i2c/devices/i2c-0/name", "i2c-11-mux (chan_id 0)\n")
+    if loaded:
+        (tmp_path / "sys/module/i2c_dev").mkdir(parents=True)
+    monkeypatch.setattr(probe, "open_id_lines", lambda *a: pytest.fail("GPIO requested"))
+    with pytest.raises(probe.IdBusError, match=r"the kernel's I2C adapter i2c-0 \(i2c-11-mux "
+                       r"\(chan_id 0\)\) is on GPIO0/1, but there is no /dev/i2c-0"):
+        probe.id_bus_scan(0, (0, 1))
+
+
+def test_a_node_udev_is_still_making_is_waited_for(tmp_path, monkeypatch, no_commands):
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    _w(tmp_path, "/sys/bus/i2c/devices/i2c-0/name", "i2c-11-mux (chan_id 0)\n")
+    (tmp_path / "sys/module/i2c_dev").mkdir(parents=True)
+    monkeypatch.setattr("time.sleep", lambda s: _w(tmp_path, "/dev/i2c-0", ""))
+    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length: None)
+    assert probe.id_bus_scan(0, (0, 1)) == ({}, True)
+
+
+def test_a_board_without_gpio_lines_for_it_takes_the_bus_it_has(tmp_path, monkeypatch,
+                                                                no_commands):
+    """The Orange Pi: no node, no enable, no GPIO read -- not read."""
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    monkeypatch.setattr(probe, "open_id_lines", lambda *a: pytest.fail("GPIO requested"))
+    assert probe.id_bus_scan(1, None) == ({}, False)
+
+
+def test_no_board_declares_an_enable_for_the_id_bus():
+    for buses in probe.HEADER_BUSES.values():
+        assert "enable" not in buses
+    assert probe.HEADER_BUSES["rpi"]["id_gpio"] == (0, 1)
+
+
+# --- sh_checked ---------------------------------------------------------------
+
+
+def test_sh_checked_returns_stdout(real_sh_checked):
+    assert probe.sh_checked([sys.executable, "-c", "print(' ok ')"]) == "ok"
+
+
+def test_sh_checked_raises_on_a_non_zero_exit_naming_the_command(real_sh_checked):
+    cmd = [sys.executable, "-c", "import sys; sys.stderr.write('no such overlay'); sys.exit(3)"]
+    with pytest.raises(probe.CommandFailedError) as err:
+        probe.sh_checked(cmd)
+    assert str(err.value) == f"`{' '.join(cmd)}` exited 3: no such overlay"
+
+
+def test_sh_checked_raises_on_a_timeout_and_says_it_may_still_run(real_sh_checked):
+    cmd = [sys.executable, "-c", "import time; time.sleep(30)"]
+    t = time.monotonic()
+    with pytest.raises(probe.CommandFailedError, match=r"did not finish within 1 s; it was "
+                       "killed, and what it started may still be running"):
+        probe.sh_checked(cmd, timeout=1)
+    assert time.monotonic() - t < 10
+
+
+def test_a_timeout_returns_while_a_grandchild_still_holds_the_pipes(real_sh_checked):
+    """sudo killed, the `dtparam -r` it started still stuck in the kernel
+    with sudo's stdout: the probe does not wait for that to end."""
+    cmd = [sys.executable, "-c", "import subprocess, sys, time; "
+           "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(8)']); "
+           "time.sleep(8)"]
+    t = time.monotonic()
+    with pytest.raises(probe.CommandFailedError, match="did not finish within 1 s"):
+        probe.sh_checked(cmd, timeout=1)
+    assert probe.sh(cmd, timeout=1) == ""
+    assert time.monotonic() - t < 6
+
+
+def test_sh_checked_raises_on_a_command_that_is_not_there(tmp_path, real_sh_checked):
+    with pytest.raises(probe.CommandFailedError, match="could not be run"):
+        probe.sh_checked([str(tmp_path / "dtparam")])
+
+
+def test_sh_stays_lenient_for_reads():
+    """vcgencmd and the lens reader: an answer that is not there is
+    reported as not read by their callers."""
+    assert probe.sh([sys.executable, "-c", "import sys; sys.exit(1)"]) == ""
+    assert probe.sh([sys.executable, "-c", "import time; time.sleep(30)"], timeout=1) == ""
+
+
+def test_no_command_that_changes_the_host_goes_through_the_lenient_sh():
+    import inspect
+    import re
+
+    src = inspect.getsource(probe)
+    lenient = [m.group(0) for m in re.finditer(r"(?<![\w.])sh\([^\n]*", src)]
+    assert lenient, "the reads are found"
+    for call in lenient:
+        assert not re.search(r"dtparam|modprobe|I2C_DEV|DTPARAM|enable", call), call

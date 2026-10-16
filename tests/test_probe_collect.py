@@ -310,6 +310,15 @@ def fake_root(tmp_path, monkeypatch):
         return ""
     monkeypatch.setattr(probe, "sh", fake_sh)
     monkeypatch.setattr(fpga, "sh", fake_sh)
+    # Nothing that changes the host can succeed here, as on a machine
+    # without passwordless sudo; so the header's user bus is already up,
+    # and a plain collect needs no command. (The ID bus is the bare
+    # simulated one: conftest.bare_id_bus.)
+    _w(tmp_path, "/dev/i2c-1", "")
+
+    def no_change(args, timeout=15):
+        raise probe.CommandFailedError(f"`{' '.join(args)}` exited 1: not on this machine")
+    monkeypatch.setattr(probe, "sh_checked", no_change)
     # nor any fpgas-acorn-verify, which runs under sudo: a stub that says it
     # was not run, so no test reaches the real thing whatever `which` answers
     monkeypatch.setattr(fpga, "sh_split", lambda args, timeout=15: ("", "stub: not run"))
@@ -335,7 +344,10 @@ def test_collect_walks_the_tree(fake_root):
     assert d["cameras"] == []           # looked, and this tree has none
     assert d["hat_fw"] is None
     assert d["hat_eeproms"] == {}
-    assert d["header_i2c"] is None
+    # both header buses read, and nothing on either: the ID bus through its
+    # GPIO lines, the user bus (already up) through /dev/i2c-1
+    assert d["header_i2c"] == []
+    assert d["header_buses_read"] == {"id": True, "user": True}
     assert d["throttled"] == "0x0"
     ifaces = {i["name"]: i for i in d["interfaces"]}
     assert ifaces["eth0"]["onboard"] is True
@@ -1370,6 +1382,12 @@ def test_hat_firmware_dir_and_id_bus(fake_root, monkeypatch):
     assert v["summary"]["hat_uuid"] == "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a"
 
 
+def _commands(monkeypatch, fake):
+    """`fake` answers every command the probe runs, the checked ones too."""
+    monkeypatch.setattr(probe, "sh", fake)
+    monkeypatch.setattr(probe, "sh_checked", fake)
+
+
 class Dtparam:
     """The runtime dtparam list as raspberrypi/utils' dtparam keeps it
     (dtmerge/dtoverlay_main.c): `-l` lists "<i>:  <name> <params>", `-r <i>`
@@ -1408,11 +1426,12 @@ class Dtparam:
 def test_a_user_bus_that_is_off_is_brought_up_for_the_scan_and_put_back(fake_root, monkeypatch):
     """Most of the fleet leaves the header's user bus disabled, and a HAT
     known only by the devices it puts there is invisible without it. So the
-    bus gets the same on-demand enable the ID bus has -- and the same
-    tidying up, because the host is not ours to reconfigure."""
+    bus gets an on-demand enable -- and the tidying up after it, because the
+    host is not ours to reconfigure."""
     _w(fake_root, "/dev/i2c-0", "")                  # the ID bus is already up
+    (fake_root / "dev/i2c-1").unlink()               # the user bus is off
     dt = Dtparam(fake_root, {"i2c_arm=on": 1})
-    monkeypatch.setattr(probe, "sh", dt)
+    _commands(monkeypatch, dt)
     monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: ["20", "3c"] if bus == 1 else [])
     monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
 
@@ -1498,20 +1517,28 @@ class SlowUdev:
         self.pending = []
 
 
+class SlowUserBus(SlowUdev):
+    """The same udev, with the user bus's node the late one."""
+
+    LATE: ClassVar[dict[str, int]] = {"i2c_arm=on": 1}
+    PROMPT: ClassVar[dict[str, int]] = {}
+
+
 def test_a_bus_whose_node_is_late_is_waited_for_and_still_put_back(tmp_path, monkeypatch):
-    """udev makes /dev/i2c-0 after `dtparam i2c_vc=on` has returned, and on
-    a Pi Zero that is late enough to be missed: rpiz-4's census probe
-    (2026-09-26) looked straight away, found no node, called the bus
-    unreadable -- and, thinking it had brought nothing up, left the overlay
-    loaded, where `dtparam -l` still showed it hours later."""
+    """udev makes the node after `dtparam` has returned, and on a Pi Zero
+    that is late enough to be missed: rpiz-4's census probe (2026-09-26)
+    looked straight away, found no node, called the bus unreadable -- and,
+    thinking it had brought nothing up, left the overlay loaded, where
+    `dtparam -l` still showed it hours later. (That was the ID bus's
+    i2c_vc, which the probe no longer applies; the user bus's i2c_arm is
+    waited for the same way.)"""
     zero_bonnet_tree(tmp_path)
-    udev = SlowUdev(tmp_path)
+    udev = SlowUserBus(tmp_path)
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
     monkeypatch.setattr(probe, "BUS_SETTLE_S", 5.0)
     monkeypatch.setattr(probe, "sh", udev.sh)
     monkeypatch.setattr("time.sleep", udev.settle)
     monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
-    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
 
     d = probe.collect()
     v = probe.verdict(d)
@@ -1520,77 +1547,78 @@ def test_a_bus_whose_node_is_late_is_waited_for_and_still_put_back(tmp_path, mon
     assert v["summary"]["header"] == ["Waveshare PoE-ETH-USB-HUB-HAT"]
     udev.settle()                                    # and after the probe has gone
     assert udev.overlays == [], "left as it was found"
-    assert not udev.node(0).exists()
     assert not udev.node(1).exists()
+    assert not any("i2c_vc" in " ".join(c) for c in udev.calls)
 
 
 def test_an_overlay_whose_bus_never_appears_is_still_removed(fake_root, monkeypatch):
     """The overlay was applied whether or not its node turned up, so taking
     it back out is this probe's job either way."""
-    _w(fake_root, "/dev/i2c-1", "")
+    (fake_root / "dev/i2c-1").unlink()
     dt = Dtparam(fake_root)                           # applies, but no node turns up
-    monkeypatch.setattr(probe, "sh", dt)
-    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
-    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
+    _commands(monkeypatch, dt)
 
     d = probe.collect()
-    assert d["header_buses_read"] == {"id": False, "user": True}
-    assert ["sudo", "dtparam", "i2c_vc=on"] in dt.calls
+    assert d["header_buses_read"] == {"id": True, "user": False}
+    assert ["sudo", "dtparam", "i2c_arm=on"] in dt.calls
     assert dt.removals() == [["sudo", "dtparam", "-r", "0"]]
     assert dt.entries == []
 
 
 def test_only_the_probes_own_dtparam_is_removed(fake_root, monkeypatch):
     """A bare `dtparam -r` takes out the LAST runtime entry, whoever applied
-    it. Something else's, applied before the probe or while it read, stays."""
-    _w(fake_root, "/dev/i2c-1", "")
-    dt = Dtparam(fake_root, {"i2c_vc=on": 0}, entries=["dtparam audio=on"])
+    it. Something else's, applied before the probe or while it read, stays
+    -- and the host is then not as the probe found it, which it says."""
+    (fake_root / "dev/i2c-1").unlink()
+    dt = Dtparam(fake_root, {"i2c_arm=on": 1}, entries=["dtparam audio=on"])
 
-    def scan(bus, addr, length=256):
-        if not any(e.endswith("spi=on") for e in dt.entries):
-            dt.entries.append("dtparam spi=on")       # someone else, meanwhile
-    monkeypatch.setattr(probe, "sh", dt)
-    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
-    monkeypatch.setattr(probe, "eeprom_read", scan)
+    def scan(bus, **kw):
+        dt.entries.append("dtparam spi=on")           # someone else, meanwhile
+        return []
+    _commands(monkeypatch, dt)
+    monkeypatch.setattr(probe, "i2c_scan", scan)
 
-    probe.collect()
+    with pytest.raises(probe.HostNotAsFoundError) as err:
+        probe.collect()
     assert dt.removals() == [["sudo", "dtparam", "-r", "1"]]
     assert dt.entries == ["dtparam audio=on", "dtparam spi=on"]
+    assert ('dtparam -l was ["dtparam audio=on"] and is now '
+            '["dtparam audio=on", "dtparam spi=on"]') in str(err.value)
 
 
-def test_an_apply_that_added_nothing_is_not_undone(fake_root, monkeypatch):
+def test_an_apply_that_added_nothing_is_an_error_and_is_not_undone(fake_root, monkeypatch):
     """No entry of its own, nothing to take out: removing the last entry
-    then would remove someone else's."""
-    _w(fake_root, "/dev/i2c-1", "")
+    then would remove someone else's. And a dtparam that exited 0 having
+    added nothing is not a bus that is simply off: it is said."""
+    (fake_root / "dev/i2c-1").unlink()
     dt = Dtparam(fake_root, entries=["dtoverlay vc4-kms-v3d"])
     real = dt.__call__
 
     def failing(args, timeout=15):
-        if args == ["sudo", "dtparam", "i2c_vc=on"]:
+        if args == ["sudo", "dtparam", "i2c_arm=on"]:
             dt.calls.append(list(args))
-            return ""                                  # the apply failed
+            return ""                                  # the apply did nothing
         return real(args, timeout)
-    monkeypatch.setattr(probe, "sh", failing)
-    monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: [])
-    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
+    _commands(monkeypatch, failing)
 
-    probe.collect()
+    with pytest.raises(probe.CommandFailedError, match="does not show it as the one new entry"):
+        probe.collect()
     assert dt.removals() == []
     assert dt.entries == ["dtoverlay vc4-kms-v3d"]
 
 
 def test_what_was_brought_up_is_put_back_when_the_read_fails(fake_root, monkeypatch):
-    _w(fake_root, "/dev/i2c-1", "")
-    dt = Dtparam(fake_root, {"i2c_vc=on": 0})
+    (fake_root / "dev/i2c-1").unlink()
+    dt = Dtparam(fake_root, {"i2c_arm=on": 1})
 
-    def boom(bus, addr, length=256):
+    def boom(bus, **kw):
         raise OSError("the bus hung")
-    monkeypatch.setattr(probe, "sh", dt)
-    monkeypatch.setattr(probe, "eeprom_read", boom)
+    _commands(monkeypatch, dt)
+    monkeypatch.setattr(probe, "i2c_scan", boom)
     with pytest.raises(OSError, match="the bus hung"):
-        probe.id_bus_scan(0, ["sudo", "dtparam", "i2c_vc=on"])
+        probe.user_bus_scan(1, ["sudo", "dtparam", "i2c_arm=on"])
     assert dt.entries == []
-    assert not (fake_root / "dev/i2c-0").exists()
+    assert not (fake_root / "dev/i2c-1").exists()
 
 
 # --- i2c-dev before dtparam --------------------------------------------------
@@ -1613,7 +1641,7 @@ class Host:
         self.root, self.calls = root, []
         self.adapters, self.loaded = set(adapters), loaded
         # what `dtparam <param>` enables: param -> bus
-        self.overlay_makes = overlay_makes or {"i2c_vc=on": 0, "i2c_arm=on": 1}
+        self.overlay_makes = overlay_makes or {"i2c_arm=on": 1}
         self.overlays: list[int] = []
         self.sync()
 
@@ -1666,19 +1694,22 @@ def pi(fake_root, monkeypatch):
 
     def make(**kw):
         host = Host(fake_root, **kw)
-        monkeypatch.setattr(probe, "sh", host.sh)
+        _commands(monkeypatch, host.sh)
         return host
     return make
 
 
 def test_a_bus_missing_only_i2c_dev_is_opened_by_loading_it(pi):
-    """rpi3-netv2: both controllers up, no i2c-dev. Loading the module is
-    the whole fix; no dtparam is run, and the module is unloaded after."""
-    host = pi(adapters={0, 1})
+    """rpi3-netv2: the user bus's controller up, no i2c-dev. Loading the
+    module is the whole fix; no dtparam is run, and the module is unloaded
+    after. (The ID bus has no controller here, and is read through its
+    GPIO lines with no command at all.)"""
+    host = pi(adapters={1})
     d = probe.collect()
     assert d["header_buses_read"] == {"id": True, "user": True}
     assert MODPROBE in host.calls
-    assert not any(c[:2] == ["sudo", "dtparam"] for c in host.calls)
+    # `dtparam -l` is read, before and after, and nothing is applied
+    assert {c[2] for c in host.calls if c[:2] == ["sudo", "dtparam"]} == {"-l"}
     assert UNLOAD in host.calls
     assert not host.loaded, "left as it was found"
 
@@ -1686,7 +1717,7 @@ def test_a_bus_missing_only_i2c_dev_is_opened_by_loading_it(pi):
 def test_dtparam_is_the_fallback_when_the_module_brings_nothing_up(pi):
     """The user bus's controller is off: i2c-dev alone makes no node for it,
     so its overlay is applied -- and both are put back."""
-    host = pi(adapters={0})
+    host = pi(adapters=set())
     d = probe.collect()
     assert d["header_buses_read"] == {"id": True, "user": True}
     assert host.calls.index(MODPROBE) < host.calls.index(["sudo", "dtparam", "i2c_arm=on"])
@@ -1699,7 +1730,7 @@ def test_dtparam_is_the_fallback_when_the_module_brings_nothing_up(pi):
 
 
 def test_a_loaded_i2c_dev_is_neither_loaded_again_nor_unloaded(pi):
-    host = pi(adapters={0}, loaded=True)
+    host = pi(adapters=set(), loaded=True)
     d = probe.collect()
     assert d["header_buses_read"] == {"id": True, "user": True}
     assert MODPROBE not in host.calls
@@ -1714,6 +1745,108 @@ def test_buses_already_there_need_no_command(pi):
     probe.collect()
     assert MODPROBE not in host.calls
     assert not any(c[:2] == ["sudo", "dtparam"] for c in host.calls)
+
+
+# --- a host not put back is an error (mithro/rpi-hwid issue #91) -------------
+
+
+def _checked(monkeypatch, host, fail):
+    """`host` answers every command; the checked ones for which `fail(args)`
+    gives a message raise it, as sh_checked does for a timeout or a non-zero
+    exit, having done nothing."""
+    def sh_checked(args, timeout=15):
+        why = fail(list(args))
+        if why:
+            host.calls.append(list(args))
+            raise probe.CommandFailedError(why)
+        return host.sh(args, timeout)
+    monkeypatch.setattr(probe, "sh_checked", sh_checked)
+
+
+REMOVE_HANGS = ("`sudo dtparam -r 0` did not finish within 15 s; it was killed, and what it "
+                "started may still be running")
+
+
+def test_an_undo_that_times_out_stops_the_probe_naming_it(pi, monkeypatch):
+    """The #91 run: the removal of the probe's overlay hung, and the probe
+    said nothing and exited 0. Now it stops: the command, that the host is
+    not as it was found, and what differs. The module behind the hung
+    removal is not unloaded -- that could hang the same way."""
+    host = pi(adapters=set())
+    _checked(monkeypatch, host, lambda a: REMOVE_HANGS if a[:3] == ["sudo", "dtparam", "-r"]
+             else None)
+    with pytest.raises(probe.HostNotAsFoundError) as err:
+        probe.collect()
+    msg = str(err.value)
+    assert msg.startswith("the host is not as it was found, after `sudo modprobe i2c-dev`, "
+                          "`sudo dtparam i2c_arm=on`: ")
+    assert "putting it back failed: " + REMOVE_HANGS in msg
+    assert "not tried after that: `sudo modprobe -r i2c-dev`" in msg
+    assert 'dtparam -l was [] and is now ["dtparam i2c_arm=on"]' in msg
+    assert "i2c-dev loaded was false and is now true" in msg
+    assert UNLOAD not in host.calls
+
+
+def test_a_module_that_will_not_unload_stops_the_probe(pi, monkeypatch):
+    host = pi(adapters={1})
+    _checked(monkeypatch, host, lambda a: "`sudo modprobe -r i2c-dev` exited 1: "
+             "modprobe: FATAL: Module i2c_dev is in use." if a == UNLOAD else None)
+    with pytest.raises(probe.HostNotAsFoundError, match=r"i2c_dev is in use\..*i2c-dev loaded "
+                       r"was false and is now true"):
+        probe.collect()
+
+
+def test_a_dtparam_list_that_fails_afterwards_is_not_read_as_no_overlays(pi, monkeypatch):
+    """A `dtparam -l` that timed out used to read as "No overlays loaded",
+    which is exactly what a host put back looks like."""
+    host = pi(adapters=set())
+    lists = []
+
+    def fail(args):
+        if args == ["sudo", "dtparam", "-l"]:
+            lists.append(args)
+            # the state before, around the apply, the undo's own: then the check
+            if len(lists) > 4:
+                return "`sudo dtparam -l` did not finish within 15 s"
+        return None
+    _checked(monkeypatch, host, fail)
+    with pytest.raises(probe.HostNotAsFoundError,
+                       match="its state could not be read again: `sudo dtparam -l` did not"):
+        probe.collect()
+
+
+def test_a_state_that_cannot_be_read_first_changes_nothing(pi, monkeypatch):
+    host = pi(adapters=set())
+    _checked(monkeypatch, host, lambda a: "`sudo dtparam -l` exited 1: sudo: a password is "
+             "required" if a == ["sudo", "dtparam", "-l"] else None)
+    with pytest.raises(probe.CommandFailedError, match="a password is required"):
+        probe.collect()
+    assert MODPROBE not in host.calls
+    assert not host.loaded
+
+
+def test_an_apply_that_fails_is_an_error_and_what_came_before_is_put_back(pi, monkeypatch):
+    host = pi(adapters=set())
+    _checked(monkeypatch, host, lambda a: "`sudo dtparam i2c_arm=on` exited 1: * Failed to "
+             "apply overlay" if a == ["sudo", "dtparam", "i2c_arm=on"] else None)
+    with pytest.raises(probe.CommandFailedError, match="Failed to apply overlay"):
+        probe.collect()
+    assert UNLOAD in host.calls, "the module it loaded first is unloaded"
+    assert not host.loaded
+
+
+def test_the_lens_probe_puts_back_its_module_or_says_so(fake_root, monkeypatch):
+    host = Host(fake_root, adapters={10})
+    _commands(monkeypatch, host.sh)
+    assert probe.lens_chip_probe(10) == "unread: the reader printed nothing"
+    assert host.calls[0] == MODPROBE
+    assert host.calls[-1] == UNLOAD
+    assert not host.loaded
+    _checked(monkeypatch, host, lambda a: "`sudo modprobe -r i2c-dev` exited 1: in use"
+             if a == UNLOAD else None)
+    with pytest.raises(probe.HostNotAsFoundError, match="after `sudo modprobe i2c-dev`: "
+                       "putting it back failed: `sudo modprobe -r i2c-dev` exited 1: in use"):
+        probe.lens_chip_probe(10)
 
 
 def test_an_orange_pi_with_an_adapter_but_no_node_still_runs_no_sudo(opi_root):
