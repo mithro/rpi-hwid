@@ -710,6 +710,15 @@ class HeaderBus(object):
 # The ID bus as a Pi has it: what BitBangI2C names when it is not told.
 ID_BUS = HeaderBus("id", 0, (0, 1))
 
+# The probe document's "header_buses", and a label input's
+# sources.header_buses (docs/LABEL-INPUT.md): every header-bus read this
+# probe makes runs no dtparam and no modprobe, puts back and checks the
+# pins' function and pad (on a board that declares the bus's GPIO lines:
+# every Pi) and checks the kernel's i2c modules and nodes, and fails rather
+# than leave any of them changed.
+# A document without it came from an older probe, which did not.
+HEADER_BUSES_AS_FOUND = "as-found"
+
 
 # How long a node may take to appear once the kernel has the adapter and
 # i2c-dev is loaded: udev makes /dev/i2c-N after the fact, and on a Pi Zero
@@ -2197,6 +2206,10 @@ def collect(user_bus=None, cameras=True):
         header_buses, d["header_buses_skipped"] = None, "compute-module"
     elif user_bus is None:
         user_bus = True
+    # How this probe reads a header bus: HEADER_BUSES_AS_FOUND says the pins,
+    # modules and nodes are put back and checked, which a reader of the
+    # document (a label input's sources) can tell an older probe by.
+    d["header_buses"] = HEADER_BUSES_AS_FOUND
     if header_buses:
         d["hat_eeproms"], id_read = id_bus_scan(header_buses["id"], header_buses["id_gpio"])
         if user_bus:

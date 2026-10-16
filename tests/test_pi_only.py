@@ -100,7 +100,10 @@ def test_it_writes_the_pi_facts_and_nothing_of_the_boards(pi5):
     # not probed, so none listed: no FPGA or Tiny Tapeout label comes of it
     assert s["fpga"] == []
     assert s["tinytapeout"] == []
-    assert set(doc["sources"].values()) == {"rpi-hwid"}
+    sources = dict(doc["sources"])
+    # how the header buses were read, which fpgas-verify checks for
+    assert sources.pop("header_buses") == "as-found"
+    assert set(sources.values()) == {"rpi-hwid"}
 
 
 def test_an_empty_header_with_the_user_bus_unread_is_not_read(pi5):
@@ -134,6 +137,7 @@ def test_user_bus_off_is_scanned_through_its_gpio_lines_with_no_command(pi5):
     assert not (root / "dev/i2c-1").exists(), "left as it was found"
     # read, and nothing there: a bare header, which the Pi label can say
     assert doc["summary"]["header"] == []
+    assert doc["sources"]["header_buses"] == "as-found"
 
 
 def test_user_bus_names_a_hat_known_only_by_its_chips(pi5, monkeypatch):
@@ -343,6 +347,7 @@ def test_a_host_left_as_found_exits_zero(pi5, capsys):
     out, err = capsys.readouterr()
     assert err == ""
     assert json.loads(out)["summary"]["header"] == []
+    assert json.loads(out)["sources"]["header_buses"] == "as-found"
     assert [c for c in calls if "dtparam" in c or "modprobe" in c] == []
 
 

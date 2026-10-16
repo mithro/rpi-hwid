@@ -273,7 +273,8 @@ def pi_only_label_input(host: str, user_bus: bool = False) -> dict[str, Any]:
     lists what each reads and puts back). Raises probe.ProbeError, and
     returns no document, when a command that changes the host fails, the
     host is not left as it was found, or a header bus it reads cannot be
-    read."""
+    read. sources.header_buses says this rpi-hwid reads the header buses
+    that way (probe.HEADER_BUSES_AS_FOUND)."""
     from rpi_hwid import label_input, probe
 
     # no cameras: the site's pi-identified event has none, and the two
@@ -282,7 +283,9 @@ def pi_only_label_input(host: str, user_bus: bool = False) -> dict[str, Any]:
     d["verdict"] = probe.verdict(d)
     summary = dict(d["verdict"]["summary"])
     summary["header"] = header_as_read(summary.get("header"), d, user_bus)
-    return label_input.build(host, summary, dict.fromkeys(summary, "rpi-hwid"))
+    sources: dict[str, Any] = dict.fromkeys(summary, "rpi-hwid")
+    sources["header_buses"] = d["header_buses"]
+    return label_input.build(host, summary, sources)
 
 
 def cmd_label_input(args: argparse.Namespace) -> int:

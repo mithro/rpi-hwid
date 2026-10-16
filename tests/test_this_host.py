@@ -63,6 +63,7 @@ def test_the_document_is_the_pis_facts_and_fpgas_verifys_boards(host):
     assert board["flash_extended_id"] == "0x4d0180"
     assert doc["sources"]["fpga"] == "fpgas-verify"
     assert doc["sources"]["serial"] == "rpi-hwid"
+    assert doc["sources"]["header_buses"] == "as-found", "the Pi-only read's, carried over"
     # and the tree's USB Ethernet dongle
     assert label_input.missing(doc) == {"board": [], "fpga[0]": [], "usb_net[0]": []}
 
