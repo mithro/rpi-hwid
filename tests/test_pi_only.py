@@ -319,7 +319,7 @@ def test_pins_not_put_back_make_label_input_fail(pi5, monkeypatch, capsys):
     assert rc == 1
     assert out == ""
     assert err.startswith("label-input: the host is not as it was found, after reading the "
-                          "HAT ID bus on GPIO0/1: putting it back failed: `sudo "
+                          "HAT ID bus on GPIO0/1: putting it back failed: `sudo -n "
                           "/usr/bin/pinctrl set 0 ip` exited 1: no pinctrl")
     assert "GPIO0 was function gpio_in (no pad config shown), and is now function alt0" in err
 

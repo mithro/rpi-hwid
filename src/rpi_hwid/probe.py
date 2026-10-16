@@ -3,9 +3,10 @@
 
 This module is deliberately a single, dependency-free file that runs on any
 Raspberry Pi with python3 >= 3.5 (sudo is wanted for the Pi's own firmware
-tools; the I2C header is read directly, through /dev/i2c-* or, for the
-a header bus where the kernel has none, /dev/gpiochip*, needing neither sudo
-nor i2c-tools), so it can be
+tools; the I2C header is read directly, through /dev/i2c-* or, for a header
+bus where the kernel has none, /dev/gpiochip*, needing no i2c-tools, but
+root or passwordless sudo to read its pins' state from debugfs first and
+put them back after), so it can be
 sent to a host over ssh without installing anything:
 
     ssh pi@host 'python3 -' --json < src/rpi_hwid/probe.py
@@ -222,6 +223,12 @@ class IdBusError(HeaderBusError):
 
 class UserBusError(HeaderBusError):
     """The header's user bus (GPIO2/3) could not be read, and why."""
+
+
+def failure(e):
+    """An exception as a message says it: its text, or its name where it has
+    none (a KeyboardInterrupt)."""
+    return str(e) or type(e).__name__
 
 
 def sh_checked(args, timeout=15):
@@ -803,7 +810,7 @@ class HostChanges(object):
             return
         why = []
         if cause is not None:
-            why.append("the read failed: %s" % cause)
+            why.append("the read failed: %s" % failure(cause))
         if failed is not None:
             why.append("putting it back failed: %s" % failed[0])
             if failed[1]:
@@ -1094,7 +1101,7 @@ class GpioLines(object):
             return
         why = []
         if cause is not None:
-            why.append("the read failed: %s" % cause)
+            why.append("the read failed: %s" % failure(cause))
         if released is not None:
             why.append("releasing them failed: %s" % (released.strerror or released))
         if asked is not None:
@@ -1405,20 +1412,26 @@ class BitBangI2C(object):
 # the bus is touched (the lines asked for, or the node opened) and after
 # (the lines freed, or the node's reads done), in every way this host
 # allows, and the two must agree:
-#   * the kernel's debugfs (root's): pinctrl/<device>/pins gives the
-#     function (the driver's pin_dbg_show: "function none (none) in hi;
-#     ..." on the RP1, "function gpio_in in hi; ..." on a BCM2835) and
-#     pinconf-pins the pad (the generic dump: the RP1's pull, slew and drive
-#     as values; a flag such as "input enabled" is printed whatever its
-#     value, so the input's state is not there; a BCM2711's pull when it has
-#     one; nothing on a BCM2835, whose pulls cannot be read back);
-#   * raspi-utils' `pinctrl get`, which reads the registers itself
-#     ("0: no    pu | -- // ID_SDA/GPIO0 = none": function, pull, and the
-#     level, "--" where the RP1 pad's input is off).
-# None of them at all is an error: nothing is taken to be unchanged. A pin
-# left different is put back with `pinctrl set` (`no` is the RP1's "none",
-# which turns its input off again; the pull with it where that changed) and
-# read once more.
+#   * the kernel's debugfs, which is root's: read directly when the probe
+#     runs as root, and otherwise through `sudo -n` (`ls`, `cat`), which
+#     never asks for a password. pinctrl/<device>/pins gives the function
+#     (the driver's pin_dbg_show: "function none (none) in hi; ..." on the
+#     RP1, "function gpio_in in hi; ..." on a BCM2835) and pinconf-pins the
+#     pad (the generic dump: the RP1's pull, slew and drive strength as
+#     values; a flag such as "input enabled" is printed whatever its value,
+#     so the input's state is not there; a BCM2711's pull when it has one;
+#     nothing on a BCM2835, whose pad config cannot be read back, which is
+#     its state rather than an error);
+#   * raspi-utils' `pinctrl get`, where it is installed, which reads the
+#     registers itself ("0: no    pu | -- // ID_SDA/GPIO0 = none":
+#     function, pull, and the level, "--" where the RP1 pad's input is off).
+# debugfs is required: it is the only place a pad's drive strength and slew
+# show (a Pi 5's runtime i2c_arm overlay left the drive at 12 mA where it
+# was 4 mA, 2026-10-17), so where it cannot be read either way the bus is not
+# touched and the read is an error. A pin left different is put back with
+# `sudo -n pinctrl set` (`no` is the RP1's "none", which turns its input off
+# again; the pull with it where that changed) and read once more; what
+# `pinctrl set` cannot set (a drive strength) stays different, and is said.
 
 DEBUGFS_PINCTRL = "/sys/kernel/debug/pinctrl"
 PINCTRL = "/usr/bin/pinctrl"                 # raspi-utils
@@ -1431,6 +1444,42 @@ PINCTRL_GET_LINE = re.compile(
 
 class PinsUnreadableError(Exception):
     """The pins' state could not be read this way, and why."""
+
+
+def is_root():
+    """Whether the probe runs as root, and so reads debugfs itself."""
+    return os.geteuid() == 0
+
+
+def debugfs_list(path):
+    """The names in the debugfs directory `path` (as on the host), sorted:
+    listed directly by root, and otherwise with `sudo -n ls -1`, which never
+    asks for a password. PinsUnreadableError saying why not."""
+    if is_root():
+        try:
+            return sorted(os.listdir(ROOT + path))
+        except OSError as e:
+            raise PinsUnreadableError("%s: %s" % (path, e.strerror))
+    try:
+        out = sh_checked(["sudo", "-n", "ls", "-1", path])
+    except CommandFailedError as e:
+        raise PinsUnreadableError(str(e))
+    return sorted(name for name in out.split("\n") if name)
+
+
+def debugfs_text(path):
+    """The debugfs file `path` (as on the host): read directly by root, and
+    otherwise with `sudo -n cat`. PinsUnreadableError saying why not."""
+    if is_root():
+        try:
+            with open(ROOT + path) as f:
+                return f.read()
+        except (OSError, IOError) as e:
+            raise PinsUnreadableError("%s: %s" % (path, e.strerror))
+    try:
+        return sh_checked(["sudo", "-n", "cat", path])
+    except CommandFailedError as e:
+        raise PinsUnreadableError(str(e))
 
 
 def debugfs_pull(config):
@@ -1451,18 +1500,10 @@ def debugfs_pull(config):
 
 def pins_from_debugfs(label, offsets):
     """{offset: {"function", "config", "pull"}} for lines `offsets` of the
-    GPIO chip `label`, from debugfs; PinsUnreadableError saying why not."""
-    base = ROOT + DEBUGFS_PINCTRL
-    try:
-        devices = sorted(os.listdir(base))
-    except OSError as e:
-        raise PinsUnreadableError("%s: %s" % (DEBUGFS_PINCTRL, e.strerror))
-    for dev in devices:
-        try:
-            with open(base + "/" + dev + "/pins") as f:
-                pins = f.read()
-        except (OSError, IOError) as e:
-            raise PinsUnreadableError("%s/%s/pins: %s" % (DEBUGFS_PINCTRL, dev, e.strerror))
+    GPIO chip `label`, from debugfs (debugfs_list, debugfs_text: directly as
+    root, otherwise through `sudo -n`); PinsUnreadableError saying why not."""
+    for dev in debugfs_list(DEBUGFS_PINCTRL):
+        pins = debugfs_text(DEBUGFS_PINCTRL + "/" + dev + "/pins")
         rows = {}
         for m in re.finditer(r"^pin (\d+) \([^)]*\) (\d+):(\S+) (.*)$", pins, re.M):
             if m.group(3) == label and int(m.group(2)) in offsets:
@@ -1470,13 +1511,8 @@ def pins_from_debugfs(label, offsets):
         if len(rows) != len(offsets):
             continue
         configs = {}
-        if os.path.exists(base + "/" + dev + "/pinconf-pins"):
-            try:
-                with open(base + "/" + dev + "/pinconf-pins") as f:
-                    text = f.read()
-            except (OSError, IOError) as e:
-                raise PinsUnreadableError("%s/%s/pinconf-pins: %s" % (
-                    DEBUGFS_PINCTRL, dev, e.strerror))
+        if "pinconf-pins" in debugfs_list(DEBUGFS_PINCTRL + "/" + dev):
+            text = debugfs_text(DEBUGFS_PINCTRL + "/" + dev + "/pinconf-pins")
             configs = dict((int(m.group(1)), m.group(2).strip()) for m in
                            re.finditer(r"^pin (\d+) \([^)]*\): ?(.*)$", text, re.M))
         out = {}
@@ -1523,8 +1559,10 @@ PIN_READERS = (("debugfs", lambda label, offsets: pins_from_debugfs(label, offse
 def pin_states(label, bus, sources=None):
     """{offset: {source: state}} for `bus`'s pins (`bus.gpio`) of the GPIO
     chip `label`, read every way there is (`sources` None), or exactly the
-    ways in `sources`, so that before and after are read alike. The bus's
-    error when none can be read, or one of `sources` cannot."""
+    ways in `sources`, so that before and after are read alike. debugfs is
+    required, `pinctrl get` taken where it is there: the bus's error when
+    debugfs cannot be read (`pinctrl get` alone shows no pad drive or slew),
+    or one of `sources` cannot."""
     offsets = bus.gpio
     states = dict((o, {}) for o in offsets)
     why = []
@@ -1539,9 +1577,10 @@ def pin_states(label, bus, sources=None):
         for o in offsets:
             states[o][name] = pins[o]
     read_by = set(name for o in offsets for name in states[o])
-    if not read_by or (sources is not None and read_by != set(sources)):
-        raise bus.error("the function of %s cannot be read, so it could not be put "
-                        "back after %s was read: %s" % (
+    if "debugfs" not in read_by or (sources is not None and read_by != set(sources)):
+        raise bus.error("the function and pad of %s cannot be read, so they could not be put "
+                        "back after %s was read: %s (only the kernel's debugfs, read as root "
+                        "or with `sudo -n`, shows a pad's drive strength and slew)" % (
                             bus.gpio_text(), bus.name, "; ".join(why)))
     return states
 
@@ -1570,7 +1609,7 @@ def pinctrl_set_args(offset, before, after):
         fn = "a" + m.group(1) if m else PINCTRL_FUNCTIONS.get(kernel)
     if not fn or fn in ("??", "gp"):
         return None
-    args = ["sudo", PINCTRL, "set", str(offset), fn]
+    args = ["sudo", "-n", PINCTRL, "set", str(offset), fn]
     pulls = [(s.get("pull"), after.get(name, {}).get("pull"))
              for name, s in before.items()]
     changed = [b for b, a in pulls if b and b != a]
@@ -1593,7 +1632,7 @@ def put_pins_back(label, bus, before, cause=None):
 
     def fail(after, why):
         if cause is not None:
-            why = ["the read failed: %s" % cause] + why
+            why = ["the read failed: %s" % failure(cause)] + why
         raise HostNotAsFoundError(
             NOT_AS_FOUND + "after reading %s on %s: %s%s" % (
                 bus.name, bus.gpio_text(), "; ".join(why),

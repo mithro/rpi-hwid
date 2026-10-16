@@ -2,8 +2,9 @@
 
 The probe (``rpi_hwid.probe``) is fed to ``python3 -`` on the host over
 stdin, so nothing is installed there; it wants passwordless sudo for the
-Pi's firmware tools (vcgencmd) and for `pinctrl set`, which puts a header
-bus's pins back as they were found, and reads the 40-pin header straight
+Pi's firmware tools (vcgencmd), for reading a header bus's pins' state from
+debugfs (`sudo -n cat`) and for `pinctrl set`, which puts them back as they
+were found, and reads the 40-pin header straight
 from /dev/i2c-* (the i2c group) or, where a bus has no node, by driving its
 pins through /dev/gpiochip* (the gpio group). Each host is
 tried with each user in turn, and a host that no user can reach is

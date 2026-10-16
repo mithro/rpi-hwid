@@ -19,6 +19,7 @@ from id_bus_fixtures import (
     SimBus,
     SimEeprom,
     eeprom_bus,
+    sniffed_bus,
 )
 from rpi_hwid import probe
 from test_probe_collect import _w
@@ -127,6 +128,9 @@ def chip(tmp_path, monkeypatch, real_gpio):
     kernel answers for them, and a bus behind lines 0 and 1."""
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
     monkeypatch.setattr(probe, "I2C_HALF_PERIOD_S", 0)
+    # not root, as the probe runs over ssh: debugfs through `sudo -n`,
+    # whoever runs the tests (a test that wants root says so)
+    monkeypatch.setattr(probe, "is_root", lambda: False)
 
     def make(bus=None, **kw):
         """`offsets=(2, 3)` puts the bus on the user bus's lines."""
@@ -284,8 +288,8 @@ def test_an_rp1s_pins_are_put_back_to_no_function(chip):
     found, readable = probe.id_bus_scan(0, (0, 1))
     assert readable is True
     assert list(found) == ["0x50"]
-    assert fake.pinctrl_sets == [["sudo", probe.PINCTRL, "set", "0", "no"],
-                                 ["sudo", probe.PINCTRL, "set", "1", "no"]]
+    assert fake.pinctrl_sets == [["sudo", "-n", probe.PINCTRL, "set", "0", "no"],
+                                 ["sudo", "-n", probe.PINCTRL, "set", "1", "no"]]
     assert fake.function == ["none", "none"]
     assert fake.input_on == [False, False], "the pads' input is off again"
 
@@ -297,20 +301,113 @@ def test_with_debugfs_alone_a_changed_function_is_seen_and_said(chip):
     with pytest.raises(probe.HostNotAsFoundError) as err:
         probe.id_bus_scan(0, (0, 1))
     msg = str(err.value)
-    assert ("putting it back failed: `sudo /usr/bin/pinctrl set 0 no` could not be run"
+    assert ("putting it back failed: `sudo -n /usr/bin/pinctrl set 0 no` could not be run"
             in msg)
     assert "GPIO0 was function none (" in msg
     assert "and is now function gpio (" in msg
     assert fake.function == ["gpio", "gpio"]
 
 
-def test_with_pinctrl_alone_the_function_is_still_put_back(chip):
-    """No debugfs (not root): raspi-utils' `pinctrl get` reads the pins."""
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_with_pinctrl_alone_the_bus_is_not_touched(chip, role):
+    """No debugfs (unmounted, or root's and no passwordless sudo): `pinctrl
+    get` reads the function and pull but not the pad's drive strength or
+    slew, so the pins could not be shown to be as found, and neither the
+    lines nor anything else is touched."""
+    number, gpio, name, pins = BUSES[role]
     fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, debugfs=False,
-                pinctrl=True)
-    probe.id_bus_scan(0, (0, 1))
+                pinctrl=True, offsets=gpio)
+    error = probe.IdBusError if role == "id" else probe.UserBusError
+    with pytest.raises(error) as err:
+        _scan(role, number, gpio)
+    msg = str(err.value)
+    assert msg.startswith(f"the function and pad of {pins} cannot be read, so they could not be "
+                          f"put back after {name} was read: debugfs: `sudo -n ls -1 "
+                          "/sys/kernel/debug/pinctrl` exited 1: ls: /sys/kernel/debug/pinctrl: "
+                          "No such file or directory")
+    assert msg.endswith("(only the kernel's debugfs, read as root or with `sudo -n`, shows a "
+                        "pad's drive strength and slew)")
+    assert fake.requests == []
+    assert fake.pinctrl_sets == []
     assert fake.function == ["none", "none"]
-    assert fake.input_on == [False, False]
+
+
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_debugfs_refused_by_sudo_is_loud_before_anything_is_touched(chip, tmp_path,
+                                                                    monkeypatch, role):
+    """Not root, and sudo asks for a password: `sudo -n` says so rather than
+    prompt, and the bus is not read, through its node or its lines."""
+    number, gpio, name, pins = BUSES[role]
+    fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True,
+                offsets=gpio, sudo_fails=True)
+    monkeypatch.setattr(probe, "is_root", lambda: False)
+    error = probe.IdBusError if role == "id" else probe.UserBusError
+    with pytest.raises(error, match=f"the function and pad of {pins} cannot be read, so they "
+                       f"could not be put back after {name} was read: debugfs: `sudo -n ls -1 "
+                       "/sys/kernel/debug/pinctrl` exited 1: sudo: a password is required"):
+        _scan(role, number, gpio)
+    assert fake.requests == []
+    _w(tmp_path, f"/dev/i2c-{number}", "")
+    monkeypatch.setattr(probe, "eeprom_read", lambda *a, **kw: pytest.fail("read"))
+    monkeypatch.setattr(probe, "i2c_scan", lambda *a, **kw: pytest.fail("read"))
+    with pytest.raises(error, match="sudo: a password is required"):
+        _scan(role, number, gpio)
+    assert fake.pinctrl_sets == []
+
+
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_a_non_root_read_reads_debugfs_through_sudo_n(chip, monkeypatch, role):
+    number, gpio, _, _ = BUSES[role]
+    fake = chip(SimBus(), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True, offsets=gpio)
+    monkeypatch.setattr(probe, "is_root", lambda: False)
+    real_open = open
+
+    def no_debugfs(path, *a, **kw):
+        assert "/sys/kernel/debug" not in str(path), f"opened {path} directly"
+        return real_open(path, *a, **kw)
+    monkeypatch.setattr("builtins.open", no_debugfs)
+    monkeypatch.setattr(probe.os, "listdir", lambda p: pytest.fail(f"listed {p} directly"))
+    assert _scan(role, number, gpio)[1] is True
+    assert fake.sudo_reads, "debugfs read"
+    assert all(c[:2] == ["sudo", "-n"] for c in fake.sudo_reads)
+    assert ["sudo", "-n", "cat", "/sys/kernel/debug/pinctrl/1f000d0000.gpio-pinctrl-rp1/"
+            "pinconf-pins"] in fake.sudo_reads
+    assert fake.function == ["none", "none"], "and put back"
+
+
+@pytest.mark.parametrize(("euid", "root"), [(0, True), (1000, False)])
+def test_root_is_the_effective_uid(monkeypatch, euid, root):
+    monkeypatch.setattr(probe.os, "geteuid", lambda: euid)
+    assert probe.is_root() is root
+
+
+def test_a_root_read_reads_debugfs_itself(chip, monkeypatch):
+    fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True)
+    monkeypatch.setattr(probe, "is_root", lambda: True)
+    assert list(probe.id_bus_scan(0, (0, 1))[0]) == ["0x50"]
+    assert fake.sudo_reads == []
+    assert fake.function == ["none", "none"]
+
+
+@pytest.mark.parametrize("root", [False, True])
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_a_pad_drive_the_read_changed_is_a_host_not_as_found(chip, monkeypatch, role, root):
+    """What the Pi 5 measured (2026-10-17): the pads' drive went from 4 mA
+    to 12 mA. `pinctrl set` cannot set a drive, so the function is put back
+    and the drive is said, root or not."""
+    number, gpio, name, pins = BUSES[role]
+    fake = chip(SimBus(), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True, offsets=gpio,
+                drive_on_request=12)
+    monkeypatch.setattr(probe, "is_root", lambda: root)
+    with pytest.raises(probe.HostNotAsFoundError) as err:
+        _scan(role, number, gpio)
+    msg = str(err.value)
+    assert msg.startswith(f"the host is not as it was found, after reading {name} on {pins}: "
+                          "`pinctrl set` did not put them back; ")
+    assert "output drive strength (4 mA)); pinctrl no pu, input off, and is now" in msg
+    assert "output drive strength (12 mA)); pinctrl no pu, input off" in msg
+    assert fake.function == ["none", "none"], "what could be put back was"
+    assert fake.drive_ma == [12, 12]
 
 
 def test_a_put_back_that_fails_is_loud_and_names_the_pins(chip):
@@ -320,7 +417,7 @@ def test_a_put_back_that_fails_is_loud_and_names_the_pins(chip):
         probe.id_bus_scan(0, (0, 1))
     msg = str(err.value)
     assert msg.startswith("the host is not as it was found, after reading the HAT ID bus on "
-                          "GPIO0/1: putting it back failed: `sudo /usr/bin/pinctrl set 0 no` "
+                          "GPIO0/1: putting it back failed: `sudo -n /usr/bin/pinctrl set 0 no` "
                           "exited 1: failed")
     assert ("GPIO0 was function none (input bias disabled, input bias pull down (0 ohms), "
             "input bias pull up (1 ohms)") in msg
@@ -334,7 +431,7 @@ def test_a_put_back_that_changes_nothing_is_loud(chip, monkeypatch):
     real = fake.pinctrl_sh
 
     def set_does_nothing(args, timeout=15):
-        if args[2:3] == ["set"]:
+        if args[3:4] == ["set"]:
             fake.pinctrl_sets.append(list(args))
             return ""
         return real(args, timeout)
@@ -351,9 +448,9 @@ def test_pins_that_cannot_be_read_at_all_are_not_touched(chip):
     with pytest.raises(probe.IdBusError) as err:
         probe.id_bus_scan(0, (0, 1))
     msg = str(err.value)
-    assert msg.startswith("the function of GPIO0/1 cannot be read, so it could not be put "
-                          "back after the HAT ID bus was read: debugfs: "
-                          "/sys/kernel/debug/pinctrl: No such file or directory")
+    assert msg.startswith("the function and pad of GPIO0/1 cannot be read, so they could not be "
+                          "put back after the HAT ID bus was read: debugfs: ")
+    assert "/sys/kernel/debug/pinctrl: No such file or directory" in msg
     assert "pinctrl: /usr/bin/pinctrl is not there" in msg
     assert fake.requests == []
     assert fake.function == ["none", "none"]
@@ -675,7 +772,7 @@ def test_pins_a_node_read_muxed_are_put_back(through_node, role):
                      else ["20", "3c"])
     assert reads, "read through the node"
     assert set(reads) == {number}
-    assert fake.pinctrl_sets == [["sudo", probe.PINCTRL, "set", str(o), "ip"] for o in gpio]
+    assert fake.pinctrl_sets == [["sudo", "-n", probe.PINCTRL, "set", str(o), "ip"] for o in gpio]
     assert fake.function == ["gpio_in", "gpio_in"], "as the firmware left them"
 
 
@@ -687,7 +784,7 @@ def test_pins_a_node_read_muxed_that_cannot_be_put_back_are_loud(through_node, r
         _scan(role, number, gpio)
     msg = str(err.value)
     assert msg.startswith(f"the host is not as it was found, after reading {name} on {pins}: "
-                          f"putting it back failed: `sudo /usr/bin/pinctrl set {gpio[0]} ip` "
+                          f"putting it back failed: `sudo -n /usr/bin/pinctrl set {gpio[0]} ip` "
                           "exited 1: failed")
     assert (f"GPIO{gpio[0]} was function gpio_in (no pad config shown); pinctrl ip pull "
             "unknown, input on, and is now function alt0 (no pad config shown); pinctrl a0 pull "
@@ -717,8 +814,8 @@ def test_a_node_read_whose_pins_cannot_be_read_is_not_made(chip, tmp_path, monke
     monkeypatch.setattr(probe, "eeprom_read", lambda *a, **kw: pytest.fail("read"))
     monkeypatch.setattr(probe, "i2c_scan", lambda *a, **kw: pytest.fail("read"))
     error = probe.IdBusError if role == "id" else probe.UserBusError
-    with pytest.raises(error, match=f"the function of {pins} cannot be read, so it could not "
-                       f"be put back after {name} was read"):
+    with pytest.raises(error, match=f"the function and pad of {pins} cannot be read, so they "
+                       f"could not be put back after {name} was read"):
         _scan(role, number, gpio)
 
 
@@ -740,8 +837,8 @@ def test_the_user_bus_is_scanned_through_its_gpio_lines(chip):
     assert not fake.requested(), "the lines are released and freed"
     assert fake.bus.master == [1, 1]
     # the Pi 5: GPIO2/3 had no function, and have none again
-    assert fake.pinctrl_sets == [["sudo", probe.PINCTRL, "set", "2", "no"],
-                                 ["sudo", probe.PINCTRL, "set", "3", "no"]]
+    assert fake.pinctrl_sets == [["sudo", "-n", probe.PINCTRL, "set", "2", "no"],
+                                 ["sudo", "-n", probe.PINCTRL, "set", "3", "no"]]
     assert fake.function == ["none", "none"]
     assert fake.input_on == [False, False]
 
@@ -804,7 +901,7 @@ def test_user_bus_pins_not_put_back_are_loud_and_name_the_user_bus(chip):
         probe.user_bus_scan(1, (2, 3))
     msg = str(err.value)
     assert msg.startswith("the host is not as it was found, after reading the header's user bus "
-                          "on GPIO2/3: putting it back failed: `sudo /usr/bin/pinctrl set 2 no` "
+                          "on GPIO2/3: putting it back failed: `sudo -n /usr/bin/pinctrl set 2 no` "
                           "exited 1: failed")
     assert "GPIO2 was function none (" in msg
     assert fake.function == ["gpio", "gpio"]
@@ -812,8 +909,9 @@ def test_user_bus_pins_not_put_back_are_loud_and_name_the_user_bus(chip):
 
 def test_user_bus_pins_that_cannot_be_read_are_not_touched(chip):
     fake = chip(SimBus(), header="pinctrl-rp1", chips=RP1_CHIPS, debugfs=False, offsets=(2, 3))
-    with pytest.raises(probe.UserBusError, match="the function of GPIO2/3 cannot be read, so it "
-                       "could not be put back after the header's user bus was read"):
+    with pytest.raises(probe.UserBusError, match="the function and pad of GPIO2/3 cannot be "
+                       "read, so they could not be put back after the header's user bus was "
+                       "read"):
         probe.user_bus_scan(1, (2, 3))
     assert fake.requests == []
 
@@ -834,3 +932,105 @@ def test_no_header_chip_for_the_user_bus_names_it(chip):
 def test_each_bus_is_named_by_its_own_pins(role, want):
     bus = probe.HeaderBus(role, 0, {"id": (0, 1), "user": (2, 3)}[role])
     assert (bus.line(0), bus.line(1), bus.name, bus.gpio_text(), bus.consumer) == want
+
+
+# --- the user-bus scan writes nothing (what the wire carries) -----------------
+
+
+def _probe_transfer(addr, answers):
+    """The one transfer present() may make at `addr`: the address with the
+    read bit, and where a device ACKs it one byte read and NACKed, then
+    STOP."""
+    out = [("address", (addr << 1) | 1, "ACK" if answers else "NACK")]
+    if answers:
+        out.append(("read", 0x5A, "NACK"))
+    return [*out, ("STOP",)]
+
+
+def test_present_sends_the_read_address_and_reads_one_byte_and_nothing_else():
+    bus, wire = sniffed_bus(SimEeprom(0x20, b"\x5a"))
+    i2c = master(bus)
+    assert i2c.present(0x20) is True
+    assert i2c.present(0x21) is False
+    assert wire.events == [("START",), *_probe_transfer(0x20, True),
+                           ("START",), *_probe_transfer(0x21, False)]
+
+
+def test_the_whole_user_bus_scan_writes_nothing(chip):
+    """Every address 0x03-0x77, through the GPIO character device as the
+    probe makes it: one transfer each, the read bit always, never a data
+    byte sent and never the write bit."""
+    bus, wire = sniffed_bus(SimEeprom(0x20, b"\x5a"), SimEeprom(0x3C, b"\x5a"))
+    chip(bus, offsets=(2, 3), pinctrl=True)
+    assert probe.user_bus_scan(1, (2, 3)) == (["20", "3c"], True)
+    assert wire.transfers() == [_probe_transfer(a, a in (0x20, 0x3C))
+                                for a in range(0x03, 0x78)]
+    assert not [e for e in wire.events if e[0] == "written"]
+    assert all(e[1] & 1 for e in wire.events if e[0] == "address"), "the read bit, always"
+
+
+def test_the_sniffer_sees_a_write():
+    """The transcript is not blind to writes: an EEPROM read's offset bytes
+    and its address with the write bit show as written."""
+    bus, wire = sniffed_bus(SimEeprom(0x50, bytes(range(256))))
+    master(bus).read_eeprom(0x50, 2)
+    assert wire.transfers() == [
+        [("address", 0xA0, "ACK"), ("written", 0, "ACK"), ("written", 0, "ACK")],
+        [("address", 0xA1, "ACK"), ("read", 0, "ACK"), ("read", 1, "NACK"), ("STOP",)]]
+
+
+# --- an interrupt mid-read still puts the host back ---------------------------
+#
+# read_as_found, the GPIO path's close and the lens read catch BaseException,
+# not Exception, so that a KeyboardInterrupt (or SystemExit) in the middle of
+# a read still frees the lines and puts the pins back -- and then goes on.
+
+
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_an_interrupt_mid_bit_bang_frees_the_lines_and_puts_the_pins_back(chip, monkeypatch,
+                                                                         role):
+    number, gpio, _, _ = BUSES[role]
+    fake = chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True,
+                offsets=gpio)
+
+    def interrupted(self, *a):
+        self.lines.set(self.SCL, 0)             # part way through a transfer
+        raise KeyboardInterrupt
+    monkeypatch.setattr(probe.BitBangI2C, "read_eeprom" if role == "id" else "present",
+                        interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        _scan(role, number, gpio)
+    assert len(fake.requests) == 1
+    assert not fake.requested(), "the lines are released and freed"
+    assert fake.bus.master == [1, 1]
+    assert fake.function == ["none", "none"], "the pins are put back"
+    assert fake.input_on == [False, False]
+
+
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_an_interrupt_mid_node_read_puts_the_pins_back(through_node, monkeypatch, role):
+    fake, _ = through_node(role, pinctrl=True)
+    number, gpio, _, _ = BUSES[role]
+
+    def interrupted(*a, **kw):
+        fake.driver_muxes()
+        raise KeyboardInterrupt
+    monkeypatch.setattr(probe, "eeprom_read", interrupted)
+    monkeypatch.setattr(probe, "i2c_scan", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        _scan(role, number, gpio)
+    assert fake.function == ["gpio_in", "gpio_in"], "the pins are put back"
+    assert fake.pinctrl_sets == [["sudo", "-n", probe.PINCTRL, "set", str(o), "ip"]
+                                 for o in gpio]
+
+
+def test_an_interrupt_whose_pins_cannot_be_put_back_says_so(chip, monkeypatch):
+    chip(eeprom_bus(0x50), header="pinctrl-rp1", chips=RP1_CHIPS, pinctrl=True,
+         pinctrl_set_fails=True)
+
+    def interrupted(self, *a):
+        raise KeyboardInterrupt
+    monkeypatch.setattr(probe.BitBangI2C, "read_eeprom", interrupted)
+    with pytest.raises(probe.HostNotAsFoundError, match=r"after reading the HAT ID bus on "
+                       r"GPIO0/1: the read failed: KeyboardInterrupt; putting it back failed"):
+        probe.id_bus_scan(0, (0, 1))

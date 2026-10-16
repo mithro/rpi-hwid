@@ -188,6 +188,77 @@ class SimBus:
         self.closed, self.closed_with = True, cause
 
 
+class Sniffer:
+    """A passive listener on a SimBus (it never drives a line) that writes
+    down what the master puts on the wire, as a slave sees it: each START
+    and STOP, and each nine clocks as one byte. The first byte after a
+    START is the address, with its R/W bit; after an address with the read
+    bit, a byte whose data bits the master left released is a read, and one
+    it drove a bit of low is the master sending; after the write bit, every
+    byte is data the master sends. The transcript, in `events`:
+
+        ("START",), ("STOP",)
+        ("address", value, "ACK" | "NACK")    # value = addr << 1 | R/W
+        ("read", value, "ACK" | "NACK")       # the master's ACK or NACK
+        ("written", value, "ACK" | "NACK")    # a data byte the master sent
+
+    `transfers()` splits it at each START."""
+
+    def __init__(self, bus):
+        self.out = [1, 1]
+        self.hold = 0
+        self.bus = bus
+        self.events: list[tuple] = []
+        self.bits: list[tuple[int, int]] = []
+        self.first = False
+        self.reading = False
+
+    def start(self):
+        self.events.append(("START",))
+        self.bits, self.first, self.reading = [], True, False
+
+    def stop(self):
+        self.events.append(("STOP",))
+        self.bits = []
+
+    def rising(self, sda):
+        # the level on the wire, and whether the master was pulling SDA low
+        self.bits.append((sda, self.bus.master[SDA]))
+        if len(self.bits) < 9:
+            return
+        value = sum(level << (7 - i) for i, (level, _) in enumerate(self.bits[:8]))
+        ack = "ACK" if self.bits[8][0] == 0 else "NACK"
+        master_drove = any(master == 0 for _, master in self.bits[:8])
+        if self.first:
+            self.events.append(("address", value, ack))
+            self.first, self.reading = False, bool(value & 1)
+        elif self.reading and not master_drove:
+            self.events.append(("read", value, ack))
+        else:
+            self.events.append(("written", value, ack))
+        self.bits = []
+
+    def falling(self):
+        pass
+
+    def transfers(self):
+        out: list[list[tuple]] = []
+        for e in self.events:
+            if e[0] == "START":
+                out.append([])
+            elif out:
+                out[-1].append(e)
+        return out
+
+
+def sniffed_bus(*slaves, **kw):
+    """A SimBus with `slaves` and a Sniffer on it, as (bus, sniffer)."""
+    bus = SimBus(list(slaves), **kw)
+    sniffer = Sniffer(bus)
+    bus.slaves.append(sniffer)
+    return bus, sniffer
+
+
 def eeprom_bus(addr=0x50, memory=WAVESHARE_BLOB, **kw):
     return SimBus([SimEeprom(addr, memory)], **kw)
 
@@ -233,12 +304,22 @@ class FakeGpioChip:
     (bcm2835_pmx_free), with no pull that can be read. `debugfs` writes
     /sys/kernel/debug/pinctrl as the kernel shows them; `pinctrl` installs
     /usr/bin/pinctrl, whose get and set `pinctrl_sh` answers as raspi-utils
-    does, `set` failing when `pinctrl_set_fails`."""
+    does, `set` failing when `pinctrl_set_fails`. debugfs is root's:
+    `pinctrl_sh` also answers `sudo -n ls -1` and `sudo -n cat` on it from
+    the tree (recorded in `sudo_reads`), refused as without passwordless
+    sudo when `sudo_fails`. Each pad's drive strength is `drive_ma` (mA, the
+    RP1's 4 by default); `drive_on_request` is what asking for the lines
+    sets it to, which nothing puts back -- `pinctrl set` cannot set it."""
 
     def __init__(self, root, bus, chips=None, header="pinctrl-bcm2835", uapi="v2",
                  busy=None, busy_on_request=None, fail_release=False, debugfs=True,
-                 pinctrl=False, pinctrl_set_fails=False, offsets=(0, 1)):
+                 pinctrl=False, pinctrl_set_fails=False, offsets=(0, 1), sudo_fails=False,
+                 drive_on_request=None):
         self.root, self.bus, self.uapi = root, bus, uapi
+        self.sudo_fails = sudo_fails
+        self.sudo_reads: list[list[str]] = []
+        self.drive_ma = [4, 4]
+        self.drive_on_request = drive_on_request
         self.offsets = tuple(offsets)
         self.consumer = ""
         self.rp1 = header == "pinctrl-rp1"
@@ -292,13 +373,14 @@ class FakeGpioChip:
         for n in range(max(self.offsets) + 2):
             fn = (self.function[self.offsets.index(n)] if n in self.offsets
                   else ("alt5" if self.rp1 else "gpio_in"))
+            drive = self.drive_ma[self.offsets.index(n)] if n in self.offsets else 4
             shown = f"function {fn} ({fn})" if self.rp1 else f"function {fn}"
             pins.append(f"pin {n} (gpio{n}) {n}:{self.header} {shown} in hi; irq 0 (none)")
             # a flag is printed whatever its value (pinconf_generic_dump_one)
             conf.append(f"pin {n} (gpio{n}): " + (
                 "input bias disabled, input bias pull down (0 ohms), input bias pull up "
                 "(1 ohms), input enabled, input schmitt enabled, output enabled, slew rate "
-                "(0x0), output drive strength (4 mA)" if self.rp1 else ""))
+                f"(0x0), output drive strength ({drive} mA)" if self.rp1 else ""))
         (d / "pins").write_text("\n".join(pins) + "\n")
         (d / "pinconf-pins").write_text("\n".join(conf) + "\n")
         # another controller, whose lines 0 and 1 are not the header's
@@ -326,11 +408,27 @@ class FakeGpioChip:
         return f"{offset:2d}: {fs:>2s} {drive} {pull} | {level} // {name} = {fname}"
 
     def pinctrl_sh(self, args, timeout=15):
-        """`pinctrl get` and `sudo pinctrl set` as raspi-utils answers them."""
+        """`pinctrl get` and `sudo -n pinctrl set` as raspi-utils answers
+        them, and `sudo -n ls -1` and `sudo -n cat` on debugfs."""
         self.free_if_closed()
+        args = list(args)
         if args[:2] == [probe.PINCTRL, "get"]:
             return "\n".join(self.pinctrl_get_line(int(n)) for n in args[2].split(","))
-        if args[:3] == ["sudo", probe.PINCTRL, "set"]:
+        if args[:3] == ["sudo", "-n", "cat"] or args[:4] == ["sudo", "-n", "ls", "-1"]:
+            assert args[-1].startswith(probe.DEBUGFS_PINCTRL), args
+            self.sudo_reads.append(args)
+            if self.sudo_fails:
+                raise probe.CommandFailedError(
+                    f"`{' '.join(args)}` exited 1: sudo: a password is required")
+            path = self.root / args[-1].lstrip("/")
+            if not path.exists():
+                raise probe.CommandFailedError(
+                    f"`{' '.join(args)}` exited 1: {args[2]}: {args[-1]}: No such file or "
+                    "directory")
+            if args[2] == "ls":
+                return "\n".join(sorted(e.name for e in os.scandir(path)))
+            return path.read_text().strip()
+        if args[:4] == ["sudo", "-n", probe.PINCTRL, "set"]:
             self.pinctrl_sets.append(list(args))
             if not (self.root / "usr/bin/pinctrl").exists():
                 raise probe.CommandFailedError(
@@ -338,7 +436,7 @@ class FakeGpioChip:
                     "command not found")
             if self.pinctrl_set_fails:
                 raise probe.CommandFailedError(f"`{' '.join(args)}` exited 1: failed")
-            n, fs = self.offsets.index(int(args[3])), args[4]
+            n, fs = self.offsets.index(int(args[4])), args[5]
             if fs == "no":
                 self.function[n], self.input_on[n] = "none", False
             elif fs == "ip":
@@ -440,6 +538,8 @@ class FakeGpioChip:
         if any(o in self.busy for o in offsets):
             raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
         self.line_fd = os.open(os.devnull, os.O_RDONLY)
+        if self.drive_on_request is not None:
+            self.drive_ma = [self.drive_on_request] * 2
         for i in (0, 1):
             self.as_gpio(i)       # requested released: direction input
         return buf[:fd_at] + struct.pack("=i", self.line_fd) + buf[fd_at + 4:]

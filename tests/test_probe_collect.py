@@ -1716,6 +1716,26 @@ def test_the_lens_probe_puts_back_its_module_or_says_so(fake_root, monkeypatch):
     assert '/sys/module/i2c_* was [] and is now ["i2c_dev"]' in msg
 
 
+def test_an_interrupt_mid_lens_read_unloads_the_module_and_goes_on(fake_root, monkeypatch):
+    """A KeyboardInterrupt while the reader runs: i2c-dev, loaded for the
+    read, is still unloaded, the host is as it was found, and the interrupt
+    itself is what comes out."""
+    host = Host(fake_root, adapters={10})
+
+    def reader(args, timeout=15):
+        if args[:2] == ["sudo", probe.sys.executable or "python3"]:
+            host.calls.append(list(args))
+            raise KeyboardInterrupt
+        return host.sh(args, timeout)
+    _commands(monkeypatch, reader)
+    with pytest.raises(KeyboardInterrupt):
+        probe.lens_chip_probe(10)
+    assert host.calls[0] == MODPROBE
+    assert host.calls[-1] == UNLOAD
+    assert not host.loaded
+    assert not (fake_root / "dev/i2c-10").exists()
+
+
 def test_the_lens_probe_checks_the_modules_even_with_nothing_to_load(fake_root, monkeypatch):
     """i2c-dev already loaded: nothing is run but the reader, and a module
     the read left loaded is still seen."""
