@@ -35,20 +35,36 @@ Raspberry Pi Zero W Rev 1.1  serial 000000005157f671  rev 9000c1
 ```
 
 Nothing found on the header and nowhere to look are kept apart, because only
-the first rules a HAT out. A bus the board declares but has no `/dev` node for
-is brought up for the scan and put back. The cheap step comes first: a controller
-already enabled in `config.txt` lacks a node only because nothing loaded
-`i2c-dev`, so the probe loads that module, and applies the bus's overlay with
-`dtparam` only when the module alone brings no bus up (a `dtparam` call once hung
-in the kernel on a Pi 3B+ whose `i2c_arm` was on but `i2c-dev` unloaded, until it
-was power-cycled). A host with `i2c-dev` in `/etc/modules` and both buses on in
-`config.txt` is read with no command at all. One that will not come up at all — an image with
-no I2C support, or an Armbian board, which needs a reboot to add an overlay — is
-reported as unread rather than counted as empty:
+the first rules a HAT out.
+
+The HAT ID bus (GPIO0/1) is read without changing the kernel. Where
+`/dev/i2c-0` is there it is read through that; where it is not, the probe
+drives GPIO0/1 itself through the GPIO character device, as an I2C master in
+user space, and frees the lines after. It never applies an overlay or loads a
+module for it: taking a runtime `dtparam i2c_vc=on` out again hangs in the
+kernel on a Pi 3B+ until a power cycle (mithro/rpi-hwid issue #91). Lines in
+use by something else, an I2C adapter on GPIO0/1 without its `/dev` node, or a
+line held low stop the probe with the reason, rather than report a header with
+nothing on it.
+
+The user bus (GPIO2/3), where the board declares it and has no `/dev` node for
+it, is brought up for the scan and put back. The cheap step comes first: a
+controller already enabled in `config.txt` lacks a node only because nothing
+loaded `i2c-dev`, so the probe loads that module, and applies the bus's overlay
+with `dtparam` only when the module alone brings no bus up (a `dtparam` call
+once hung in the kernel on a Pi 3B+ whose `i2c_arm` was on but `i2c-dev`
+unloaded, until it was power-cycled). Every one of those commands fails loud:
+`dtparam -l`, `i2c-dev` and the `/dev/i2c-*` nodes are read before and after,
+and a command that fails or times out, an undo that fails, or a host that is
+not as it was found afterwards stops the probe, naming the commands, with exit
+status 1. A host with `i2c-dev` in `/etc/modules` and both buses on in
+`config.txt` is read with no command at all. A board whose bus will not come
+up because it has no way to — an Armbian board, which needs a reboot to add an
+overlay — is reported as unread rather than counted as empty:
 
 ```
   header : nothing identifiable on the header, and it was not fully read
-  signal : header id and user bus could not be read (i2c-0, i2c-1): a HAT known
+  signal : header id and user bus could not be read (i2c-1, i2c-0): a HAT known
            only by what answers there cannot be ruled out
 ```
 
@@ -102,7 +118,8 @@ Autofocus is settled in this order:
    answered.
 2. **A chip answering at `0x0c`** with no driver, which is where every lens
    driver the Pi overlays know sits. One byte is read, as root, never written;
-   `i2c-dev` is loaded for the read where it is not loaded, and unloaded after.
+   `i2c-dev` is loaded for the read where it is not loaded, and unloaded after;
+   a module that will not unload stops the probe, as on the header's buses.
    An answer is `autofocus: true`.
 3. **Silence at `0x0c`** is `autofocus: false` only while the sensor is powered
    (its runtime status is `active`, as it is while a stream runs). A lens

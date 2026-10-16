@@ -226,13 +226,23 @@ never `[]`. A Pi label with a `null` header is refused (`missing()` lists
 
 | command | reads | never does |
 |---|---|---|
-| `rpi-hwid label-input --pi-only` | model, serial, revision, memory, MACs, `usb_net`, the HAT on the ID bus (GPIO0/1) and `/proc/device-tree/hat`, power class, and on a Pi 5 the fan, RTC battery and PMIC readings | touch GPIO2/3, probe an FPGA or Tiny Tapeout board, stop a service, pass `--tinytapeout` |
+| `rpi-hwid label-input --pi-only` | model, serial, revision, memory, MACs, `usb_net`, the HAT on the ID bus (GPIO0/1) and `/proc/device-tree/hat`, power class, and on a Pi 5 the fan, RTC battery and PMIC readings | touch GPIO2/3, change the kernel (no `dtparam`, no `modprobe`), probe an FPGA or Tiny Tapeout board, stop a service, pass `--tinytapeout` |
 | `rpi-hwid label-input --pi-only --user-bus` | the same, and a scan of the header's user bus (GPIO2/3) | |
 
 Both print a label input document (version 1) with `fpga` and
-`tinytapeout` empty. Each side effect (`modprobe i2c-dev`, `dtparam`) is
-listed in [LABEL-INPUT.md](LABEL-INPUT.md#the-pi-alone---pi-only) and undone.
-Without `--user-bus`, a header with nothing found is `null` (not read).
+`tinytapeout` empty. Without `--user-bus` nothing on the host is changed: the
+ID bus is read through `/dev/i2c-0` where it is already there, and otherwise
+by driving GPIO0/1 from user space through the GPIO character device (the
+runtime `dtparam i2c_vc=on` it used to apply hangs in the kernel when taken
+out on a Pi 3B+: mithro/rpi-hwid issue #91). `--user-bus`'s side effects
+(`modprobe i2c-dev`, `dtparam i2c_arm=on`) are listed in
+[LABEL-INPUT.md](LABEL-INPUT.md#the-pi-alone---pi-only) and undone, and the
+host's state (`dtparam -l`, `i2c-dev`, `/dev/i2c-*`) is compared before and
+after. A failed command, a failed undo, a state that differs, or an ID bus
+that cannot be read (its pins in use, a line held low) prints no document
+and exits 1, with the reason on stderr; it is never passed off as a header
+that was read. Without `--user-bus`, a header with nothing found is `null`
+(not read).
 
 | rule | |
 |---|---|

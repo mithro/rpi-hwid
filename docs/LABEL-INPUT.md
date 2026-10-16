@@ -195,23 +195,37 @@ not read. A scalar that was read and is none (a Pi 4's `fan` and
 `rtc_battery`, a HAT with no `hat_uuid`) is sent as `-`, and a list read
 empty as `[]`.
 
-What it does, and puts back:
+What it does:
 
-* **The HAT ID bus** (pins 27/28, GPIO0/1, i2c-0 on a Pi): where it is not
-  already up, `modprobe i2c-dev` and `dtparam i2c_vc=on`; then a read of the
-  HAT EEPROM addresses 0x50-0x57; then the dtparam is taken out and
-  `modprobe -r i2c-dev`, so the host is left as it was found, even when the
-  read fails. Only the probe's own dtparam is removed: `dtparam -l` before
-  and after the apply finds its entry, and `dtparam -r <index>` removes that
-  entry alone (a bare `dtparam -r` removes the last runtime entry, whoever
-  applied it: `dtoverlay_remove()` in raspberrypi/utils
-  `dtmerge/dtoverlay_main.c`). When the list shows no new entry of its own --
-  the apply failed, or something else changed the list meanwhile -- it
-  removes nothing. The firmware's own reading of the HAT comes from
-  `/proc/device-tree/hat`.
+* **The HAT ID bus** (pins 27/28, GPIO0/1, i2c-0 on a Pi): a read of the
+  HAT EEPROM addresses 0x50-0x57, 256 bytes from offset 0 at each, with
+  nothing in the kernel changed to make it. Where `/dev/i2c-0` is already
+  there (a camera Pi, whose overlay brings it up, or `dtparam=i2c_vc=on` in
+  `config.txt`), it is read through that. Where it is not, the probe drives
+  the two pins itself: it asks the header's GPIO chip (found by its label,
+  `pinctrl-bcm2835`, `pinctrl-bcm2711` or `pinctrl-rp1`, never by its
+  number) for lines 0 and 1 as open-drain outputs, through
+  `/dev/gpiochipN`, and is the I2C master on them; then it frees them, and
+  checks that they are back as they were (not in use, inputs). It no longer
+  applies `dtparam i2c_vc=on`: on a Pi 3B+ taking that out again hangs in
+  the kernel until a power cycle (mithro/rpi-hwid issue #91). The firmware's
+  own reading of the HAT comes from `/proc/device-tree/hat`.
 * `vcgencmd get_throttled`, and on a BCM2712 board (Pi 5, Pi 500, Compute Module 5) `vcgencmd pmic_read_adc`, tried as the user and then with `sudo -n`: reads.
 * sysfs, procfs and the device tree: reads. On a PC (no device tree), the
   root-only DMI serials through `sudo -n cat`.
+
+When the ID bus cannot be read, it says why and prints no document, with
+exit status 1:
+
+* GPIO0/1 in use, by a kernel driver or another program: it names the
+  consumer the kernel gives and leaves the lines alone.
+* An I2C adapter on GPIO0/1 (i2c-0) with no `/dev/i2c-0`, because `i2c-dev`
+  is not loaded: the pins are the kernel's, and the probe neither loads the
+  module nor takes them.
+* A line that stays low with the probe letting go of it: SCL for longer
+  than a slave may stretch the clock (25 ms), or SDA after the nine clocks
+  that free a slave left part way through a byte. Every wait on the bus has
+  a deadline.
 
 What it never does:
 
@@ -223,14 +237,30 @@ What it never does:
   no label says "HAT none" of a HAT that was never looked for.
 * Probe an FPGA board, a Tiny Tapeout board or an ESP32, or stop a service.
 
-`--user-bus` (contract 18) scans the user bus too, the same way the ID bus is
-read: where it is not already up, `modprobe i2c-dev` and `dtparam
-i2c_arm=on`, a quick-write scan of the addresses, then its own dtparam
-removed and the module unloaded, so the host is left as it was found. With
-both buses read, a header with nothing on it is `[]`, and the Pi label can be
-made. A header bus that should have been read and was not -- the ID bus
-whose `dtparam` brought no `/dev/i2c-0` up, or the user bus under
-`--user-bus` -- leaves the header null (not read), whatever the other bus
+`--user-bus` (contract 18) scans the user bus too: where it is not already
+up, `modprobe i2c-dev` and `dtparam i2c_arm=on`, a quick-write scan of the
+addresses, then its own dtparam removed and the module unloaded. Only the
+probe's own dtparam is removed: `dtparam -l` before and after the apply
+finds its entry, and `dtparam -r <index>` removes that entry alone (a bare
+`dtparam -r` removes the last runtime entry, whoever applied it:
+`dtoverlay_remove()` in raspberrypi/utils `dtmerge/dtoverlay_main.c`).
+
+Each of those commands fails loud. `dtparam -l`, whether `i2c-dev` is
+loaded and the `/dev/i2c-*` nodes are read before the first command and
+again after the last undo. A command that times out or exits non-zero, an
+apply that does not show in `dtparam -l` as the one new entry, an undo that
+fails (the ones after it are then not tried), or a state afterwards that
+differs from the state before -- whatever changed it -- stops the run: no
+document, exit status 1, and on stderr the commands run, that the host is
+not as it was found, and what differs:
+
+```
+label-input: the host is not as it was found, after `sudo modprobe i2c-dev`, `sudo dtparam i2c_arm=on`: putting it back failed: `sudo dtparam -r 0` did not finish within 15 s; it was killed, and what it started may still be running; not tried after that: `sudo modprobe -r i2c-dev`; dtparam -l was [] and is now ["dtparam i2c_arm=on"]; i2c-dev loaded was false and is now true
+```
+
+With both buses read, a header with nothing on it is `[]`, and the Pi label
+can be made. The user bus under `--user-bus` whose `dtparam` brought no
+`/dev/i2c-1` up leaves the header null (not read), whatever the ID bus
 found, unless the firmware's own reading (`/proc/device-tree/hat`) names the
 HAT.
 It drives GPIO2/3, so it is for when nothing else may be using them:
