@@ -5,6 +5,7 @@ which every command that does change a host now goes."""
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import time
 
@@ -366,6 +367,69 @@ def test_a_timeout_returns_while_a_grandchild_still_holds_the_pipes(real_sh_chec
         probe.sh_checked(cmd, timeout=1)
     assert probe.sh(cmd, timeout=1) == ""
     assert time.monotonic() - t < 6
+
+
+class _StuckChild:
+    """A child that does not finish: its kill fails (`kill_error`), or it is
+    killed and never exits (stuck in the kernel)."""
+
+    def __init__(self, kill_error=None):
+        self.kill_error, self.waited = kill_error, []
+        self.stdout, self.stderr = _Pipe(), _Pipe()
+
+    def communicate(self, timeout=None):
+        raise subprocess.TimeoutExpired("dtparam", timeout)
+
+    def kill(self):
+        if self.kill_error:
+            raise self.kill_error
+
+    def wait(self, timeout=None):
+        self.waited.append(timeout)
+        raise subprocess.TimeoutExpired("dtparam", timeout)
+
+
+class _Pipe:
+    closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def test_a_killed_child_that_never_exits_is_not_waited_for_unbounded(real_sh_checked,
+                                                                      monkeypatch):
+    """The wait after the kill has its own deadline (#92 review): a child
+    stuck in the kernel must not hang the probe one line later."""
+    child = _StuckChild()
+    monkeypatch.setattr(probe.subprocess, "Popen", lambda *a, **kw: child)
+    with pytest.raises(probe.CommandFailedError, match=r"did not finish within 1 s; it was "
+                       r"killed but had not exited 5 s later"):
+        probe.sh_checked(["sudo", "dtparam", "-r", "0"], timeout=1)
+    assert child.waited == [probe.KILL_REAP_S]
+    assert child.stdout.closed
+    assert child.stderr.closed
+
+
+def test_a_child_that_cannot_be_killed_is_a_timeout_not_could_not_be_run(real_sh_checked,
+                                                                       monkeypatch):
+    child = _StuckChild(kill_error=PermissionError(1, "Operation not permitted"))
+    monkeypatch.setattr(probe.subprocess, "Popen", lambda *a, **kw: child)
+    with pytest.raises(probe.CommandFailedError, match=r"did not finish within 1 s; it could "
+                       r"not be killed \(Operation not permitted\)"):
+        probe.sh_checked(["sudo", "dtparam", "-r", "0"], timeout=1)
+    assert child.waited == []
+    assert child.stdout.closed
+
+
+def test_the_chip_is_closed_whatever_the_release_raises(monkeypatch):
+    closed = []
+    lines = probe.GpioLinesV2(41, "gpiochip0", (0, 1))
+    lines.fd = 42
+    monkeypatch.setattr(lines, "set_all_released", lambda: (_ for _ in ()).throw(ValueError("bug")))
+    monkeypatch.setattr(probe.os, "close", closed.append)
+    with pytest.raises(ValueError, match="bug"):
+        lines.close()
+    assert closed == [42, 41]
 
 
 def test_sh_checked_raises_on_a_command_that_is_not_there(tmp_path, real_sh_checked):

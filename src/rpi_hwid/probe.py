@@ -143,6 +143,10 @@ import zlib
 ROOT = ""
 
 
+# How long a killed child is given to exit before the probe stops waiting for it.
+KILL_REAP_S = 5
+
+
 def run_bounded(args, timeout):
     """Run a fixed argument list (never a shell) as (returncode, stdout,
     stderr); raises subprocess.TimeoutExpired after `timeout` seconds, and
@@ -157,12 +161,24 @@ def run_bounded(args, timeout):
                          universal_newlines=True)
     try:
         out, err = p.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        p.kill()
-        p.wait()
+    except subprocess.TimeoutExpired as expired:
+        # Never wait unbounded here either: a child that is itself stuck in
+        # the kernel (a sudo that execs rather than forks) ignores SIGKILL
+        # until it returns, and a kill a non-root caller may not send to a
+        # root child fails. Either way the timeout is what is raised, saying
+        # which, never an OSError read as "could not be run".
+        try:
+            p.kill()
+        except OSError as e:
+            expired.stuck = "it could not be killed (%s)" % (e.strerror or e)
+        else:
+            try:
+                p.wait(timeout=KILL_REAP_S)
+            except subprocess.TimeoutExpired:
+                expired.stuck = "it was killed but had not exited %d s later" % KILL_REAP_S
         p.stdout.close()
         p.stderr.close()
-        raise
+        raise expired
     return p.returncode, out, err
 
 
@@ -212,9 +228,10 @@ def sh_checked(args, timeout=15):
     cmd = " ".join(args)
     try:
         returncode, out, err = run_bounded(args, timeout)
-    except subprocess.TimeoutExpired:
-        raise CommandFailedError("`%s` did not finish within %d s; it was killed, and what it "
-                                 "started may still be running" % (cmd, timeout))
+    except subprocess.TimeoutExpired as e:
+        stuck = getattr(e, "stuck", None)
+        raise CommandFailedError("`%s` did not finish within %d s; %s" % (
+            cmd, timeout, stuck or "it was killed, and what it started may still be running"))
     except OSError as e:
         raise CommandFailedError("`%s` could not be run: %s" % (cmd, e.strerror or e))
     if returncode != 0:
@@ -1025,19 +1042,21 @@ class GpioLines(object):
     def close(self, cause=None):
         released, after, asked = None, None, None
         try:
-            if self.fd is not None:
-                self.set_all_released()
-        except (OSError, IOError) as e:
-            released = e
+            try:
+                if self.fd is not None:
+                    self.set_all_released()
+            except (OSError, IOError) as e:
+                released = e
+            finally:
+                if self.fd is not None:
+                    os.close(self.fd)
+                    self.fd = None
+            try:
+                after = [self.info(o) for o in self.offsets]
+            except (OSError, IOError) as e:
+                asked = e
         finally:
-            if self.fd is not None:
-                os.close(self.fd)
-                self.fd = None
-        try:
-            after = [self.info(o) for o in self.offsets]
-        except (OSError, IOError) as e:
-            asked = e
-        finally:
+            # whatever the release or the re-read raised, the chip is closed
             os.close(self.chip_fd)
         if (released is None and asked is None
                 and [s[:2] for s in after] == [s[:2] for s in self.before]):
