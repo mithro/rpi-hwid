@@ -51,7 +51,11 @@ NO_STOP_SERVICE_HELP = (
 def cmd_probe(args: argparse.Namespace) -> int:
     from rpi_hwid import probe
 
-    doc = probe.collect()
+    try:
+        doc = probe.collect()
+    except probe.ProbeError as exc:
+        print(f"probe: {exc}", file=sys.stderr)
+        return 1
     doc["verdict"] = probe.verdict(doc)
     if args.fpga or args.jtag:
         from rpi_hwid import fpga
@@ -266,7 +270,9 @@ def pi_only_label_input(host: str, user_bus: bool = False) -> dict[str, Any]:
     """This host's label input from the Pi alone: no FPGA, no Tiny Tapeout,
     and the header's user bus (GPIO2/3) left untouched unless `user_bus`
     (``--user-bus``) asks for it to be scanned too (docs/LABEL-INPUT.md
-    lists what each does, and undoes)."""
+    lists what each does, and undoes). Raises probe.ProbeError, and returns
+    no document, when a command that changes the host fails, the host is
+    not left as it was found, or the HAT ID bus cannot be read."""
     from rpi_hwid import label_input, probe
 
     # no cameras: the site's pi-identified event has none, and the two
@@ -279,14 +285,20 @@ def pi_only_label_input(host: str, user_bus: bool = False) -> dict[str, Any]:
 
 
 def cmd_label_input(args: argparse.Namespace) -> int:
-    from rpi_hwid import label_input
+    from rpi_hwid import label_input, probe
     from rpi_hwid.model import ProbeDocument
 
     if args.user_bus and not args.pi_only:
         print("label-input: --user-bus goes with --pi-only", file=sys.stderr)
         return 2
     if args.pi_only:
-        doc = pi_only_label_input(args.host or socket.gethostname(), args.user_bus)
+        try:
+            doc = pi_only_label_input(args.host or socket.gethostname(), args.user_bus)
+        except probe.ProbeError as exc:
+            # no document: one whose read went wrong, or that left the host
+            # changed, is not printed as if it were whole (issue #91)
+            print(f"label-input: {exc}", file=sys.stderr)
+            return 1
         sys.stdout.write(label_input.dumps(doc))
         return 0
     if args.this_host:
@@ -296,7 +308,11 @@ def cmd_label_input(args: argparse.Namespace) -> int:
         from rpi_hwid import this_host
 
         host = args.host or socket.gethostname()
-        doc = this_host.label_input_document(host)
+        try:
+            doc = this_host.label_input_document(host)
+        except probe.ProbeError as exc:
+            print(f"label-input: {exc}", file=sys.stderr)
+            return 1
         sys.stdout.write(label_input.dumps(doc))
         failed = doc["sources"].get("fpgas_verify_error")
         if failed:

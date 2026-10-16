@@ -22,10 +22,13 @@ them out of anything public.
 - The board's ssh host key, so the station can recognise it.
 - The printer's IPP address, and label stock for its manual feed.
 
-The board needs no root to be read at all. With passwordless `sudo` there it
-reports more, because the firmware tools want it: `dtparam`, `vcgencmd` and
-`modprobe i2c-dev`. Driving JTAG wants `sudo` too. Without any of it the read
-still works and says less.
+The board needs no root to be read at all, only the `i2c` and `gpio` groups for
+the header. With passwordless `sudo` there it reports more, because the firmware
+tools want it: `dtparam`, `vcgencmd` and `modprobe i2c-dev`. Driving JTAG wants
+`sudo` too. Without any of it the read still works and says less -- except on a
+Pi whose header user bus is off: bringing it up needs `modprobe` and `dtparam`,
+and a command that cannot run stops the read with its name rather than leave the
+host half changed.
 
 Nothing here is specific to one board. Any host the station reaches through the
 gateway can be labelled the same way.
