@@ -210,6 +210,21 @@ What it does:
   applies `dtparam i2c_vc=on`: on a Pi 3B+ taking that out again hangs in
   the kernel until a power cycle (mithro/rpi-hwid issue #91). The firmware's
   own reading of the HAT comes from `/proc/device-tree/hat`.
+
+  Asking for the two lines makes the pins GPIOs, and freeing them need not
+  make them what they were: on a Pi 5 the firmware leaves GPIO0/1 with no
+  function at all (`pinctrl get 0-1`: `no pu | --`, input off and pulled
+  up), and the RP1 driver frees a pin as a GPIO input. So each pin's
+  function and pad are read before the lines are asked for and after they
+  are freed, every way the host allows: the kernel's debugfs
+  (`/sys/kernel/debug/pinctrl/<device>/pins` and `pinconf-pins`, root's)
+  and raspi-utils' `pinctrl get` (the input's on/off state, which debugfs
+  does not show). A pin that differs is put back with `sudo pinctrl set
+  <n> no` (or its old function, and its pull where that changed) and read
+  once more. A BCM2835's pins are GPIO inputs before and after, and need
+  nothing. Pins whose function cannot be read at all are not touched: the
+  ID bus is not read, and the run stops saying so. Pins that cannot be put
+  back, or read again, stop the run with each pin's state before and after.
 * `vcgencmd get_throttled`, and on a BCM2712 board (Pi 5, Pi 500, Compute Module 5) `vcgencmd pmic_read_adc`, tried as the user and then with `sudo -n`: reads.
 * sysfs, procfs and the device tree: reads. On a PC (no device tree), the
   root-only DMI serials through `sudo -n cat`.
@@ -219,6 +234,9 @@ exit status 1:
 
 * GPIO0/1 in use, by a kernel driver or another program: it names the
   consumer the kernel gives and leaves the lines alone.
+* GPIO0/1's function cannot be read, neither from debugfs nor with
+  `pinctrl get`: the lines are not asked for, since they could not be shown
+  to be put back.
 * An I2C adapter on GPIO0/1 (i2c-0) with no `/dev/i2c-0`, because `i2c-dev`
   is not loaded: the pins are the kernel's, and the probe neither loads the
   module nor takes them.
