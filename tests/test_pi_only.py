@@ -286,6 +286,117 @@ def test_a_pi_4s_fan_is_sent_as_read_and_none():
 
 
 
+# --- label-input fails loud (mithro/rpi-hwid issue #91) ----------------------
+
+
+def _user_bus_host(root, calls, overlays):
+    """A Pi whose user bus is off and comes up with `dtparam i2c_arm=on`."""
+    (root / "dev/i2c-1").unlink()
+
+    def sh(args, timeout=15):
+        calls.append(list(args))
+        if args == ["sudo", "dtparam", "i2c_arm=on"]:
+            _w(root, "/dev/i2c-1", "")
+            overlays.append("dtparam i2c_arm=on")
+        elif args == ["sudo", "dtparam", "-l"]:
+            return "\n".join(f"{i}:  {o}" for i, o in enumerate(overlays))
+        elif args[:3] == ["sudo", "dtparam", "-r"]:
+            overlays.pop(int(args[3]))
+            (root / "dev/i2c-1").unlink()
+        elif args[-1:] == ["pmic_read_adc"]:
+            return "EXT5V_V volt(24)=5.33990000V\nBATT_V volt(25)=3.26000000V\n"
+        return ""
+    return sh
+
+
+def test_an_undo_that_hangs_makes_label_input_fail_and_say_so(pi5, monkeypatch, capsys):
+    """What happened on the Pi 3B+ in issue #91, with the user bus's
+    overlay: its removal timed out. No document, exit 1, and stderr names
+    the command and says the host is not as it was found."""
+    root, calls, _ = pi5
+    overlays = []
+    sh = _user_bus_host(root, calls, overlays)
+
+    def sh_checked(args, timeout=15):
+        if args[:3] == ["sudo", "dtparam", "-r"]:
+            raise probe.CommandFailedError(
+                f"`{' '.join(args)}` did not finish within {timeout} s; it was killed, "
+                "and what it started may still be running")
+        return sh(args, timeout)
+    monkeypatch.setattr(probe, "sh", sh)
+    monkeypatch.setattr(probe, "sh_checked", sh_checked)
+    rc = cli.main(["label-input", "--pi-only", "--user-bus", "--host", "p48"])
+    out, err = capsys.readouterr()
+    assert rc == 1
+    assert out == ""
+    assert err.startswith("label-input: the host is not as it was found, after "
+                          "`sudo modprobe i2c-dev`, `sudo dtparam i2c_arm=on`: ")
+    assert "`sudo dtparam -r 0` did not finish within 15 s" in err
+    assert 'dtparam -l was [] and is now ["dtparam i2c_arm=on"]' in err
+
+
+def test_a_host_changed_meanwhile_makes_label_input_fail(pi5, monkeypatch, capsys):
+    """Every undo step succeeded, and the host still differs from how it was
+    found: that is said too, never passed off as put back."""
+    root, calls, _ = pi5
+    overlays = []
+    monkeypatch.setattr(probe, "sh", _user_bus_host(root, calls, overlays))
+
+    def scan(bus, **kw):
+        overlays.append("dtoverlay spi0-1cs")      # someone else's, meanwhile
+        return []
+    monkeypatch.setattr(probe, "i2c_scan", scan)
+    assert cli.main(["label-input", "--pi-only", "--user-bus", "--host", "p48"]) == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert 'dtparam -l was [] and is now ["dtoverlay spi0-1cs"]' in err
+
+
+def test_a_host_put_back_exits_zero(pi5, monkeypatch, capsys):
+    root, calls, _ = pi5
+    overlays = []
+    monkeypatch.setattr(probe, "sh", _user_bus_host(root, calls, overlays))
+    assert cli.main(["label-input", "--pi-only", "--user-bus", "--host", "p48"]) == 0
+    out, err = capsys.readouterr()
+    assert err == ""
+    assert json.loads(out)["summary"]["header"] == []
+    assert overlays == []
+
+
+def test_an_id_bus_in_use_makes_label_input_fail(pi5, monkeypatch, capsys):
+    """GPIO0/1 held by a kernel driver or another program: the read is not
+    made, and not passed off as a header with nothing on it."""
+    def busy(chip, offsets):
+        raise probe.IdBusError("GPIO0/1 are in use by i2c-gpio: the HAT ID bus was not read")
+    monkeypatch.setattr(probe, "open_id_lines", busy)
+    assert cli.main(["label-input", "--pi-only", "--host", "p48"]) == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == "label-input: GPIO0/1 are in use by i2c-gpio: the HAT ID bus was not read\n"
+
+
+def test_label_input_this_host_fails_the_same_way(monkeypatch, capsys):
+    from rpi_hwid import this_host
+
+    def changed(host):
+        raise probe.HostNotAsFoundError("the host is not as it was found, after `x`: y")
+    monkeypatch.setattr(this_host, "label_input_document", changed)
+    assert cli.main(["label-input", "--this-host", "--host", "h"]) == 1
+    assert capsys.readouterr().err == (
+        "label-input: the host is not as it was found, after `x`: y\n")
+
+
+def test_labels_this_host_fails_the_same_way(monkeypatch, capsys, tmp_path):
+    from rpi_hwid import labels, this_host
+
+    def changed(host):
+        raise probe.HostNotAsFoundError("the host is not as it was found, after `x`: y")
+    monkeypatch.setattr(this_host, "label_input_document", changed)
+    assert labels.main(["--this-host", "--host", "h", "--out", str(tmp_path / "l.pdf")]) == 1
+    assert capsys.readouterr().err == "h: the host is not as it was found, after `x`: y\n"
+    assert not (tmp_path / "l.pdf").exists()
+
+
 def test_a_hat_the_firmware_read_settles_it_even_then(pi5, monkeypatch):
     root, _, _ = pi5
     monkeypatch.setattr(probe, "sh", lambda args, timeout=15: "")
@@ -344,3 +455,27 @@ def test_a_compute_modules_buses_are_read_when_asked(pi5):
     cli.pi_only_label_input("pi16", user_bus=True)
     assert set(buses) == {0, 1}
     assert not any("i2c_vc=on" in c for c in calls)
+
+
+def test_rpi_hwid_probe_fails_the_same_way(monkeypatch, capsys):
+    def changed(*a, **k):
+        raise probe.HostNotAsFoundError("the host is not as it was found, after `x`: y")
+    monkeypatch.setattr(probe, "collect", changed)
+    assert cli.main(["probe", "--json"]) == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == "probe: the host is not as it was found, after `x`: y\n"
+
+
+def test_the_probe_script_fails_the_same_way(monkeypatch, capsys):
+    """`python3 - < probe.py` over ssh, as collect runs it."""
+    def busy(*a, **k):
+        raise probe.IdBusError("GPIO0/1 are in use by i2c-gpio: the HAT ID bus was not read")
+    monkeypatch.setattr(probe, "collect", busy)
+    monkeypatch.setattr("sys.argv", ["probe.py", "--json"])
+    with pytest.raises(SystemExit) as exit_:
+        probe.main()
+    assert exit_.value.code == 1
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == "probe: GPIO0/1 are in use by i2c-gpio: the HAT ID bus was not read\n"

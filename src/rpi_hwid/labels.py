@@ -2481,10 +2481,15 @@ def _main(ap, args, micro_kinds):
     if args.this_host:
         import socket
 
-        from rpi_hwid import this_host
+        from rpi_hwid import probe, this_host
 
         host = args.host or socket.gethostname()
-        doc = this_host.label_input_document(host)
+        try:
+            doc = this_host.label_input_document(host)
+        except probe.ProbeError as exc:
+            # the Pi's own read went wrong, or left the host changed: no labels
+            print("%s: %s" % (host, exc), file=sys.stderr)
+            return 1
         if args.input:
             args.input.write_text(label_input.dumps(doc))
         failed = doc["sources"].get("fpgas_verify_error")
