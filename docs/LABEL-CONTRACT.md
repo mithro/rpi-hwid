@@ -227,22 +227,28 @@ never `[]`. A Pi label with a `null` header is refused (`missing()` lists
 | command | reads | never does |
 |---|---|---|
 | `rpi-hwid label-input --pi-only` | model, serial, revision, memory, MACs, `usb_net`, the HAT on the ID bus (GPIO0/1) and `/proc/device-tree/hat`, power class, and on a Pi 5 the fan, RTC battery and PMIC readings | touch GPIO2/3, change the kernel (no `dtparam`, no `modprobe`), probe an FPGA or Tiny Tapeout board, stop a service, pass `--tinytapeout` |
-| `rpi-hwid label-input --pi-only --user-bus` | the same, and a scan of the header's user bus (GPIO2/3) | |
+| `rpi-hwid label-input --pi-only --user-bus` | the same, and a scan of the header's user bus (GPIO2/3) | change the kernel (no `dtparam`, no `modprobe`), probe an FPGA or Tiny Tapeout board, stop a service |
 
 Both print a label input document (version 1) with `fpga` and
-`tinytapeout` empty. Without `--user-bus` nothing on the host is changed: the
-ID bus is read through `/dev/i2c-0` where it is already there, and otherwise
-by driving GPIO0/1 from user space through the GPIO character device (the
-runtime `dtparam i2c_vc=on` it used to apply hangs in the kernel when taken
-out on a Pi 3B+: mithro/rpi-hwid issue #91). `--user-bus`'s side effects
-(`modprobe i2c-dev`, `dtparam i2c_arm=on`) are listed in
-[LABEL-INPUT.md](LABEL-INPUT.md#the-pi-alone---pi-only) and undone, and the
-host's state (`dtparam -l`, `i2c-dev`, `/dev/i2c-*`) is compared before and
-after. A failed command, a failed undo, a state that differs, or an ID bus
-that cannot be read (its pins in use, a line held low) prints no document
+`tinytapeout` empty. Each header bus is read the same way, with nothing in
+the kernel changed: through `/dev/i2c-N` where it is already there, and
+otherwise by driving its pins (GPIO0/1, GPIO2/3) from user space through the
+GPIO character device; a kernel adapter with no node is an error, and the
+pins are left to it. (The runtime `dtparam i2c_vc=on` and `dtparam i2c_arm=on`
+it used to apply cannot always be taken out: the removal hangs in the kernel
+on a Pi 3B+, mithro/rpi-hwid issue #91, and on a Pi 5 it left GPIO2/3, their
+pads and the i2c_designware modules changed.) Each pin's function and pad
+are read before the bus is touched and put back and checked after, and the
+loaded i2c modules and `/dev/i2c-*` nodes are compared before and after
+([LABEL-INPUT.md](LABEL-INPUT.md#the-pi-alone---pi-only)). A host not left
+as it was found, or a header bus that cannot be read (its pins in use or
+unreadable, an adapter with no node, a line held low), prints no document
 and exits 1, with the reason on stderr; it is never passed off as a header
 that was read. Without `--user-bus`, a header with nothing found is `null`
-(not read).
+(not read). The document's `sources.header_buses` is `"as-found"` from an
+rpi-hwid that reads the buses this way; it is absent from an older one
+(0.0.post597 and before), which a caller that needs the host left as found
+(fpgas-verify at boot) can refuse without importing rpi-hwid.
 
 | rule | |
 |---|---|
@@ -267,7 +273,7 @@ uses its own read and the site notes "no usable pi-identified event from this Pi
 |---|---|
 | written only by | `label_input.dumps`: checked, every field present, sorted keys, one-space indent, ASCII, trailing newline |
 | on both sides | the Pi and the site both call it, so the same facts give the same bytes |
-| `sources` | provenance: any keys, any JSON values; never read by a label |
+| `sources` | provenance: any keys, any JSON values; never read by a label. `sources.header_buses` `"as-found"`: this rpi-hwid's header-bus reads leave the host as found (section 5) |
 | unknown keys | refused at every level |
 | `version` | the integer `1`; anything else refused |
 

@@ -163,13 +163,16 @@ ssh pi@host 'python3 -' < src/rpi_hwid/probe.py
 ssh pi@host 'python3 - --json' < src/rpi_hwid/probe.py
 ```
 
-On the Pi it wants passwordless `sudo` for the firmware tools (`modprobe
-i2c-dev`, `dtparam` and `vcgencmd`). The 40-pin header is read straight from `/dev/i2c-*`, and
-the HAT ID bus, where the kernel has no `/dev/i2c-0`, from `/dev/gpiochip*`, so it needs
-neither `sudo` nor `i2c-tools` — only membership of the `i2c` and `gpio` groups. Without
-`sudo` the probe still reports what it can, with one exception: a header user bus
-that is off and has to be brought up with `modprobe` and `dtparam` stops the probe
-with the failed command named (`--no-user-bus` leaves that bus alone).
+On the Pi it wants passwordless `sudo` for the firmware tool `vcgencmd`, for
+`pinctrl set`, which puts a header bus's pins back as they were found, and for
+the camera-lens read (`modprobe i2c-dev`). The 40-pin header's two buses are read straight
+from `/dev/i2c-*`, or, where the kernel has no node for one, from `/dev/gpiochip*`,
+with no `dtparam` and no `modprobe`, so reading them needs neither `i2c-tools` nor any
+kernel change — only membership of the `i2c` and `gpio` groups. Without `sudo` the
+probe still reports what it can, with one exception: a header read that changed a
+pin's function (always on a Pi 5, whose firmware leaves GPIO0-3 with no function)
+cannot put it back, and stops the probe with the failed `pinctrl set` named
+(`--no-user-bus` leaves GPIO2/3 alone).
 
 ## Quick start
 

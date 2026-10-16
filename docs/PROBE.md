@@ -10,8 +10,8 @@ modules for boards attached to the Pi. For installing and running it, see the
 |---|---|
 | HAT ID EEPROM at `0x50` | what the firmware read: `/proc/device-tree/hat` (official PoE HATs, Digilent Pmod HAT Adaptor, Google VoiceBonnet…) |
 | HAT ID EEPROM at `0x51`–`0x57`, read off the ID bus | boards the firmware **never reads**: Waveshare's PoE M.2 HAT+ (B) puts a well-formed HAT+ EEPROM at `0x52` (product string, pid `0x6d87`, a DT atom naming `pciex1`) |
-| devices on the header's user bus | Waveshare PoE HAT (B): SSD1306 at `0x3c` and PCF8574 at `0x20`. The bus is brought up for the scan when the board has it disabled — as most of the fleet does — and put back afterwards |
-| a Compute Module | neither header bus is brought up or scanned: its GPIO0-3 go wherever the carrier takes them (on a Compute Blade wired to an SQRL Acorn, GPIO2 and GPIO3 are JTAG wires). A HAT on a carrier that has a header is then seen only if the firmware read its EEPROM. The camera-lens read still runs, on the camera's own I2C bus. The document says `header_buses_skipped: "compute-module"`; `probe.py --user-bus` run by hand scans them (`rpi-hwid probe` and `rpi-hwid collect` have no such switch), `--no-user-bus` leaves GPIO2/3 alone on any board |
+| devices on the header's user bus | Waveshare PoE HAT (B): SSD1306 at `0x3c` and PCF8574 at `0x20`. Where the board has the bus disabled — as most of the fleet does — the probe drives GPIO2/3 itself for the scan, and puts the pins back as they were |
+| a Compute Module | neither header bus is read: its GPIO0-3 go wherever the carrier takes them (on a Compute Blade wired to an SQRL Acorn, GPIO2 and GPIO3 are JTAG wires). A HAT on a carrier that has a header is then seen only if the firmware read its EEPROM. The camera-lens read still runs, on the camera's own I2C bus. The document says `header_buses_skipped: "compute-module"`; `probe.py --user-bus` run by hand scans them (`rpi-hwid probe` and `rpi-hwid collect` have no such switch), `--no-user-bus` leaves GPIO2/3 alone on any board |
 | USB tree | Waveshare PoE-ETH-USB-HUB-HAT on a Zero: a Terminus `1a40:0101` hub on the root port with an RTL8152 on its port 4. That RTL8152 is reported as the Zero's wired port, not as a removable adapter |
 | Pi 5 `max_current` (not used on a Compute Module 5, whose 5 V comes through its carrier) | the firmware's USB-C verdict: 5000 after a PD contract, **3000 both for a 3 A resistor source and for no USB-C source at all** (a HAT on the GPIO 5 V pins), 1500 or 900 for a resistor source advertising that much, so 900/1500 proves an external USB-C supply |
 | Pi 5, Pi 500 and Compute Module 5 PMIC ADC | 5 V input (GPIO-fed HATs 5.1–5.4 V, splitters 4.8–5.0 V) and the RTC cell (about 3 V fitted, under 0.01 V not) |
@@ -37,30 +37,34 @@ Raspberry Pi Zero W Rev 1.1  serial 000000005157f671  rev 9000c1
 Nothing found on the header and nowhere to look are kept apart, because only
 the first rules a HAT out.
 
-The HAT ID bus (GPIO0/1) is read without changing the kernel. Where
-`/dev/i2c-0` is there it is read through that; where it is not, the probe
-drives GPIO0/1 itself through the GPIO character device, as an I2C master in
-user space, and frees the lines after. It never applies an overlay or loads a
-module for it: taking a runtime `dtparam i2c_vc=on` out again hangs in the
-kernel on a Pi 3B+ until a power cycle (mithro/rpi-hwid issue #91). Lines in
-use by something else, an I2C adapter on GPIO0/1 without its `/dev` node, or a
-line held low stop the probe with the reason, rather than report a header with
-nothing on it.
+Both header buses -- the HAT ID bus (GPIO0/1) and the user bus (GPIO2/3) --
+are read the same way, without changing the kernel: no overlay, no module.
+Where `/dev/i2c-N` is there the bus is read through that; where the kernel has
+the bus's adapter but no node (`i2c-dev` not loaded), the probe stops with the
+reason and leaves the pins to the kernel's driver; where there is neither, the
+probe drives the two pins itself through the GPIO character device, as an I2C
+master in user space, and frees the lines after. The user bus is scanned with
+the one-byte read `i2cdetect -r` makes, at every address 0x03-0x77; nothing is
+written to a device. The probe used to bring a bus up with a runtime overlay
+and `i2c-dev`: taking `dtparam i2c_vc=on` out again hangs in the kernel on a
+Pi 3B+ until a power cycle (mithro/rpi-hwid issue #91), and `dtparam
+i2c_arm=on` on a Pi 5 left GPIO2/3 GPIO inputs where they had had no function,
+their pads' drive at 12 mA where it was 4 mA, and the `i2c_designware`
+modules loaded (17 Oct 2026).
 
-The user bus (GPIO2/3), where the board declares it and has no `/dev` node for
-it, is brought up for the scan and put back. The cheap step comes first: a
-controller already enabled in `config.txt` lacks a node only because nothing
-loaded `i2c-dev`, so the probe loads that module, and applies the bus's overlay
-with `dtparam` only when the module alone brings no bus up (a `dtparam` call
-once hung in the kernel on a Pi 3B+ whose `i2c_arm` was on but `i2c-dev`
-unloaded, until it was power-cycled). Every one of those commands fails loud:
-`dtparam -l`, `i2c-dev` and the `/dev/i2c-*` nodes are read before and after,
-and a command that fails or times out, an undo that fails, or a host that is
-not as it was found afterwards stops the probe, naming the commands, with exit
-status 1. A host with `i2c-dev` in `/etc/modules` and both buses on in
-`config.txt` is read with no command at all. A board whose bus will not come
-up because it has no way to — an Armbian board, which needs a reboot to add an
-overlay — is reported as unread rather than counted as empty:
+Whichever way a bus is read, its pins are left as they were found: each pin's
+function and pad are read first (from debugfs and raspi-utils' `pinctrl get`),
+and any that differ afterwards -- a kernel node's driver muxes them to its I2C
+function, and on a Pi 5 a freed GPIO line stays a GPIO -- are put back with
+`sudo pinctrl set` and read again. Pins whose state cannot be read are not
+touched. The loaded i2c modules (`/sys/module/i2c_*`) and the `/dev/i2c-*`
+nodes are compared before and after each read too. Lines in use by something
+else, an I2C adapter without its `/dev` node, a line held low, pins that cannot
+be read or put back, or a kernel not as it was found stop the probe with the
+reason and exit status 1, rather than report a header with nothing on it or a
+host it changed. A board that declares no GPIO lines for a bus and has no node
+for it — an Armbian board, which needs a reboot to add an overlay — has that
+bus reported as unread rather than counted as empty:
 
 ```
   header : nothing identifiable on the header, and it was not fully read
@@ -119,7 +123,9 @@ Autofocus is settled in this order:
 2. **A chip answering at `0x0c`** with no driver, which is where every lens
    driver the Pi overlays know sits. One byte is read, as root, never written;
    `i2c-dev` is loaded for the read where it is not loaded, and unloaded after;
-   a module that will not unload stops the probe, as on the header's buses.
+   the loaded i2c modules and `/dev/i2c-*` nodes are compared before and after,
+   and a module that will not unload, or anything else left different, stops
+   the probe, as on the header's buses.
    An answer is `autofocus: true`.
 3. **Silence at `0x0c`** is `autofocus: false` only while the sensor is powered
    (its runtime status is `active`, as it is while a stream runs). A lens
@@ -171,8 +177,9 @@ confirmed on hardware: the SID read out of the e-fuses reproduces the device-tre
 serial exactly through U-Boot's CRC rule.
 
 Older `sunxi_sid` kernels read those words the other way round. The Pi-only pokes
-(`dtparam`, `vcgencmd`, the bonnet rule) are skipped — an Orange Pi's two header
-buses are scanned exactly as a Pi's, but only if it is already carrying them —
+(`vcgencmd`, the bonnet rule) are skipped — an Orange Pi's two header
+buses are scanned exactly as a Pi's, but only if it is already carrying them,
+since it declares no GPIO lines for them to be driven through —
 and the Armbian release, where the board has one, is recorded as evidence
 only: the fleet's Orange Pi netboots the pool's Raspbian armhf root and so
 carries none.
