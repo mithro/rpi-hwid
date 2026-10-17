@@ -222,7 +222,7 @@ that moved.
 
 **`board1: FAILED (... Permission denied ...)`, then "the read has nothing for
 board1".** The key is not on that account yet, or `--users` names the wrong
-one. Nothing is printed, because every label must come from a fresh read. Try
+one. Nothing is printed, because the read has nothing to print from. Try
 `ssh -v board1 true` and read which key it offers.
 
 **`board1: FAILED (Host key verification failed.)`.** Stop. The address
@@ -238,8 +238,36 @@ passwordless `sudo`, so the firmware tools were not run.
 **Nothing comes out of the printer.** The job is waiting for its sheet. Put one
 in the manual feed, top edge first.
 
+**"the probe could not tell whether the CAMERA camera has a focus motor".**
+The lens did not answer, so the label is refused rather than printed claiming
+fixed focus. Read it again with the camera streaming, and if it still will not
+answer, see "A field nothing could read" below.
+
 **The sheet id is not found.** See below: a sheet lives on the machine that
 started it.
+
+## A field nothing could read
+
+Some fields cannot yet be read from where the station stands. A camera whose
+lens driver does not answer is the common one: the label would have to say
+the camera has no focus motor, which nobody established, so it is refused.
+
+That board gets no label until rpi-hwid reads the field. Do not type the
+answer in, either by editing the read or by writing a label input for the
+board by hand: a label carries only what a board said, and an operator should
+never need to type a field in. A refusal like this is a gap in the tool.
+
+Keep the read, and send the refusal to whoever looks after rpi-hwid: the
+host, the message as printed, and the read's directory
+(`~/.local/state/rpi-hwid/reads/SHEET/RUN`). Once the probe has been taught to
+read the field, collect the board again and print it as any other.
+
+The rest of the sheet is not held up. Print the other boards by name, and the
+refused board's sticker stays free for when it can be read:
+
+```sh
+rpi-hwid-sheet print SHEET board2 board3 -- --users BOARD_USER
+```
 
 ## Next
 
@@ -255,5 +283,6 @@ When the station is no longer wanted, withdraw its key from both accounts.
 Removing the laptop's files is not enough, and a key left in place is what turns
 a borrowed laptop into standing access.
 
-See also [SHEETS.md](SHEETS.md) for sheets in general, and
-[COLLECT.md](COLLECT.md) for what the reader asks a host.
+See also [SHEETS.md](SHEETS.md) for sheets in general,
+[COLLECT.md](COLLECT.md) for what the reader asks a host, and
+[LABEL-INPUT.md](LABEL-INPUT.md) for the document the labels are drawn from.
