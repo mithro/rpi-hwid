@@ -1860,9 +1860,11 @@ def board_record(doc):
         # A mark without "AF" says fixed focus, and nobody could look.
         raise CameraNotReadError(
             "%s: the probe could not tell whether the %s camera has a focus motor, "
-            "so the label would claim it has none. Collect again with the camera "
-            "powered (streaming) and passwordless sudo for the lens read." % (
-                doc.host, ", ".join(unsettled)))
+            "so the label would claim it has none; the read's `camera:` evidence "
+            "says why. Collect again with `rpi-hwid collect`, which holds an idle "
+            "sensor on for the lens read and needs passwordless sudo on that host; "
+            "if it still cannot tell, the probe has to learn to, and nothing is "
+            "to be typed in." % (doc.host, ", ".join(unsettled)))
     macs = [(m.kind, m.mac) for m in s.macs if m.kind in ("eth", "wlan")]
     rv = None
     if ident.kind == "riscv":
