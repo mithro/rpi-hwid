@@ -1034,3 +1034,46 @@ def test_an_interrupt_whose_pins_cannot_be_put_back_says_so(chip, monkeypatch):
     with pytest.raises(probe.HostNotAsFoundError, match=r"after reading the HAT ID bus on "
                        r"GPIO0/1: the read failed: KeyboardInterrupt; putting it back failed"):
         probe.id_bus_scan(0, (0, 1))
+
+
+# --- which debugfs controller, and which of its rows --------------------------
+#
+# Measured on fleet Pis, 17 Oct 2026: on a BCM2835/2711 only the first pin of
+# the GPIO range carries its range in debugfs ("pin 0 (gpio0)
+# 0:pinctrl-bcm2711", then "pin 1 (gpio1) 0:?"), and beside the controllers'
+# directories are files (pinctrl-devices, pinctrl-handles, pinctrl-maps).
+# Matching rows by the range column read one pin of two, went on to the next
+# entry, and stopped at pinctrl-devices/pins: Not a directory.
+
+
+@pytest.mark.parametrize("root", [False, True])
+def test_a_bcm_controllers_second_pin_is_found_by_its_name(chip, monkeypatch, root):
+    monkeypatch.setattr(probe, "is_root", lambda: root)
+    chip(eeprom_bus(0x50), pinctrl=True)
+    pins = probe.pins_from_debugfs("pinctrl-bcm2835", (0, 1))
+    assert [pins[o]["function"] for o in (0, 1)] == ["gpio_in", "gpio_in"]
+    found, _ = probe.id_bus_scan(0, (0, 1))
+    assert list(found) == ["0x50"]
+
+
+def test_no_controller_named_for_the_chip_is_unreadable(chip):
+    chip(eeprom_bus(0x50), pinctrl=True)
+    with pytest.raises(probe.PinsUnreadableError,
+                       match=r"0 pin controllers .* named \*-pinctrl-rp1"):
+        probe.pins_from_debugfs("pinctrl-rp1", (0, 1))
+
+
+def test_two_controllers_named_for_the_chip_are_unreadable(chip, tmp_path):
+    chip(eeprom_bus(0x50), pinctrl=True)
+    (tmp_path / "sys/kernel/debug/pinctrl/7e200000.gpio-pinctrl-bcm2835").mkdir()
+    with pytest.raises(probe.PinsUnreadableError, match="2 pin controllers"):
+        probe.pins_from_debugfs("pinctrl-bcm2835", (0, 1))
+
+
+def test_a_range_column_that_contradicts_the_pin_is_unreadable(chip, tmp_path):
+    chip(eeprom_bus(0x50), pinctrl=True)
+    pins = tmp_path / "sys/kernel/debug/pinctrl/3f200000.gpio-pinctrl-bcm2835/pins"
+    pins.write_text(pins.read_text().replace("pin 1 (gpio1) 0:?",
+                                             "pin 1 (gpio1) 7:pinctrl-bcm2835"))
+    with pytest.raises(probe.PinsUnreadableError, match="gives gpio1 as line 7"):
+        probe.pins_from_debugfs("pinctrl-bcm2835", (0, 1))

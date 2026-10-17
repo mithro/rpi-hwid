@@ -1501,15 +1501,36 @@ def debugfs_pull(config):
 def pins_from_debugfs(label, offsets):
     """{offset: {"function", "config", "pull"}} for lines `offsets` of the
     GPIO chip `label`, from debugfs (debugfs_list, debugfs_text: directly as
-    root, otherwise through `sudo -n`); PinsUnreadableError saying why not."""
-    for dev in debugfs_list(DEBUGFS_PINCTRL):
+    root, otherwise through `sudo -n`); PinsUnreadableError saying why not.
+
+    The controller is found by its debugfs directory, which the kernel names
+    "<device>-<pinctrl name>" (pinctrl_init_device_debugfs): the one ending
+    in "-<label>". Beside the directories are files (pinctrl-devices,
+    pinctrl-handles, pinctrl-maps), never opened. A pin is found by its name,
+    "(gpioN)": the GPIO-range column after it is filled only for the first
+    pin of a range on a BCM2835/2711 ("pin 1 (gpio1) 0:? function gpio_in",
+    measured on a Pi 3B+ and a Pi 4, 17 Oct 2026), so it is checked where it
+    is filled and must then agree, and not required where it says "?"."""
+    devs = [d for d in debugfs_list(DEBUGFS_PINCTRL) if d.endswith("-" + label)]
+    if len(devs) != 1:
+        raise PinsUnreadableError("%d pin controllers under %s are named *-%s, not one: %s" % (
+            len(devs), DEBUGFS_PINCTRL, label, ", ".join(devs) or "none"))
+    for dev in devs:
         pins = debugfs_text(DEBUGFS_PINCTRL + "/" + dev + "/pins")
         rows = {}
-        for m in re.finditer(r"^pin (\d+) \([^)]*\) (\d+):(\S+) (.*)$", pins, re.M):
-            if m.group(3) == label and int(m.group(2)) in offsets:
-                rows[int(m.group(2))] = (int(m.group(1)), m.group(4))
+        for m in re.finditer(r"^pin (\d+) \(gpio(\d+)\) (\d+):(\S+) (.*)$", pins, re.M):
+            n = int(m.group(2))
+            if n not in offsets:
+                continue
+            if m.group(4) != "?" and (m.group(4) != label or int(m.group(3)) != n):
+                raise PinsUnreadableError(
+                    "%s/%s/pins gives gpio%d as line %s of %s, not line %d of %s" % (
+                        DEBUGFS_PINCTRL, dev, n, m.group(3), m.group(4), n, label))
+            rows[n] = (int(m.group(1)), m.group(5))
         if len(rows) != len(offsets):
-            continue
+            raise PinsUnreadableError("%s/%s/pins shows %s of GPIO%s" % (
+                DEBUGFS_PINCTRL, dev, "/".join("gpio%d" % o for o in sorted(rows)) or "none",
+                "/".join(str(o) for o in offsets)))
         configs = {}
         if "pinconf-pins" in debugfs_list(DEBUGFS_PINCTRL + "/" + dev):
             text = debugfs_text(DEBUGFS_PINCTRL + "/" + dev + "/pinconf-pins")

@@ -375,7 +375,10 @@ class FakeGpioChip:
                   else ("alt5" if self.rp1 else "gpio_in"))
             drive = self.drive_ma[self.offsets.index(n)] if n in self.offsets else 4
             shown = f"function {fn} ({fn})" if self.rp1 else f"function {fn}"
-            pins.append(f"pin {n} (gpio{n}) {n}:{self.header} {shown} in hi; irq 0 (none)")
+            # the GPIO-range column as the kernel fills it: every pin on the RP1, only the
+            # range's first on a BCM2835/2711 ("0:?" after it; Pi 3B+ and Pi 4, 17 Oct 2026)
+            gpio = f"{n}:{self.header}" if self.rp1 or n == 0 else "0:?"
+            pins.append(f"pin {n} (gpio{n}) {gpio} {shown} in hi; irq 0 (none)")
             # a flag is printed whatever its value (pinconf_generic_dump_one)
             conf.append(f"pin {n} (gpio{n}): " + (
                 "input bias disabled, input bias pull down (0 ohms), input bias pull up "
@@ -383,6 +386,9 @@ class FakeGpioChip:
                 f"(0x0), output drive strength ({drive} mA)" if self.rp1 else ""))
         (d / "pins").write_text("\n".join(pins) + "\n")
         (d / "pinconf-pins").write_text("\n".join(conf) + "\n")
+        # the files beside the controllers' directories
+        for f in ("pinctrl-devices", "pinctrl-handles", "pinctrl-maps"):
+            (self.root / "sys/kernel/debug/pinctrl" / f).write_text("")
         # another controller, whose lines 0 and 1 are not the header's
         other = self.root / "sys/kernel/debug/pinctrl/107d508500.gpio-pinctrl-bcm2712"
         other.mkdir(parents=True, exist_ok=True)
