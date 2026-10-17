@@ -163,13 +163,17 @@ ssh pi@host 'python3 -' < src/rpi_hwid/probe.py
 ssh pi@host 'python3 - --json' < src/rpi_hwid/probe.py
 ```
 
-On the Pi it wants passwordless `sudo` for the firmware tools (`modprobe
-i2c-dev`, `dtparam` and `vcgencmd`). The 40-pin header is read straight from `/dev/i2c-*`, and
-the HAT ID bus, where the kernel has no `/dev/i2c-0`, from `/dev/gpiochip*`, so it needs
-neither `sudo` nor `i2c-tools` — only membership of the `i2c` and `gpio` groups. Without
-`sudo` the probe still reports what it can, with one exception: a header user bus
-that is off and has to be brought up with `modprobe` and `dtparam` stops the probe
-with the failed command named (`--no-user-bus` leaves that bus alone).
+On the Pi it wants root or passwordless `sudo`: for the firmware tool
+`vcgencmd`, for the camera-lens read (`modprobe i2c-dev`), and for the header.
+The 40-pin header's two buses are read straight from `/dev/i2c-*`, or, where the
+kernel has no node for one, from `/dev/gpiochip*` (the `i2c` and `gpio` groups),
+with no `dtparam`, no `modprobe` and no `i2c-tools`. But before it drives a bus's
+lines itself, its pins' function and pad are read from the kernel's debugfs, which
+is root's (`sudo -n ls` and `sudo -n cat` when not root), and any pin the read
+changed is put back with raspi-utils' `sudo -n pinctrl set`; through a node the pins
+are the kernel driver's and are left to it. Without `sudo` (and not root) the probe
+therefore cannot read a header bus that has no node: it stops, with exit status 1,
+saying why, rather than drive pins it could not show to be left as found.
 
 ## Quick start
 

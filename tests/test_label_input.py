@@ -221,6 +221,21 @@ def test_from_probe_says_rpi_hwid_read_every_field():
     assert set(doc["sources"].values()) == {"rpi-hwid"}
 
 
+def test_from_probe_carries_how_the_header_buses_were_read():
+    """A probe that puts the header buses back says so in its document, and
+    the label input made from it says so in sources.header_buses; a probe
+    document from an older probe (the fixtures') has none, and neither has
+    its label input. sources is where it goes: an unknown top-level key is
+    refused by every version-1 reader."""
+    raw = copy.deepcopy(RAW["pi-sw2-p48"])
+    assert "header_buses" not in label_input.from_probe("p48", raw)["sources"]
+    raw["header_buses"] = "as-found"
+    doc = label_input.from_probe("pi-sw2-p48", raw)
+    assert doc["sources"]["header_buses"] == "as-found"
+    assert label_input.comparable(doc) == label_input.comparable(pi_doc())
+    assert label_input.load(label_input.dumps(doc))["sources"]["header_buses"] == "as-found"
+
+
 def test_is_label_input():
     assert label_input.is_label_input(pi_doc())
     assert not label_input.is_label_input(RAW["pi-sw2-p48"])

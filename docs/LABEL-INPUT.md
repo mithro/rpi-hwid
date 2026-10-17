@@ -46,7 +46,23 @@ filled in, as the rules below say.)
 | `version` | the integer `1`. A reader refuses anything else (`2`, `1.0`, `true`, `"1"`): a version it was not taught is not read hopefully. |
 | `host` | the host the labels are for, a non-empty string |
 | `summary` | the facts, under the field names of `rpi_hwid.model.Summary` verbatim; its `fpga`, `tinytapeout`, `macs`, `usb_net`, `cameras` and `sdr` lists hold `FpgaBoard`, `TinyTapeoutBoard`, `Mac`, `UsbNetAdapter`, `Camera` and `SdrDevice` records, again by their field names. [COLLECT.md](COLLECT.md#the-document) describes each field. |
-| `sources` | provenance, free-form: any keys, any JSON values, not compared and read by no label. rpi-hwid writes, per summary field, who read it (`rpi-hwid`, or `fpgas-verify` for the FPGA boards); the site writes its own (its event names, say). |
+| `sources` | provenance, free-form: any keys, any JSON values, not compared and read by no label. rpi-hwid writes, per summary field, who read it (`rpi-hwid`, or `fpgas-verify` for the FPGA boards), and `header_buses` (below); the site writes its own (its event names, say). |
+
+**`sources.header_buses`** says how the rpi-hwid that read this host's header
+read its buses, so that a caller (fpgas-verify) can tell, without importing
+rpi-hwid, whether running it leaves the host as it was found:
+
+| value | |
+|---|---|
+| `"as-found"` | every header-bus read ran no `dtparam` and no `modprobe`; where it drove a bus's GPIO lines itself (a board that declares them, every Pi, with no `/dev/i2c-N` for the bus) it read each pin's function and pad -- pull, slew and drive strength, from the kernel's debugfs, as root or through `sudo -n`, on every run -- before touching the bus, and afterwards put back any that differed (`sudo -n pinctrl set`) and read them again; through a kernel node it left the pins to the kernel's driver, which owns them; and it checked that the loaded i2c modules (`/sys/module/i2c_*`) and the `/dev/i2c-*` nodes were as they were. A bus whose pins' debugfs state could not be read was not driven, an ID-bus read that heard nothing where the firmware had read a HAT EEPROM was an error, and a host it could not show to be as found (a drive strength left changed, say), made it print no document and exit 1. |
+| absent | an older rpi-hwid (0.0.post597 and before), whose `--user-bus` applied `dtparam i2c_arm=on` and loaded `i2c-dev`, and which compared only `i2c-dev`, `/dev/i2c-*` and `dtparam -l`; or a document built elsewhere (the site's) |
+
+`rpi-hwid label-input --pi-only` and `--this-host` write it, and `--from` a
+probe document copies it from the document's own `header_buses` (an older
+probe's document has none). It is in `sources`, not at the top level,
+because every version-1 reader refuses an unknown top-level key: a new key
+there would make every existing reader refuse these documents. Like the
+rest of `sources` it is not compared.
 
 The rules:
 
@@ -199,88 +215,121 @@ What it does:
 
 * **The HAT ID bus** (pins 27/28, GPIO0/1, i2c-0 on a Pi): a read of the
   HAT EEPROM addresses 0x50-0x57, 256 bytes from offset 0 at each, with
-  nothing in the kernel changed to make it. Where `/dev/i2c-0` is already
-  there (a camera Pi, whose overlay brings it up, or `dtparam=i2c_vc=on` in
-  `config.txt`), it is read through that. Where it is not, the probe drives
-  the two pins itself: it asks the header's GPIO chip (found by its label,
-  `pinctrl-bcm2835`, `pinctrl-bcm2711` or `pinctrl-rp1`, never by its
-  number) for lines 0 and 1 as open-drain outputs, through
-  `/dev/gpiochipN`, and is the I2C master on them; then it frees them, and
-  checks that they are back as they were (not in use, inputs). It no longer
-  applies `dtparam i2c_vc=on`: on a Pi 3B+ taking that out again hangs in
-  the kernel until a power cycle (mithro/rpi-hwid issue #91). The firmware's
-  own reading of the HAT comes from `/proc/device-tree/hat`.
-
-  Asking for the two lines makes the pins GPIOs, and freeing them need not
-  make them what they were: on a Pi 5 the firmware leaves GPIO0/1 with no
-  function at all (`pinctrl get 0-1`: `no pu | --`, input off and pulled
-  up), and the RP1 driver frees a pin as a GPIO input. So each pin's
-  function and pad are read before the lines are asked for and after they
-  are freed, every way the host allows: the kernel's debugfs
-  (`/sys/kernel/debug/pinctrl/<device>/pins` and `pinconf-pins`, root's)
-  and raspi-utils' `pinctrl get` (the input's on/off state, which debugfs
-  does not show). A pin that differs is put back with `sudo pinctrl set
-  <n> no` (or its old function, and its pull where that changed) and read
-  once more. A BCM2835's pins are GPIO inputs before and after, and need
-  nothing. Pins whose function cannot be read at all are not touched: the
-  ID bus is not read, and the run stops saying so. Pins that cannot be put
-  back, or read again, stop the run with each pin's state before and after.
+  nothing in the kernel changed to make it: no `dtparam`, no `modprobe`.
+  Where `/dev/i2c-0` is already there (a camera Pi, whose overlay brings up
+  the i2c0mux, or `dtparam=i2c_vc=on` in `config.txt`), it is read through
+  that. Where it is not, the probe drives the two pins itself: it asks the
+  header's GPIO chip (found by its label, `pinctrl-bcm2835`,
+  `pinctrl-bcm2711` or `pinctrl-rp1`, never by its number) for lines 0 and
+  1 as open-drain outputs, through `/dev/gpiochipN`, and is the I2C master
+  on them; then it frees them, and checks that they are back as they were
+  (not in use, inputs). It no longer applies `dtparam i2c_vc=on`: on a Pi
+  3B+ taking that out again hangs in the kernel until a power cycle
+  (mithro/rpi-hwid issue #91). The firmware's own reading of the HAT comes
+  from `/proc/device-tree/hat`.
+* **Through a kernel node the pins are the driver's**, and are left to it.
+  A bus's driver puts its pins in its own function when it selects the bus
+  and remembers that it has: a Pi 4's i2c0mux leaves GPIO0/1 `alt0` after a
+  read through `/dev/i2c-0`, where the firmware had left them `gpio_in`.
+  Putting them back behind its back made every later read through the node
+  silent (rpi-hwid #93 on a Pi 4, 17 Oct 2026: the second read found no
+  EEPROM), so the node path reads no pin state and changes none.
+* **Pins it drives itself are put back as they were found.** Asking for the
+  lines makes them GPIOs, which freeing them need not undo: on a Pi 5 the
+  firmware leaves GPIO0-3 with no function at all (`pinctrl get 0-1`:
+  `no pu | --`, input off and pulled up), and the RP1 driver frees a pin as a
+  GPIO input. So before the lines are asked for and after they are freed,
+  each pin's function and pad are read: always from the kernel's debugfs
+  (`/sys/kernel/debug/pinctrl/<device>/pins` and `pinconf-pins`: the
+  function, and the RP1's pull, slew and drive strength), which is root's
+  and is read directly as root and otherwise through `sudo -n ls` and
+  `sudo -n cat`; and from raspi-utils' `pinctrl get` where it is installed
+  (the function, the pull and the input's on/off state, which debugfs does
+  not show). The controller is the debugfs directory named
+  `<device>-<GPIO chip label>`, and a pin is found by its name `(gpioN)`:
+  a BCM2835/2711 gives the GPIO-range column for the first pin of the
+  range alone (`pin 1 (gpio1) 0:?`). A pin that differs is put back with
+  `sudo -n pinctrl set <n> <function>` (`no` for no function; its pull too
+  where that changed) and read once more. A BCM2835's pins are GPIO inputs
+  before and after, and need nothing; its debugfs shows no pad config, which
+  is its state, not an error. Pins whose debugfs state cannot be read are not
+  touched: the lines are not asked for, and the run stops saying so --
+  `pinctrl get` alone does not show a pad's drive strength or slew, so the
+  pins could not be shown to be as found. Pins that cannot be put back (a
+  drive strength, which `pinctrl set` cannot set), or read again, stop the
+  run with each pin's state before and after.
+* **The kernel is checked to be as it was found**: the loaded i2c modules
+  (`/sys/module/i2c_*`) and the `/dev/i2c-*` nodes are read before each
+  header-bus read and after it, and any difference -- whatever caused it --
+  stops the run.
 * `vcgencmd get_throttled`, and on a BCM2712 board (Pi 5, Pi 500, Compute Module 5) `vcgencmd pmic_read_adc`, tried as the user and then with `sudo -n`: reads.
 * sysfs, procfs and the device tree: reads. On a PC (no device tree), the
   root-only DMI serials through `sudo -n cat`.
 
-When the ID bus cannot be read, it says why and prints no document, with
+When a header bus cannot be read, it says why and prints no document, with
 exit status 1:
 
-* GPIO0/1 in use, by a kernel driver or another program: it names the
-  consumer the kernel gives and leaves the lines alone.
-* GPIO0/1's function cannot be read, neither from debugfs nor with
-  `pinctrl get`: the lines are not asked for, since they could not be shown
-  to be put back.
-* An I2C adapter on GPIO0/1 (i2c-0) with no `/dev/i2c-0`, because `i2c-dev`
-  is not loaded: the pins are the kernel's, and the probe neither loads the
-  module nor takes them.
+* Its pins in use (GPIO0/1 for the ID bus, GPIO2/3 for the user bus), by a
+  kernel driver or another program: it names the consumer the kernel gives
+  and leaves the lines alone.
+* With no `/dev/i2c-N` for it, its pins' function and pad cannot be read
+  from debugfs, as root or with `sudo -n` (debugfs not mounted, or no
+  passwordless sudo): the lines are not asked for, since the pins could not
+  be shown to be put back. `pinctrl get` alone is not enough: it does not
+  show a pad's drive strength or slew.
+* The ID bus heard nothing where the firmware read a HAT EEPROM at boot
+  (`/proc/device-tree/hat` there): the read did not reach the bus, or the
+  HAT was taken off since. It is never reported as a bus with no EEPROM.
+* An I2C adapter on its pins (i2c-0 or i2c-1) with no `/dev/i2c-N`, because
+  `i2c-dev` is not loaded: the pins are the kernel's, and the probe neither
+  loads the module nor takes them.
 * A line that stays low with the probe letting go of it: SCL for longer
   than a slave may stretch the clock (25 ms), or SDA after the nine clocks
   that free a slave left part way through a byte. Every wait on the bus has
-  a deadline.
+  a deadline. The message names the line by its GPIO and header pin (`SCL
+  (GPIO1, pin 28)`, `SDA (GPIO2, pin 3)`) and the bus (`the HAT ID bus`,
+  `the header's user bus`).
+
+A host not left as it was found also prints no document, with exit status
+1, and on stderr which bus was read, that the host is not as it was found,
+and what differs -- for pins, the `pinctrl set` that failed and each pin's
+state before and after; for the kernel, the module list or node list before
+and after:
+
+```
+label-input: the host is not as it was found, after reading the header's user bus: /sys/module/i2c_* was [] and is now ["i2c_designware_core"]
+```
 
 What it never does:
 
 * **Touch the header's user bus** (pins 3/5, GPIO2/3), unless `--user-bus`
-  asks: no enable, no open, no scan. An Acorn's J5 is on GPIO3, and a Pmod
-  HAT's lines are on the header. A HAT known only by the devices it puts
-  there (a Waveshare PoE HAT (B)) therefore goes unseen, and when nothing at
-  all is found on the header, `header` is null (not read) rather than `[]`:
-  no label says "HAT none" of a HAT that was never looked for.
+  asks: no open, no GPIO request, no scan. An Acorn's J5 is on GPIO3, and a
+  Pmod HAT's lines are on the header. A HAT known only by the devices it
+  puts there (a Waveshare PoE HAT (B)) therefore goes unseen, and when
+  nothing at all is found on the header, `header` is null (not read) rather
+  than `[]`: no label says "HAT none" of a HAT that was never looked for.
+* Change the kernel's configuration: no `dtparam`, no `dtoverlay`, no
+  `modprobe`, with or without `--user-bus`.
 * Probe an FPGA board, a Tiny Tapeout board or an ESP32, or stop a service.
 
-`--user-bus` (contract 18) scans the user bus too: where it is not already
-up, `modprobe i2c-dev` and `dtparam i2c_arm=on`, a quick-write scan of the
-addresses, then its own dtparam removed and the module unloaded. Only the
-probe's own dtparam is removed: `dtparam -l` before and after the apply
-finds its entry, and `dtparam -r <index>` removes that entry alone (a bare
-`dtparam -r` removes the last runtime entry, whoever applied it:
-`dtoverlay_remove()` in raspberrypi/utils `dtmerge/dtoverlay_main.c`).
-
-Each of those commands fails loud. `dtparam -l`, whether `i2c-dev` is
-loaded and the `/dev/i2c-*` nodes are read before the first command and
-again after the last undo. A command that times out or exits non-zero, an
-apply that does not show in `dtparam -l` as the one new entry, an undo that
-fails (the ones after it are then not tried), or a state afterwards that
-differs from the state before -- whatever changed it -- stops the run: no
-document, exit status 1, and on stderr the commands run, that the host is
-not as it was found, and what differs:
-
-```
-label-input: the host is not as it was found, after `sudo modprobe i2c-dev`, `sudo dtparam i2c_arm=on`: putting it back failed: `sudo dtparam -r 0` did not finish within 15 s; it was killed, and what it started may still be running; not tried after that: `sudo modprobe -r i2c-dev`; dtparam -l was [] and is now ["dtparam i2c_arm=on"]; i2c-dev loaded was false and is now true
-```
+`--user-bus` (contract 18) scans the user bus too, the way the ID bus is
+read: through `/dev/i2c-1` where it is there; an error, touching nothing,
+where the kernel has the adapter but no node; and otherwise by driving
+GPIO2/3 itself through `/dev/gpiochipN`. Every address 0x03-0x77 is asked
+for one byte, as `i2cdetect -r` does: a START, the address with the read
+bit, and where that is acknowledged one byte read and not acknowledged,
+then a STOP. Nothing is ever written to a device. The pins are put back and
+the kernel checked exactly as for the ID bus. It used to bring an off bus
+up with `modprobe i2c-dev` and a runtime `dtparam i2c_arm=on`, and take
+them out again: on a Pi 5 (17 Oct 2026) that left GPIO2/3 GPIO inputs where
+they had had no function, the pads' drive at 12 mA where it was 4 mA, and
+the `i2c_designware_platform` and `i2c_designware_core` modules loaded, and
+exited 0.
 
 With both buses read, a header with nothing on it is `[]`, and the Pi label
-can be made. The user bus under `--user-bus` whose `dtparam` brought no
-`/dev/i2c-1` up leaves the header null (not read), whatever the ID bus
-found, unless the firmware's own reading (`/proc/device-tree/hat`) names the
-HAT.
+can be made. The user bus under `--user-bus` that could not be read leaves
+the header null (not read), whatever the ID bus found, unless the
+firmware's own reading (`/proc/device-tree/hat`) names the HAT.
 It drives GPIO2/3, so it is for when nothing else may be using them:
 fpgas-verify passes it only at boot, before any test, and only where the
 setup's wiring says those pins are safe for I2C then.

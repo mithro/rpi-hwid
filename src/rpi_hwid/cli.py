@@ -270,9 +270,11 @@ def pi_only_label_input(host: str, user_bus: bool = False) -> dict[str, Any]:
     """This host's label input from the Pi alone: no FPGA, no Tiny Tapeout,
     and the header's user bus (GPIO2/3) left untouched unless `user_bus`
     (``--user-bus``) asks for it to be scanned too (docs/LABEL-INPUT.md
-    lists what each does, and undoes). Raises probe.ProbeError, and returns
-    no document, when a command that changes the host fails, the host is
-    not left as it was found, or the HAT ID bus cannot be read."""
+    lists what each reads and puts back). Raises probe.ProbeError, and
+    returns no document, when a command that changes the host fails, the
+    host is not left as it was found, or a header bus it reads cannot be
+    read. sources.header_buses says this rpi-hwid reads the header buses
+    that way (probe.HEADER_BUSES_AS_FOUND)."""
     from rpi_hwid import label_input, probe
 
     # no cameras: the site's pi-identified event has none, and the two
@@ -281,7 +283,9 @@ def pi_only_label_input(host: str, user_bus: bool = False) -> dict[str, Any]:
     d["verdict"] = probe.verdict(d)
     summary = dict(d["verdict"]["summary"])
     summary["header"] = header_as_read(summary.get("header"), d, user_bus)
-    return label_input.build(host, summary, dict.fromkeys(summary, "rpi-hwid"))
+    sources: dict[str, Any] = dict.fromkeys(summary, "rpi-hwid")
+    sources["header_buses"] = d["header_buses"]
+    return label_input.build(host, summary, sources)
 
 
 def cmd_label_input(args: argparse.Namespace) -> int:
@@ -466,9 +470,9 @@ def main(argv: list[str] | None = None) -> int:
                            "boards as fpgas-verify identifies them (run on the Pi; needs "
                            "none of the labels dependencies)")
     p.add_argument("--user-bus", action="store_true",
-                   help="with --pi-only: also scan the header's user bus (GPIO2/3), and put "
-                        "back what that brings up; only when nothing else may be using "
-                        "those pins")
+                   help="with --pi-only: also scan the header's user bus (GPIO2/3), "
+                        "through /dev/i2c-1 or by driving the pins, and put the pins back "
+                        "as they were; only when nothing else may be using those pins")
     p.add_argument("--host", help="the host it describes (default: the file's name, or "
                                   "this host's name with --pi-only and --this-host)")
     p.set_defaults(func=cmd_label_input)

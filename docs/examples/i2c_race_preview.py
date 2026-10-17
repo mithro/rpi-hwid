@@ -5,12 +5,13 @@
 
 The race cannot be shown live: rpiz-4 still carries the overlay the census
 probe left behind, so /dev/i2c-0 is already there. So both probes run
-against the fixture the test suite uses for it -- rpiz-4's tree
-(``zero_bonnet_tree``) and ``SlowUdev``, whose /dev/i2c-0 turns up only
-after `dtparam i2c_vc=on` has returned -- and each is followed by
-`dtparam -l` once udev has caught up. "Before" is probe.py as of b90255f,
-the commit this fix was made on, read out of git; "after" is the working
-tree's. Lines that differ are highlighted.
+against rpiz-4's tree (the test suite's ``zero_bonnet_tree``) and
+``SlowUdev`` (below), whose /dev/i2c-0 turns up only after `dtparam
+i2c_vc=on` has returned -- and each is followed by `dtparam -l` once udev
+has caught up. "Before" is probe.py as of b90255f, the commit this fix was
+made on, and "after" is probe.py as of 9e36e5b, the fix; both are read out
+of git, since today's probe applies no dtparam at all (mithro/rpi-hwid
+issue #91) and so has no race to show. Lines that differ are highlighted.
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ import tempfile
 import time
 import types
 from pathlib import Path
+from typing import ClassVar
 
 from PIL import Image, ImageDraw, ImageFont
 
@@ -32,20 +34,67 @@ REPO = HERE.parent.parent
 sys.path.insert(0, str(REPO / "tests"))
 
 import test_probe_collect as fixtures  # noqa: E402
-from rpi_hwid import probe as probe_after  # noqa: E402
 
 BEFORE_REV = "b90255f"
+AFTER_REV = "9e36e5b"
 FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
 
 
-def probe_before() -> types.ModuleType:
-    src = subprocess.run(["git", "-C", str(REPO), "show",
-                          BEFORE_REV + ":src/rpi_hwid/probe.py"],
+def probe_at(rev: str) -> types.ModuleType:
+    src = subprocess.run(["git", "-C", str(REPO), "show", rev + ":src/rpi_hwid/probe.py"],
                          capture_output=True, text=True, check=True).stdout
-    mod = types.ModuleType("probe_before")
-    exec(compile(src, "probe.py@" + BEFORE_REV, "exec"), mod.__dict__)
+    mod = types.ModuleType("probe_" + rev)
+    exec(compile(src, "probe.py@" + rev, "exec"), mod.__dict__)
     return mod
+
+
+class SlowUdev:
+    """dtparam and udev as a Pi Zero behaves: `dtparam i2c_vc=on` returns
+    before udev has made /dev/i2c-0, which only turns up once time passes
+    (a sleep, or the probe having finished); `i2c_arm=on` made /dev/i2c-1
+    in time on rpiz-4, so it appears at once. `dtparam -r` takes the last
+    overlay out, as the real one does, and `-l` lists what is loaded. (The
+    test suite's model of it until the probe stopped applying dtparams.)"""
+
+    LATE: ClassVar[dict[str, int]] = {"i2c_vc=on": 0}
+    PROMPT: ClassVar[dict[str, int]] = {"i2c_arm=on": 1}
+
+    def __init__(self, root):
+        self.root, self.overlays, self.pending, self.calls = root, [], [], []
+
+    def node(self, bus):
+        return self.root / f"dev/i2c-{bus}"
+
+    def sh(self, args, timeout=15):
+        self.calls.append(list(args))
+        if args[:2] != ["sudo", "dtparam"]:
+            return "throttled=0x0" if args == ["vcgencmd", "get_throttled"] else ""
+        param = args[2]
+        if param == "-l":
+            if not self.overlays:
+                return "No overlays loaded"
+            return "Overlays (in load order):\n" + "\n".join(
+                f"{i}:  dtparam  {o}" for i, o in enumerate(self.overlays))
+        if param == "-r":
+            gone = self.overlays.pop(int(args[3]) if len(args) > 3 else -1)
+            bus = {**self.LATE, **self.PROMPT}[gone]
+            self.pending = [b for b in self.pending if b != bus]
+            if self.node(bus).exists():
+                self.node(bus).unlink()
+            return ""
+        self.overlays.append(param)
+        if param in self.LATE:
+            self.pending.append(self.LATE[param])
+        else:
+            fixtures._w(self.root, f"/dev/i2c-{self.PROMPT[param]}", "")
+        return ""
+
+    def settle(self, seconds=None):
+        """Time passes, and udev makes whatever it was going to."""
+        for bus in self.pending:
+            fixtures._w(self.root, f"/dev/i2c-{bus}", "")
+        self.pending = []
 
 
 def run(mod: types.ModuleType) -> list[str]:
@@ -53,7 +102,7 @@ def run(mod: types.ModuleType) -> list[str]:
     with tempfile.TemporaryDirectory(dir=HERE) as tmp:
         root = Path(tmp)
         fixtures.zero_bonnet_tree(root)
-        udev = fixtures.SlowUdev(root)
+        udev = SlowUdev(root)
         mod.ROOT = str(root)
         mod.sh = udev.sh
         mod.i2c_scan = lambda bus, **kw: []
@@ -91,7 +140,7 @@ def wrap(lines: list[str], width: int) -> list[str]:
 
 
 def main() -> None:
-    before, after = run(probe_before()), run(probe_after)
+    before, after = run(probe_at(BEFORE_REV)), run(probe_at(AFTER_REV))
     cols = 64
     size, pad, gap = 15, 24, 32
     font, bold = ImageFont.truetype(FONT, size), ImageFont.truetype(FONT_BOLD, size + 3)

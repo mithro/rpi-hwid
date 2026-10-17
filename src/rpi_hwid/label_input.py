@@ -202,7 +202,12 @@ def from_probe(host: str, probe_doc: dict[str, Any]) -> dict[str, Any]:
         raise InputError([f"{host}: not a probe document (no verdict.summary)"]) from exc
     if not isinstance(summary, dict):
         raise InputError([f"{host}: verdict.summary is not an object"])
-    return build(host, summary, dict.fromkeys(summary, "rpi-hwid"))
+    sources: dict[str, Any] = dict.fromkeys(summary, "rpi-hwid")
+    if probe_doc.get("header_buses") is not None:
+        # how that probe read the header buses (docs/LABEL-INPUT.md); an
+        # older probe's document has none, and neither has this then
+        sources["header_buses"] = probe_doc["header_buses"]
+    return build(host, summary, sources)
 
 
 def _text(d: dict[str, Any]) -> str:
