@@ -248,70 +248,26 @@ started it.
 
 ## A field nothing could read
 
-Some fields cannot be read from where the station stands. A camera whose lens
-driver does not answer is the common one: the label would have to say the
-camera has no focus motor, which nobody established, so it is refused instead.
+Some fields cannot yet be read from where the station stands. A camera whose
+lens driver does not answer is the common one: the label would have to say
+the camera has no focus motor, which nobody established, so it is refused.
 
-Do not edit the read document. A read is what the board said, and patching it
-makes the station's own record untrue. A note added at its top level is kept
-without a word, since a read is only checked inside its summary, so nothing
-tells you the document is no longer the board's.
+That board gets no label until rpi-hwid reads the field. Do not type the
+answer in, either by editing the read or by writing a label input for the
+board by hand: a label carries only what a board said, and an operator should
+never need to type a field in. A refusal like this is a gap in the tool.
 
-Say it in a label input instead, which is the document the board's own labels
-are drawn from and is checked field by field. Give each read its own directory:
+Keep the read, and send the refusal to whoever looks after rpi-hwid: the
+host, the message as printed, and the read's directory
+(`~/.local/state/rpi-hwid/reads/SHEET/RUN`). Once the probe has been taught to
+read the field, collect the board again and print it as any other.
 
-```sh
-mkdir -p ~/labels/RUN
-rpi-hwid label-input --from ~/.local/state/rpi-hwid/reads/SHEET/RUN/board1.json \
-  > ~/labels/RUN/board1.json
-```
-
-`RUN` is the timestamp the run printed on its `1 of 1 host(s) written to` line.
-Keep them apart, because `board1` names the port and not the board in it. A
-single `~/labels/board1.json` is overwritten by the next board on that port,
-and a stale one left there prints the previous board's label for a new board.
-The reads are kept for ever; this document, the one that differs from the
-board, is only as safe as where you put it. Keep the file's name, too: the
-label is named after the file, `board1.json` for `board1`, and whatever `host`
-says inside is not looked at.
-
-Edit the one field -- for a fixed-focus camera, `"autofocus": false` -- and
-change that field's entry under `sources` to say who settled it. `--from` has
-already written an entry there for every field the read had, so change the one
-and leave the rest alone:
-
-```json
-"cameras": "operator: these are fixed-focus modules (2026-10-11)",
-```
-
-Then print from that document rather than collecting again:
+The rest of the sheet is not held up. Print the other boards by name, and the
+refused board's sticker stays free for when it can be read:
 
 ```sh
-rpi-hwid-sheet print SHEET board1 --data ~/labels/RUN
+rpi-hwid-sheet print SHEET board2 board3 -- --users BOARD_USER
 ```
-
-Nothing reads the board this time: it is the one print on this page that does
-not, which is why the document must be this board's.
-
-A label input holds the board, its FPGA and Tiny Tapeout boards and its USB
-adapters, and nothing else. The small labels for ESP32s, 433 MHz and GPS nodes
-are drawn from the read itself, so a print from the label input leaves them out
-and does not say so. Where the read was made with `--esp32` or one of its
-kin, print those from the read, a kind at a time (`esp32`, `esp32-433`,
-`esp32-gps`):
-
-```sh
-rpi-hwid-sheet print SHEET board1 --only esp32 \
-  --data ~/.local/state/rpi-hwid/reads/SHEET/RUN
-```
-
-An unknown key, a renamed field or a wrong type is refused when the document is
-read, naming what is wrong. A `sources` written over wholesale is not: it drops
-the provenance of every other field, and nothing says so.
-
-Only assert what you know about the hardware in front of you. No label reads
-`sources`, so the sticker is identical whether the board settled the field or
-you did; the document you keep is the only record that a person answered.
 
 ## Next
 
