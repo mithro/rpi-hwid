@@ -328,8 +328,11 @@ def test_the_words_are_set_on_the_label(docs, tmp_path, monkeypatch):
 def test_a_camera_whose_focus_is_unknown_is_refused(docs, tmp_path):
     """No "AF" would read as fixed focus, and nobody looked: the label is
     refused, as an unread header or fan is."""
-    with pytest.raises(labels.CameraNotReadError, match=HOST + ".*focus motor"):
+    with pytest.raises(labels.CameraNotReadError, match=HOST + ".*focus motor") as e:
         render(docs, tmp_path, (Camera("ov5647"),))
+    # it names the command, and asks nobody to stream the camera or type it in
+    assert "`rpi-hwid collect`" in str(e.value)
+    assert "streaming" not in str(e.value)
 
 
 def test_cameras_nobody_looked_for_draw_no_mark(docs, tmp_path):
