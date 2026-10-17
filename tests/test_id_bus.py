@@ -1128,3 +1128,12 @@ def test_a_controller_whose_name_only_contains_the_label_is_not_it(chip, tmp_pat
     (base / "3f200000.gpio-pinctrl-bcm2835").rename(base / "3f200000.gpio-pinctrl-bcm2835-aux")
     with pytest.raises(probe.PinsUnreadableError, match="0 pin controllers"):
         probe.pins_from_debugfs("pinctrl-bcm2835", (0, 1))
+
+
+def test_an_id_bus_that_could_not_be_read_is_unread_where_the_firmware_read_a_hat(tmp_path,
+                                                                                 monkeypatch):
+    """The firmware cross-check is for a read that reached nothing: a bus that
+    could not be read at all (an Orange Pi without it) stays (nothing, unread)."""
+    monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    _w(tmp_path, "/proc/device-tree/hat/product", "Pmod HAT Adaptor")
+    assert probe.id_bus_scan(1, None) == ({}, False)

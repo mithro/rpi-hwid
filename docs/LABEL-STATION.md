@@ -23,11 +23,12 @@ them out of anything public.
 - The printer's IPP address, and label stock for its manual feed.
 
 The board needs the `i2c` and `gpio` groups for the header, and passwordless
-`sudo` (or root): a header bus's pins are read from the kernel's debugfs
-before the bus is touched (`sudo -n ls`, `sudo -n cat`) and put back after with
-`sudo -n pinctrl set`, and without it a Pi's header read stops with the reason
-rather than leave the host changed (no `dtparam` and no `modprobe` is run for
-the header). The firmware tools want `sudo` too: `vcgencmd`, and `modprobe
+`sudo` (or root) for a header bus with no `/dev/i2c-N`: before the probe drives
+its pins itself they are read from the kernel's debugfs (`sudo -n ls`,
+`sudo -n cat`) and put back after with `sudo -n pinctrl set`, and without it
+that read stops with the reason rather than leave the host changed. A bus read
+through its `/dev/i2c-N` leaves the pins to the kernel's driver. No `dtparam`
+and no `modprobe` is run for the header. The firmware tools want `sudo` too: `vcgencmd`, and `modprobe
 i2c-dev` for a camera's lens. Driving JTAG wants `sudo`.
 
 Nothing here is specific to one board. Any host the station reaches through the

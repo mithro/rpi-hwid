@@ -662,12 +662,15 @@ def eeprom_decode(blob):
 # no function), the pads' drive at 12 mA (it was 4 mA) and the
 # i2c_designware modules loaded, none of which it noticed (2026-10-17).
 #
-# Wherever the bus's lines are declared, the pins' function and pad are read
-# before the bus is touched, through a node or not, and put back and checked
-# afterwards (put_pins_back): reading through a Pi 4's /dev/i2c-0 leaves
-# GPIO0/1 alt0 where the firmware left them gpio_in. The i2c kernel modules
-# and the /dev/i2c-* nodes are compared too (HostChanges). A host not left
-# as it was found stops the probe (HostNotAsFoundError).
+# Where the probe drives a bus's lines itself (declared, and no node), the
+# pins' function and pad are read before the lines are asked for and put back
+# and checked afterwards (put_pins_back). Through a node the pins are the
+# kernel driver's and are left to it: a Pi 4's i2c0mux leaves GPIO0/1 alt0
+# after a read through /dev/i2c-0 and remembers that it has, and putting them
+# back behind its back made the next read silent (rpi-hwid #93, 2026-10-17).
+# The i2c kernel modules and the /dev/i2c-* nodes are compared on every path
+# (HostChanges). A host not left as it was found stops the probe
+# (HostNotAsFoundError).
 #
 # Most of the fleet leaves the user bus off -- 12 of the 35 Pis had no
 # /dev/i2c-1 -- and a Waveshare PoE HAT (B), which is known only by the
@@ -1443,8 +1446,8 @@ class BitBangI2C(object):
 #     function, pull, and the level, "--" where the RP1 pad's input is off).
 # debugfs is required: it is the only place a pad's drive strength and slew
 # show (a Pi 5's runtime i2c_arm overlay left the drive at 12 mA where it
-# was 4 mA, 2026-10-17), so where it cannot be read either way the bus is not
-# touched and the read is an error. A pin left different is put back with
+# was 4 mA, 2026-10-17), so where it cannot be read either way the lines are
+# not asked for and the read is an error. A pin left different is put back with
 # `sudo -n pinctrl set` (`no` is the RP1's "none", which turns its input off
 # again; the pull with it where that changed) and read once more; what
 # `pinctrl set` cannot set (a drive strength) stays different, and is said.
@@ -2280,8 +2283,9 @@ def collect(user_bus=None, cameras=True):
         header_buses, d["header_buses_skipped"] = None, "compute-module"
     elif user_bus is None:
         user_bus = True
-    # How this probe reads a header bus: HEADER_BUSES_AS_FOUND says the pins,
-    # modules and nodes are put back and checked, which a reader of the
+    # How this probe reads a header bus: HEADER_BUSES_AS_FOUND says the host
+    # is left as found (the pins it drives itself put back, a node's pins left
+    # to its driver, the modules and nodes checked), which a reader of the
     # document (a label input's sources) can tell an older probe by.
     d["header_buses"] = HEADER_BUSES_AS_FOUND
     if header_buses:
