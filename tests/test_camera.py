@@ -225,7 +225,8 @@ def test_a_control_not_put_back_is_a_host_not_as_found(host):
     assert '"on"' in str(e.value)
 
 
-def test_a_sensor_that_stays_up_after_its_control_is_back_is_a_host_not_as_found(host):
+def test_a_sensor_that_stays_up_after_its_control_is_back_is_a_host_not_as_found(
+        host, monkeypatch):
     """"auto" written back only lets the sensor suspend; one still up when
     the wait runs out is not as it was found, and the probe says so."""
     v1(host, power="suspended")
@@ -237,8 +238,7 @@ def test_a_sensor_that_stays_up_after_its_control_is_back_is_a_host_not_as_found
             (host.root / "sys/bus/i2c/devices/10-0036/power/runtime_status").write_text(
                 "active\n")
         return out
-    host.sh = stays_up
-    probe.sh = stays_up
+    monkeypatch.setattr(probe, "sh", stays_up)
     with pytest.raises(probe.HostNotAsFoundError, match='"active", not "suspended"'):
         probe.collect_cameras()
 
@@ -421,3 +421,155 @@ def test_a_board_with_no_camera_says_so_in_the_evidence():
     v = probe.verdict(_evidence(cameras=[]))
     assert v["summary"]["cameras"] == []
     assert "camera: none bound" in v["evidence"]
+
+
+# --- holding the sensor on: what goes wrong ------------------------------------
+
+POWER = "sys/bus/i2c/devices/10-0036/power"
+
+
+def refuse_power(host, monkeypatch, value="on"):
+    """sudo refuses the power/control write of `value`."""
+    def checked(args, timeout=15):
+        if probe.POWER_WRITER in args and args[-1] == value:
+            raise probe.CommandFailedError(
+                f"`{' '.join(args)}` exited 1: sudo: a password is required")
+        return probe.sh(args, timeout)
+    monkeypatch.setattr(probe, "sh_checked", checked)
+
+
+def test_no_passwordless_sudo_for_the_hold_leaves_the_read_unread_not_the_probe(
+        host, monkeypatch):
+    """The camera is one field of the document: a sensor that cannot be held
+    on is asked unpowered and left unsettled, and the rest of the probe goes
+    on. The reason is said without the writer's script."""
+    v1(host, power="suspended")
+    refuse_power(host, monkeypatch)
+    cam, = probe.collect_cameras()
+    assert probe.camera_summary([cam])[0]["autofocus"] is None
+    assert cam["lens_probe"]["power"] == (
+        "unread: could not hold it on: exited 1: sudo: a password is required")
+    assert len(host.reads()) == 1
+    line = probe.camera_evidence(cam)
+    assert "could not be held on for the read" in line
+    assert "import sys" not in line
+    assert (host.root / POWER / "control").read_text().strip() == "auto"
+
+
+def test_an_answer_from_a_sensor_that_could_not_be_held_on_still_counts(host, monkeypatch):
+    v1(host, power="suspended")
+    refuse_power(host, monkeypatch)
+    host.lens = "ack"
+    assert probe.camera_summary(probe.collect_cameras())[0]["autofocus"] is True
+
+
+def test_a_restore_that_fails_is_a_host_not_as_found_naming_the_write(host, monkeypatch):
+    v1(host, power="suspended")
+    refuse_power(host, monkeypatch, value="auto")
+    with pytest.raises(probe.HostNotAsFoundError) as e:
+        probe.collect_cameras()
+    msg = str(e.value)
+    assert 'writing "on" to /sys/bus/i2c/devices/10-0036/power/control' in msg
+    assert "putting it back failed" in msg
+    assert "import sys" not in msg
+
+
+def test_a_sensor_without_runtime_pm_is_not_said_to_have_been_held_on(host):
+    v1(host, power="suspended")
+    for name in ("control", "runtime_status"):
+        (host.root / POWER / name).unlink()
+    cam, = probe.collect_cameras()
+    assert host.writes() == []
+    assert cam["lens_probe"]["power"] == "no runtime PM"
+    assert probe.camera_summary([cam])[0]["autofocus"] is None
+    line = probe.camera_evidence(cam)
+    assert "no runtime PM to hold it on with" in line
+    assert "None" not in line.replace("(None)", "")
+
+
+def test_a_sensor_slow_to_power_up_is_waited_for(host, monkeypatch):
+    """runtime_status turns "active" a moment after the write, not at once:
+    the probe polls for it rather than reading the lens too soon."""
+    import threading
+    v1(host, power="suspended")
+    host.powers = False
+    real = host.sh
+
+    def slow(args, timeout=15):
+        out = real(args, timeout)
+        if probe.POWER_WRITER in args and args[-1] == "on":
+            (host.root / POWER / "runtime_status").write_text("resuming\n")
+            threading.Timer(0.1, (host.root / POWER / "runtime_status").write_text,
+                            ["active\n"]).start()
+        return out
+    monkeypatch.setattr(probe, "sh", slow)
+    monkeypatch.setattr(probe, "SENSOR_POWER_S", 2.0)
+    cam, = probe.collect_cameras()
+    assert cam["lens_probe"]["power"] == "active"
+    assert probe.camera_summary([cam])[0]["autofocus"] is False
+
+
+def test_the_sensors_own_autosuspend_delay_is_waited_out(host, monkeypatch):
+    """With "auto" back the sensor suspends after its autosuspend delay,
+    which may be longer than SENSOR_POWER_S: that is no host not as found."""
+    import threading
+    v1(host, power="suspended")
+    (host.root / POWER / "autosuspend_delay_ms").write_text("400\n")
+    real = host.sh
+
+    def lingers(args, timeout=15):
+        out = real(args, timeout)
+        if probe.POWER_WRITER in args and args[-1] == "auto":
+            status = host.root / POWER / "runtime_status"
+            status.write_text("active\n")
+            threading.Timer(0.3, status.write_text, ["suspended\n"]).start()
+        return out
+    monkeypatch.setattr(probe, "sh", lingers)
+    monkeypatch.setattr(probe, "SENSOR_POWER_S", 0.1)
+    cam, = probe.collect_cameras()
+    assert probe.camera_summary([cam])[0]["autofocus"] is False
+
+
+def test_suspending_counts_as_back_where_it_was_found_suspended(host, monkeypatch):
+    v1(host, power="suspended")
+    real = host.sh
+
+    def suspending(args, timeout=15):
+        out = real(args, timeout)
+        if probe.POWER_WRITER in args and args[-1] == "auto":
+            (host.root / POWER / "runtime_status").write_text("suspending\n")
+        return out
+    monkeypatch.setattr(probe, "sh", suspending)
+    probe.collect_cameras()
+
+
+def test_a_held_on_control_reports_the_status_before_the_read(host, monkeypatch):
+    v1(host, power="suspended")
+    (host.root / POWER / "control").write_text("on\n")
+    real = probe.lens_chip_probe
+
+    def read_then_wake(bus):
+        out = real(bus)
+        (host.root / POWER / "runtime_status").write_text("active\n")
+        return out
+    monkeypatch.setattr(probe, "lens_chip_probe", read_then_wake)
+    cam, = probe.collect_cameras()
+    assert cam["lens_probe"]["power"] == "suspended"
+
+
+def test_a_lens_read_not_put_back_inside_the_hold_is_said_once(host, monkeypatch):
+    """The lens read leaves i2c-dev loaded and says so; the hold around it
+    sees the same and says so too, without repeating the prefix."""
+    v1(host, power="suspended")
+
+    def leaves_module(bus):
+        (host.root / "sys/module/i2c_dev").mkdir()
+        raise probe.HostNotAsFoundError(
+            probe.NOT_AS_FOUND + "after `sudo modprobe i2c-dev`: it will not unload")
+    monkeypatch.setattr(probe, "lens_chip_probe", leaves_module)
+    with pytest.raises(probe.HostNotAsFoundError) as e:
+        probe.collect_cameras()
+    msg = str(e.value)
+    assert msg.count(probe.NOT_AS_FOUND) == 1
+    assert 'writing "on" to' in msg
+    assert "it will not unload" in msg

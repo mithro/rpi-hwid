@@ -1848,26 +1848,47 @@ def lens_chip_probe(bus):
 
 
 def power_writer(path, value):
-    return ["sudo", sys.executable or "python3", "-c", POWER_WRITER, path, value]
+    # -n: a password prompt fails at once, rather than holding the sensor on
+    # until the timeout
+    return ["sudo", "-n", sys.executable or "python3", "-c", POWER_WRITER, path, value]
+
+
+def suspended(status):
+    return status in ("suspended", "suspending")
 
 
 def powered_lens_probe(slot, bus):
     """(lens_chip_probe(bus), the sensor's runtime status during it), with
-    the sensor at `slot` held on for the read where it was idle. Its
-    power/control is written back after, and checked (HostChanges): a host
-    left with the sensor held on raises HostNotAsFoundError, as does one
-    whose sensor does not go back to the status it was found in: writing
-    the control back only lets it suspend, so that is waited for too."""
+    the sensor at `slot` held on for the read where it was idle. The status
+    is "no runtime PM" where there is no power/control to hold it on with,
+    and "unread: why" where holding it on failed (no passwordless sudo):
+    the lens is still asked, and only an answer settles anything.
+
+    Its power/control is written back after, and checked (HostChanges): a
+    host left with the sensor held on raises HostNotAsFoundError, as does
+    one whose sensor does not go back to the status it was found in --
+    writing the control back only lets it suspend, so that is waited for,
+    for its autosuspend delay and SENSOR_POWER_S more."""
     base = ROOT + "/sys/bus/i2c/devices/%s/power/" % slot
     control = read(base + "control")
     found = read(base + "runtime_status")
-    if control in (None, "on"):
-        # nothing to hold on (no runtime PM), or held on already by someone
-        return lens_chip_probe(bus), read(base + "runtime_status")
+    if control is None:
+        return lens_chip_probe(bus), "no runtime PM"
+    if control == "on":
+        # held on already, by someone else: read as it is, and left so
+        return lens_chip_probe(bus), found
+    where = base[len(ROOT):] + "control"
     changes = HostChanges("holding the sensor at %s on" % slot, watch=[base + "control"])
     changes.begin()
     try:
-        changes.run(power_writer(base + "control", "on"), power_writer(base + "control", control))
+        changes.run(power_writer(base + "control", "on"), power_writer(base + "control", control),
+                    name='writing "on" to %s' % where,
+                    undo_name="writing %s back to %s" % (json.dumps(control), where))
+    except CommandFailedError as e:
+        # nothing changed (put_back checks): the lens is asked unpowered
+        changes.put_back(e)
+        return lens_chip_probe(bus), "unread: could not hold it on: %s" % command_failure(e)
+    try:
         deadline = time.monotonic() + SENSOR_POWER_S
         status = read(base + "runtime_status")
         while status != "active" and time.monotonic() < deadline:
@@ -1880,18 +1901,29 @@ def powered_lens_probe(slot, bus):
         changes.put_back(e)
         raise
     changes.put_back()
-    deadline = time.monotonic() + SENSOR_POWER_S
+    try:
+        delay = max(0, int(read(base + "autosuspend_delay_ms") or 0)) / 1000.0
+    except ValueError:
+        delay = 0
+    wait = delay + SENSOR_POWER_S
+    deadline = time.monotonic() + wait
     now = read(base + "runtime_status")
-    while now != found and time.monotonic() < deadline:
+    while not settled(now, found) and time.monotonic() < deadline:
         time.sleep(0.05)
         now = read(base + "runtime_status")
-    if now != found:
+    if not settled(now, found):
         raise HostNotAsFoundError(NOT_AS_FOUND + "after holding the sensor at %s on: its "
                                   "control is back to %s, but it is %s, not %s as it was "
-                                  "found, %.0f s later" % (slot, json.dumps(control),
+                                  "found, %.1f s later" % (slot, json.dumps(control),
                                                           json.dumps(now), json.dumps(found),
-                                                          SENSOR_POWER_S))
+                                                          wait))
     return result, status
+
+
+def settled(now, found):
+    """Whether a sensor is back as it was found: suspending and suspended
+    are one state here, a moment apart."""
+    return suspended(now) if suspended(found) else now == found
 
 
 def collect_cameras():
@@ -1962,6 +1994,13 @@ def camera_evidence(cam):
         why = "no lens driver at %s" % lens["addr"]
         if cam["power"] != "active":
             why += " (the sensor, %s, held powered for the read)" % cam["power"]
+    elif result == "nak" and lens.get("power") == "no runtime PM":
+        why = ("nothing at %s, but the sensor (%s) has no runtime PM to hold it on with, "
+               "so a lens driver may not have been powered" % (lens["addr"], cam["power"]))
+    elif result == "nak" and str(lens.get("power")).startswith("unread"):
+        why = ("nothing at %s, but the sensor (%s) could not be held on for the read (%s), "
+               "so a lens driver could not have answered" % (
+                   lens["addr"], cam["power"], lens["power"][len("unread: "):]))
     elif result == "nak" and "power" in lens:
         why = ("nothing at %s, and the sensor did not power up for the read (%s), so a "
                "lens driver could not have answered" % (lens["addr"], lens["power"]))
