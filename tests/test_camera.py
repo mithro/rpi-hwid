@@ -4,6 +4,7 @@ finds them."""
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -63,6 +64,7 @@ def client(root, slot, name, driver, power="active", lens_focus=False):
     (path / "power").mkdir(parents=True)
     (path / "name").write_text(name + "\n")
     (path / "power/runtime_status").write_text(power + "\n")
+    (path / "power/control").write_text("auto\n")
     drivers = root / "sys/bus/i2c/drivers" / driver
     drivers.mkdir(parents=True, exist_ok=True)
     os.symlink(str(drivers), str(path / "driver"))
@@ -83,11 +85,16 @@ def subdev(root, n, name, device=None):
 class Host:
     """A Pi's sysfs under `root`, and the commands the probe ran on it.
     `lens` is what the root reader finds at the lens address: "ack", "nak",
-    or None for a reader that could not run."""
+    or None for a reader that could not run. `powers` is whether a sensor
+    held on (power/control "on") comes up "active"; `restores` whether
+    writing its old control back takes."""
 
     def __init__(self, root):
         self.root = root
         self.lens = "nak"
+        self.powers = True
+        self.restores = True
+        self.found = {}             # runtime_status before the probe held it on
         self.ran = []
 
     def sh(self, args, timeout=15):
@@ -97,6 +104,18 @@ class Host:
             module.mkdir()
         if args == probe.I2C_DEV_UNLOAD:
             module.rmdir()
+        if probe.POWER_WRITER in args:
+            path, value = Path(args[-2]), args[-1]
+            status = path.parent / "runtime_status"
+            if value == "on":
+                self.found[status] = status.read_text()
+                path.write_text("on\n")
+                if self.powers:
+                    status.write_text("active\n")
+            elif self.restores:
+                path.write_text(value + "\n")
+                status.write_text(self.found.pop(status, "suspended\n"))
+            return ""
         if probe.LENS_READER in args:
             if not module.exists():
                 return f"ERROR=cannot open /dev/i2c-{args[-2]}"
@@ -106,6 +125,10 @@ class Host:
     def reads(self):
         return [a for a in self.ran if probe.LENS_READER in a]
 
+    def writes(self):
+        """(control file's slot, value) for each power/control write."""
+        return [(a[-2].split("/")[-3], a[-1]) for a in self.ran if probe.POWER_WRITER in a]
+
 
 @pytest.fixture
 def host(tmp_path, monkeypatch):
@@ -113,6 +136,8 @@ def host(tmp_path, monkeypatch):
     (tmp_path / "sys/module").mkdir(parents=True)
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
     monkeypatch.setattr(probe, "sh", h.sh)
+    monkeypatch.setattr(probe, "SENSOR_POWER_S", 0.2)
+    monkeypatch.setattr(probe, "LENS_POWER_SETTLE_S", 0)
     return h
 
 
@@ -129,7 +154,7 @@ def test_a_fixed_focus_camera_is_named_by_its_sensor(host):
     assert probe.camera_summary(cams) == [
         {"sensor": "ov5647", "variant": None, "autofocus": False, "lens": None}]
     assert cams[0]["slot"] == "10-0036"
-    assert cams[0]["lens_probe"] == {"addr": "0x0c", "result": "nak"}
+    assert cams[0]["lens_probe"] == {"addr": "0x0c", "result": "nak", "power": "active"}
 
 
 def test_an_unbound_lens_chip_beside_the_sensor_is_autofocus(host):
@@ -143,21 +168,69 @@ def test_an_unbound_lens_chip_beside_the_sensor_is_autofocus(host):
     assert [a[-2:] for a in host.reads()] == [["10", "0x0c"]]
 
 
-def test_silence_from_an_unpowered_camera_settles_nothing(host):
-    """A lens chip fed from the sensor's supply is off while the sensor is:
-    no answer then is not a fixed-focus lens."""
+def test_an_idle_sensor_is_held_powered_for_the_lens_read(host):
+    """A lens chip fed from the sensor's supply is off while the sensor is,
+    so the probe holds the sensor on (power/control "on") for the read and
+    puts its control back: silence from a powered sensor is fixed focus, and
+    nobody has to stream the camera, or type the answer in."""
     v1(host, power="suspended")
     cam, = probe.collect_cameras()
     assert probe.camera_summary([cam]) == [
-        {"sensor": "ov5647", "variant": None, "autofocus": None, "lens": None}]
-    assert cam["lens_probe"]["result"] == "nak"
-    assert cam["power"] == "suspended"
+        {"sensor": "ov5647", "variant": None, "autofocus": False, "lens": None}]
+    assert cam["lens_probe"] == {"addr": "0x0c", "result": "nak", "power": "active"}
+    assert cam["power"] == "suspended"          # as it was found
+    assert host.writes() == [("10-0036", "on"), ("10-0036", "auto")]
+    # held on around the read, and only around it
+    order = [("w", a[-1]) if probe.POWER_WRITER in a else ("r", None)
+             for a in host.ran if probe.POWER_WRITER in a or probe.LENS_READER in a]
+    assert order == [("w", "on"), ("r", None), ("w", "auto")]
+    sensor = host.root / "sys/bus/i2c/devices/10-0036/power"
+    assert (sensor / "control").read_text().strip() == "auto"
+    assert (sensor / "runtime_status").read_text().strip() == "suspended"
+    assert "no lens driver at 0x0c" in probe.camera_evidence(cam)
+    assert "held powered for the read" in probe.camera_evidence(cam)
 
 
-def test_an_answer_from_an_unpowered_camera_still_counts(host):
+def test_an_answer_from_a_sensor_held_on_counts(host):
     v1(host, power="suspended")
     host.lens = "ack"
     assert probe.camera_summary(probe.collect_cameras())[0]["autofocus"] is True
+
+
+def test_a_sensor_that_will_not_power_up_settles_nothing(host):
+    """Held on, the sensor never reached "active": silence then is still
+    not a fixed-focus lens, and the evidence says why."""
+    v1(host, power="suspended")
+    host.powers = False
+    cam, = probe.collect_cameras()
+    assert probe.camera_summary([cam])[0]["autofocus"] is None
+    assert cam["lens_probe"]["power"] == "suspended"
+    assert host.writes() == [("10-0036", "on"), ("10-0036", "auto")]
+    assert "did not power up for the read (suspended)" in probe.camera_evidence(cam)
+
+
+def test_a_running_sensor_is_read_without_touching_its_power(host):
+    v1(host)
+    probe.collect_cameras()
+    assert host.writes() == []
+
+
+def test_a_control_not_put_back_is_a_host_not_as_found(host):
+    v1(host, power="suspended")
+    host.restores = False
+    with pytest.raises(probe.HostNotAsFoundError) as e:
+        probe.collect_cameras()
+    assert "power/control" in str(e.value)
+    assert '"auto"' in str(e.value)
+    assert '"on"' in str(e.value)
+
+
+def test_a_sensor_already_held_on_is_left_held_on(host):
+    """Someone set control to "on" by hand: it is read as it is, and left so."""
+    v1(host, power="suspended")
+    (host.root / "sys/bus/i2c/devices/10-0036/power/control").write_text("on\n")
+    probe.collect_cameras()
+    assert host.writes() == []
 
 
 def test_a_read_that_could_not_be_made_settles_nothing(host):
@@ -299,7 +372,7 @@ def test_the_verdict_carries_the_cameras_and_says_how_each_was_settled(host):
 
 @pytest.mark.parametrize(("power", "lens", "says"), [
     ("active", "nak", "no lens driver"),
-    ("suspended", "nak", "not powered"),
+    ("suspended", "nak", "held powered for the read"),
     ("active", None, "unread"),
 ])
 def test_the_evidence_says_why_autofocus_is_or_is_not_known(host, power, lens, says):
@@ -308,6 +381,16 @@ def test_the_evidence_says_why_autofocus_is_or_is_not_known(host, power, lens, s
     v = probe.verdict(_evidence(cameras=probe.collect_cameras()))
     line, = [e for e in v["evidence"] if e.startswith("camera")]
     assert says in line
+
+
+def test_a_read_from_before_the_sensor_was_held_on_still_settles_nothing():
+    """Evidence kept from before the probe powered an idle sensor has no
+    `power` beside its lens result: silence there was an unpowered sensor's."""
+    cam = {"slot": "10-0036", "bus": 10, "sensor": "ov5647", "subdev": "ov5647",
+           "variant": None, "power": "suspended", "lens_focus": False, "lens_driver": None,
+           "lens_probe": {"addr": "0x0c", "result": "nak"}}
+    assert probe.camera_summary([cam])[0]["autofocus"] is None
+    assert "not powered" in probe.camera_evidence(cam)
 
 
 def test_a_verdict_on_evidence_without_cameras_has_none():

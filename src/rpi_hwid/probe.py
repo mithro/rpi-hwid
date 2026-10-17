@@ -1761,6 +1761,22 @@ finally:
 '''
 
 
+# An idle sensor is held on for the lens read through runtime PM: "on" in its
+# power/control resumes it, which powers its supply -- and the lens driver
+# chip fed from it -- as a stream would; its old control is written back
+# after. Run as root (sysfs power/control is root's), a fixed argument list,
+# never a shell.
+POWER_WRITER = r'''
+import sys
+with open(sys.argv[1], "w") as f:
+    f.write(sys.argv[2])
+'''
+# how long a sensor held on may take to report "active", and how long its
+# lens driver chip is then given to come up (a VCM driver wants a few ms)
+SENSOR_POWER_S = 2.0
+LENS_POWER_SETTLE_S = 0.1
+
+
 def i2c_clients():
     """Every I2C client the kernel knows, by slot ("10-0036"), with the
     driver bound to it."""
@@ -1822,6 +1838,39 @@ def lens_chip_probe(bus):
     return "unread: " + (err.group(1).strip() if err else "the reader printed nothing")
 
 
+def power_writer(path, value):
+    return ["sudo", sys.executable or "python3", "-c", POWER_WRITER, path, value]
+
+
+def powered_lens_probe(slot, bus):
+    """(lens_chip_probe(bus), the sensor's runtime status during it), with
+    the sensor at `slot` held on for the read where it was idle. Its
+    power/control is written back after, and checked (HostChanges): a host
+    left with the sensor held on raises HostNotAsFoundError."""
+    base = ROOT + "/sys/bus/i2c/devices/%s/power/" % slot
+    control = read(base + "control")
+    if control in (None, "on"):
+        # nothing to hold on (no runtime PM), or held on already by someone
+        return lens_chip_probe(bus), read(base + "runtime_status")
+    changes = HostChanges("holding the sensor at %s on" % slot, watch=[base + "control"])
+    changes.begin()
+    try:
+        changes.run(power_writer(base + "control", "on"), power_writer(base + "control", control))
+        deadline = time.monotonic() + SENSOR_POWER_S
+        status = read(base + "runtime_status")
+        while status != "active" and time.monotonic() < deadline:
+            time.sleep(0.05)
+            status = read(base + "runtime_status")
+        if status == "active":
+            time.sleep(LENS_POWER_SETTLE_S)
+        result = lens_chip_probe(bus)
+    except BaseException as e:
+        changes.put_back(e)
+        raise
+    changes.put_back()
+    return result, status
+
+
 def collect_cameras():
     """The CSI cameras the kernel bound, in bus order, each with the lens
     driver beside it where there is one."""
@@ -1843,8 +1892,14 @@ def collect_cameras():
                "lens_focus": c["lens_focus"], "lens_driver": lens[0] if lens else None,
                "lens_probe": None}
         if not lens:
-            # no driver owns the lens address, so it can be asked directly
-            cam["lens_probe"] = {"addr": "0x%02x" % LENS_ADDR, "result": lens_chip_probe(bus)}
+            # no driver owns the lens address, so it can be asked directly;
+            # an idle sensor is held on for it, since its lens chip shares
+            # its supply
+            if c["power"] == "active":
+                result, power = lens_chip_probe(bus), "active"
+            else:
+                result, power = powered_lens_probe(c["slot"], bus)
+            cam["lens_probe"] = {"addr": "0x%02x" % LENS_ADDR, "result": result, "power": power}
         cams.append(cam)
     return cams
 
@@ -1860,9 +1915,16 @@ def camera_autofocus(cam):
         return True, cam["lens_probe"]["addr"]
     # A lens driver fed from the sensor's supply is off while the sensor is,
     # so silence means "no lens driver" only on a sensor that is running.
-    if result == "nak" and cam["power"] == "active":
+    if result == "nak" and lens_power(cam) == "active":
         return False, None
     return None, None
+
+
+def lens_power(cam):
+    """The sensor's runtime status while its lens address was read: what the
+    probe held it at, or, in evidence from before it held idle sensors on,
+    the status it was found in."""
+    return (cam["lens_probe"] or {}).get("power", cam["power"])
 
 
 def camera_evidence(cam):
@@ -1873,8 +1935,13 @@ def camera_evidence(cam):
         why = "lens driver %s bound" % cam["lens_driver"]
     elif result == "ack":
         why = "a lens driver chip answers at %s, with no kernel driver" % lens["addr"]
-    elif result == "nak" and cam["power"] == "active":
+    elif result == "nak" and lens_power(cam) == "active":
         why = "no lens driver at %s" % lens["addr"]
+        if cam["power"] != "active":
+            why += " (the sensor, %s, held powered for the read)" % cam["power"]
+    elif result == "nak" and "power" in lens:
+        why = ("nothing at %s, and the sensor did not power up for the read (%s), so a "
+               "lens driver could not have answered" % (lens["addr"], lens["power"]))
     elif result == "nak":
         why = ("nothing at %s, but the sensor is not powered (%s), so a lens driver "
                "could not have answered" % (lens["addr"], cam["power"]))
