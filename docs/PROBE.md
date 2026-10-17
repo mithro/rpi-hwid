@@ -148,8 +148,15 @@ Autofocus is settled in this order:
    An answer is `autofocus: true`.
 3. **Silence at `0x0c`** is `autofocus: false` only while the sensor is powered
    (its runtime status is `active`, as it is while a stream runs). A lens
-   driver fed from the sensor's supply is off when the sensor is, so silence
-   from an idle camera is `null`.
+   driver fed from the sensor's supply is off when the sensor is, so an idle
+   sensor is held on for the read: `on` is written to its
+   `power/control`, as root, which resumes it through runtime PM as a stream
+   would; the probe waits up to 2 s for `active`, reads the address, and
+   writes the old control (`auto`) back. The control is compared before and
+   after like the i2c modules, and one not put back stops the probe. A
+   sensor that does not reach `active`, or has no `power/control`, leaves
+   silence `null`, and the evidence says which. A control someone already
+   set to `on` is read as it is and left so.
 
 Which lens driver chip it is cannot be read either: the common ones (AD5398,
 DW9714) have no ID register.
