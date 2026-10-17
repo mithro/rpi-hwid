@@ -259,6 +259,24 @@ def sniffed_bus(*slaves, **kw):
     return bus, sniffer
 
 
+def hat_blob(vendor, product, uuid_text):
+    """A HAT ID EEPROM's first bytes as the spec lays them out: the header,
+    then one vendor-info atom (uuid, pid 1, version 1, the two strings),
+    then erased cells. Its CRC is not computed: eeprom_decode does not read it."""
+    import uuid as uuid_module
+    data = (uuid_module.UUID(uuid_text).bytes_le + struct.pack("<HHBB", 1, 1, len(vendor),
+                                                               len(product))
+            + vendor.encode() + product.encode())
+    atom = struct.pack("<HHI", 1, 0, len(data) + 2) + data + b"\0\0"
+    head = b"R-Pi" + struct.pack("<BBHI", 1, 0, 1, 12 + len(atom))
+    return (head + atom).ljust(256, b"\xff")
+
+
+# The Digilent Pmod HAT Adaptor on the fleet's Arty hosts, as its firmware
+# names it (/proc/device-tree/hat on a Pi 4, 17 Oct 2026).
+PMOD_HAT_BLOB = hat_blob("Digilent", "Pmod HAT Adaptor", "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a")
+
+
 def eeprom_bus(addr=0x50, memory=WAVESHARE_BLOB, **kw):
     return SimBus([SimEeprom(addr, memory)], **kw)
 

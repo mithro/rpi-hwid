@@ -836,8 +836,10 @@ def wait_for(path, seconds):
 def read_as_found(bus, read, label=None):
     """read() on `bus`, with the host checked around it: the kernel's i2c
     modules and nodes (HostChanges), and, with `label` (the header's GPIO
-    chip), the function and pad of the bus's pins, read first -- nothing is
-    touched when they cannot be -- and put back afterwards (put_pins_back).
+    chip: on the GPIO path, where this probe takes the lines itself, never
+    through a node, whose pins are its driver's), the function and pad of
+    the bus's pins, read first -- nothing is touched when they cannot be --
+    and put back afterwards (put_pins_back).
     What read() returns, or what it raised; HostNotAsFoundError when the
     host is not as it was found, naming the read's own error too, and both
     problems where both arise."""
@@ -881,17 +883,24 @@ def header_bus_read(bus, through_node, through_lines, nothing):
         (a BitBangI2C on those lines), the lines released and freed on every
         path and checked (GpioLines.close).
       * otherwise (an Orange Pi without the bus): `nothing`, not read.
-    Either read is made through read_as_found: where the bus's GPIO lines
-    are declared its pins are put back as they were, and on every board the
-    kernel's i2c modules and nodes are checked to be as they were."""
+    Either read is made through read_as_found, which checks on every board
+    that the kernel's i2c modules and nodes are as they were. On the GPIO
+    path, where this probe takes the lines itself, the pins' function and pad
+    are read first and put back after; through a node they are the kernel
+    driver's, and left to it."""
     node = ROOT + "/dev/i2c-%d" % bus.number
     adapter = ROOT + "/sys/bus/i2c/devices/i2c-%d" % bus.number
     if bus.gpio and not os.path.exists(node) and os.path.exists(adapter) and i2c_dev_loaded():
         # the adapter is there and so is the module: udev is still making the node
         wait_for(node, BUS_SETTLE_S)
     if os.path.exists(node):
-        label = header_gpiochip(bus)[1] if bus.gpio else None
-        return read_as_found(bus, lambda: through_node(bus.number), label), True
+        # The node's pins are its kernel driver's, which puts them in its own
+        # function as it selects the bus and remembers that it has: a Pi 4's
+        # i2c0mux leaves GPIO0/1 alt0. Putting them back behind its back made
+        # every later read through the node silent (rpi-hwid #93's b195f29 on
+        # a Pi 4, 17 Oct 2026), so they are left to it; only the kernel's i2c
+        # modules and nodes are checked.
+        return read_as_found(bus, lambda: through_node(bus.number)), True
     if not bus.gpio:
         return nothing, False
     if os.path.exists(adapter):
@@ -937,7 +946,14 @@ def id_bus_scan(bus, gpio=None):
         return dict(("0x%02x" % addr, info) for addr, info in (
             (addr, eeprom_decode(i2c.read_eeprom(addr, EEPROM_LENGTH)))
             for addr in ID_EEPROM_ADDRS) if info)
-    return header_bus_read(HeaderBus("id", bus, gpio), through_node, through_lines, {})
+    found, readable = header_bus_read(HeaderBus("id", bus, gpio), through_node, through_lines, {})
+    if readable and not found and os.path.isdir(ROOT + "/proc/device-tree/hat"):
+        # the firmware read a HAT EEPROM on this bus at boot: a read that hears
+        # nothing there now is a read that did not reach the bus, never "no EEPROM"
+        raise IdBusError("the firmware read a HAT EEPROM at boot (/proc/device-tree/hat), but "
+                         "reading the HAT ID bus (i2c-%d) now found none: the read did not "
+                         "reach the bus, or the HAT was taken off since" % bus)
+    return found, readable
 
 
 def user_bus_scan(bus, gpio=None):
@@ -1515,39 +1531,37 @@ def pins_from_debugfs(label, offsets):
     if len(devs) != 1:
         raise PinsUnreadableError("%d pin controllers under %s are named *-%s, not one: %s" % (
             len(devs), DEBUGFS_PINCTRL, label, ", ".join(devs) or "none"))
-    for dev in devs:
-        pins = debugfs_text(DEBUGFS_PINCTRL + "/" + dev + "/pins")
-        rows = {}
-        for m in re.finditer(r"^pin (\d+) \(gpio(\d+)\) (\d+):(\S+) (.*)$", pins, re.M):
-            n = int(m.group(2))
-            if n not in offsets:
-                continue
-            if m.group(4) != "?" and (m.group(4) != label or int(m.group(3)) != n):
-                raise PinsUnreadableError(
-                    "%s/%s/pins gives gpio%d as line %s of %s, not line %d of %s" % (
-                        DEBUGFS_PINCTRL, dev, n, m.group(3), m.group(4), n, label))
-            rows[n] = (int(m.group(1)), m.group(5))
-        if len(rows) != len(offsets):
-            raise PinsUnreadableError("%s/%s/pins shows %s of GPIO%s" % (
-                DEBUGFS_PINCTRL, dev, "/".join("gpio%d" % o for o in sorted(rows)) or "none",
-                "/".join(str(o) for o in offsets)))
-        configs = {}
-        if "pinconf-pins" in debugfs_list(DEBUGFS_PINCTRL + "/" + dev):
-            text = debugfs_text(DEBUGFS_PINCTRL + "/" + dev + "/pinconf-pins")
-            configs = dict((int(m.group(1)), m.group(2).strip()) for m in
-                           re.finditer(r"^pin (\d+) \([^)]*\): ?(.*)$", text, re.M))
-        out = {}
-        for o in offsets:
-            pin, shown = rows[o]
-            m = re.match(r"function (\S+)", shown)
-            if not m:
-                raise PinsUnreadableError("%s/%s/pins gives no function for GPIO%d: %r" % (
-                    DEBUGFS_PINCTRL, dev, o, shown))
-            config = configs.get(pin)
-            out[o] = {"function": m.group(1), "config": config, "pull": debugfs_pull(config)}
-        return out
-    raise PinsUnreadableError("no pin controller under %s shows GPIO%s of %s" % (
-        DEBUGFS_PINCTRL, "/".join(str(o) for o in offsets), label))
+    dev = devs[0]
+    pins = debugfs_text(DEBUGFS_PINCTRL + "/" + dev + "/pins")
+    rows = {}
+    for m in re.finditer(r"^pin (\d+) \(gpio(\d+)\) (\d+):(\S+) (.*)$", pins, re.M):
+        n = int(m.group(2))
+        if n not in offsets:
+            continue
+        if m.group(4) != "?" and (m.group(4) != label or int(m.group(3)) != n):
+            raise PinsUnreadableError(
+                "%s/%s/pins gives gpio%d as line %s of %s, not line %d of %s" % (
+                    DEBUGFS_PINCTRL, dev, n, m.group(3), m.group(4), n, label))
+        rows[n] = (int(m.group(1)), m.group(5))
+    if len(rows) != len(offsets):
+        raise PinsUnreadableError("%s/%s/pins shows %s of GPIO%s" % (
+            DEBUGFS_PINCTRL, dev, "/".join("gpio%d" % o for o in sorted(rows)) or "none",
+            "/".join(str(o) for o in offsets)))
+    configs = {}
+    if "pinconf-pins" in debugfs_list(DEBUGFS_PINCTRL + "/" + dev):
+        text = debugfs_text(DEBUGFS_PINCTRL + "/" + dev + "/pinconf-pins")
+        configs = dict((int(m.group(1)), m.group(2).strip()) for m in
+                       re.finditer(r"^pin (\d+) \([^)]*\): ?(.*)$", text, re.M))
+    out = {}
+    for o in offsets:
+        pin, shown = rows[o]
+        m = re.match(r"function (\S+)", shown)
+        if not m:
+            raise PinsUnreadableError("%s/%s/pins gives no function for GPIO%d: %r" % (
+                DEBUGFS_PINCTRL, dev, o, shown))
+        config = configs.get(pin)
+        out[o] = {"function": m.group(1), "config": config, "pull": debugfs_pull(config)}
+    return out
 
 
 def pins_from_pinctrl(offsets):

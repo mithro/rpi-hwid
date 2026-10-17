@@ -237,10 +237,11 @@ GPIO character device; a kernel adapter with no node is an error, and the
 pins are left to it. (The runtime `dtparam i2c_vc=on` and `dtparam i2c_arm=on`
 it used to apply cannot always be taken out: the removal hangs in the kernel
 on a Pi 3B+, mithro/rpi-hwid issue #91, and on a Pi 5 it left GPIO2/3, their
-pads and the i2c_designware modules changed.) Each pin's function and pad
-(drive strength included, from debugfs, as root or through `sudo -n`, on
-every run) are read before the bus is touched and put back and checked
-after, and the
+pads and the i2c_designware modules changed.) Where it drives a bus's GPIO lines
+itself, each pin's function and pad (drive strength included, from debugfs,
+as root or through `sudo -n`, on every run) are read before the bus is
+touched and put back and checked after; through a node the pins are the
+kernel driver's and are left to it. The
 loaded i2c modules and `/dev/i2c-*` nodes are compared before and after
 ([LABEL-INPUT.md](LABEL-INPUT.md#the-pi-alone---pi-only)). A host not left
 as it was found, or a header bus that cannot be read (its pins in use or

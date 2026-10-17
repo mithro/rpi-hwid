@@ -347,11 +347,11 @@ def test_debugfs_refused_by_sudo_is_loud_before_anything_is_touched(chip, tmp_pa
                        "/sys/kernel/debug/pinctrl` exited 1: sudo: a password is required"):
         _scan(role, number, gpio)
     assert fake.requests == []
+    # through a node the pins are the kernel driver's: no pin state is needed
     _w(tmp_path, f"/dev/i2c-{number}", "")
-    monkeypatch.setattr(probe, "eeprom_read", lambda *a, **kw: pytest.fail("read"))
-    monkeypatch.setattr(probe, "i2c_scan", lambda *a, **kw: pytest.fail("read"))
-    with pytest.raises(error, match="sudo: a password is required"):
-        _scan(role, number, gpio)
+    monkeypatch.setattr(probe, "eeprom_read", lambda *a, **kw: None)
+    monkeypatch.setattr(probe, "i2c_scan", lambda *a, **kw: [])
+    assert _scan(role, number, gpio)[1] is True
     assert fake.pinctrl_sets == []
 
 
@@ -737,24 +737,33 @@ def _scan(role, number, gpio):
 
 @pytest.fixture
 def through_node(chip, tmp_path, monkeypatch):
-    """A bus's /dev/i2c-N there, the GPIO chip behind its pins, and a read
-    through the node that muxes the pins as the kernel's driver does."""
+    """A bus's /dev/i2c-N there, the GPIO chip behind its pins, and the
+    kernel's driver behind the node as a Pi 4's i2c0mux behaves (measured on
+    a Pi 4, 17 Oct 2026): it puts the pins in its own function when it
+    selects the channel, and selects only when the channel it last selected
+    is another, so a transfer reaches the bus only while the pins are still
+    its own. Pins put back to GPIO behind its back make every later read
+    through the node silent: the EEPROM is not found."""
     def make(role, **kw):
         number, gpio, _, _ = BUSES[role]
         fake = chip(offsets=gpio, **kw)
         _w(tmp_path, f"/dev/i2c-{number}", "")
         monkeypatch.setattr(probe, "open_lines", lambda *a: pytest.fail("GPIO requested"))
         reads = []
+        mux = {"selected": False}
+
+        def transfer(bus):
+            reads.append(bus)
+            if not mux["selected"]:
+                fake.driver_muxes()
+                mux["selected"] = True
+            return fake.function == ["alt0", "alt0"]
 
         def eeprom_read(bus, addr, length=256):
-            reads.append(bus)
-            fake.driver_muxes()
-            return WAVESHARE_BLOB if addr == 0x52 else None
+            return WAVESHARE_BLOB if transfer(bus) and addr == 0x52 else None
 
         def i2c_scan(bus, first=0x03, last=0x77):
-            reads.append(bus)
-            fake.driver_muxes()
-            return ["20", "3c"]
+            return ["20", "3c"] if transfer(bus) else []
         monkeypatch.setattr(probe, "eeprom_read", eeprom_read)
         monkeypatch.setattr(probe, "i2c_scan", i2c_scan)
         return fake, reads
@@ -762,7 +771,7 @@ def through_node(chip, tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("role", ["id", "user"])
-def test_pins_a_node_read_muxed_are_put_back(through_node, role):
+def test_a_node_read_leaves_the_pins_to_the_kernels_driver(through_node, role):
     fake, reads = through_node(role, pinctrl=True)
     number, gpio, _, _ = BUSES[role]
     assert fake.function == ["gpio_in", "gpio_in"]
@@ -772,24 +781,36 @@ def test_pins_a_node_read_muxed_are_put_back(through_node, role):
                      else ["20", "3c"])
     assert reads, "read through the node"
     assert set(reads) == {number}
-    assert fake.pinctrl_sets == [["sudo", "-n", probe.PINCTRL, "set", str(o), "ip"] for o in gpio]
-    assert fake.function == ["gpio_in", "gpio_in"], "as the firmware left them"
+    assert fake.pinctrl_sets == [], "the driver's pins are not touched"
+    assert fake.function == ["alt0", "alt0"], "as the driver left them"
 
 
 @pytest.mark.parametrize("role", ["id", "user"])
-def test_pins_a_node_read_muxed_that_cannot_be_put_back_are_loud(through_node, role):
-    fake, _ = through_node(role, pinctrl=True, pinctrl_set_fails=True)
-    number, gpio, name, pins = BUSES[role]
-    with pytest.raises(probe.HostNotAsFoundError) as err:
+def test_a_second_node_read_still_reaches_the_bus(through_node, role):
+    """The Pi 4 at rpi-hwid #93's b195f29, 17 Oct 2026: the first read
+    found the Pmod HAT's EEPROM, put GPIO0/1 back to gpio_in under the
+    i2c0mux, and the second read found nothing, silently."""
+    through_node(role, pinctrl=True)
+    number, gpio, _, _ = BUSES[role]
+    first = _scan(role, number, gpio)
+    second = _scan(role, number, gpio)
+    assert first == second
+    assert second[0], "the second read found what the first did"
+
+
+@pytest.mark.parametrize("role", ["id", "user"])
+def test_a_node_read_still_checks_the_kernels_nodes_and_modules(through_node, tmp_path,
+                                                                monkeypatch, role):
+    through_node(role, pinctrl=True)
+    number, gpio, _, _ = BUSES[role]
+    real = probe.eeprom_read if role == "id" else probe.i2c_scan
+
+    def leaves_a_module(*a, **kw):
+        _w(tmp_path, "/sys/module/i2c_designware_core/refcnt", "0")
+        return real(*a, **kw)
+    monkeypatch.setattr(probe, "eeprom_read" if role == "id" else "i2c_scan", leaves_a_module)
+    with pytest.raises(probe.HostNotAsFoundError, match="i2c_designware_core"):
         _scan(role, number, gpio)
-    msg = str(err.value)
-    assert msg.startswith(f"the host is not as it was found, after reading {name} on {pins}: "
-                          f"putting it back failed: `sudo -n /usr/bin/pinctrl set {gpio[0]} ip` "
-                          "exited 1: failed")
-    assert (f"GPIO{gpio[0]} was function gpio_in (no pad config shown); pinctrl ip pull "
-            "unknown, input on, and is now function alt0 (no pad config shown); pinctrl a0 pull "
-            "unknown, input on") in msg
-    assert fake.function == ["alt0", "alt0"]
 
 
 @pytest.mark.parametrize("role", ["id", "user"])
@@ -805,18 +826,31 @@ def test_a_node_read_that_leaves_the_pins_alone_puts_nothing_back(chip, tmp_path
 
 
 @pytest.mark.parametrize("role", ["id", "user"])
-def test_a_node_read_whose_pins_cannot_be_read_is_not_made(chip, tmp_path, monkeypatch, role):
-    """No debugfs and no pinctrl: nothing says what the pins were, so the
-    node is not even read."""
-    number, gpio, name, pins = BUSES[role]
+def test_a_node_read_needs_no_pin_state(chip, tmp_path, monkeypatch, role):
+    """No debugfs and no pinctrl: through a node the pins are the driver's,
+    so their state is not needed and not read."""
+    number, gpio, _, _ = BUSES[role]
     chip(offsets=gpio, debugfs=False)
     _w(tmp_path, f"/dev/i2c-{number}", "")
-    monkeypatch.setattr(probe, "eeprom_read", lambda *a, **kw: pytest.fail("read"))
-    monkeypatch.setattr(probe, "i2c_scan", lambda *a, **kw: pytest.fail("read"))
-    error = probe.IdBusError if role == "id" else probe.UserBusError
-    with pytest.raises(error, match=f"the function and pad of {pins} cannot be read, so they "
-                       f"could not be put back after {name} was read"):
-        _scan(role, number, gpio)
+    monkeypatch.setattr(probe, "pin_states", lambda *a, **kw: pytest.fail("pins read"))
+    monkeypatch.setattr(probe, "eeprom_read", lambda *a, **kw: None)
+    monkeypatch.setattr(probe, "i2c_scan", lambda *a, **kw: [])
+    assert _scan(role, number, gpio)[1] is True
+
+
+@pytest.mark.parametrize("node", [True, False])
+def test_an_id_bus_read_that_hears_nothing_where_the_firmware_read_a_hat_is_an_error(
+        through_node, chip, tmp_path, monkeypatch, node):
+    """The b195f29 Pi 4: the firmware had read the Pmod HAT's EEPROM at boot,
+    and a read that did not reach the bus said "no EEPROM"."""
+    _w(tmp_path, "/proc/device-tree/hat/product", "Pmod HAT Adaptor")
+    if node:
+        through_node("id", pinctrl=True)
+        monkeypatch.setattr(probe, "eeprom_read", lambda *a, **kw: None)
+    else:
+        chip(SimBus(), pinctrl=True)
+    with pytest.raises(probe.IdBusError, match="the read did not reach the bus"):
+        probe.id_bus_scan(0, (0, 1))
 
 
 # --- the user bus through its GPIO lines (GPIO2/3) ----------------------------
@@ -1008,7 +1042,8 @@ def test_an_interrupt_mid_bit_bang_frees_the_lines_and_puts_the_pins_back(chip, 
 
 
 @pytest.mark.parametrize("role", ["id", "user"])
-def test_an_interrupt_mid_node_read_puts_the_pins_back(through_node, monkeypatch, role):
+def test_an_interrupt_mid_node_read_propagates_and_leaves_the_pins_to_the_driver(
+        through_node, monkeypatch, role):
     fake, _ = through_node(role, pinctrl=True)
     number, gpio, _, _ = BUSES[role]
 
@@ -1019,9 +1054,8 @@ def test_an_interrupt_mid_node_read_puts_the_pins_back(through_node, monkeypatch
     monkeypatch.setattr(probe, "i2c_scan", interrupted)
     with pytest.raises(KeyboardInterrupt):
         _scan(role, number, gpio)
-    assert fake.function == ["gpio_in", "gpio_in"], "the pins are put back"
-    assert fake.pinctrl_sets == [["sudo", "-n", probe.PINCTRL, "set", str(o), "ip"]
-                                 for o in gpio]
+    assert fake.pinctrl_sets == []
+    assert fake.function == ["alt0", "alt0"]
 
 
 def test_an_interrupt_whose_pins_cannot_be_put_back_says_so(chip, monkeypatch):
@@ -1076,4 +1110,21 @@ def test_a_range_column_that_contradicts_the_pin_is_unreadable(chip, tmp_path):
     pins.write_text(pins.read_text().replace("pin 1 (gpio1) 0:?",
                                              "pin 1 (gpio1) 7:pinctrl-bcm2835"))
     with pytest.raises(probe.PinsUnreadableError, match="gives gpio1 as line 7"):
+        probe.pins_from_debugfs("pinctrl-bcm2835", (0, 1))
+
+
+def test_a_pin_debugfs_does_not_show_is_unreadable(chip, tmp_path):
+    chip(eeprom_bus(0x50), pinctrl=True)
+    pins = tmp_path / "sys/kernel/debug/pinctrl/3f200000.gpio-pinctrl-bcm2835/pins"
+    pins.write_text("\n".join(line for line in pins.read_text().split("\n")
+                              if not line.startswith("pin 1 (gpio1)")) + "\n")
+    with pytest.raises(probe.PinsUnreadableError, match=r"pins shows gpio0 of GPIO0/1"):
+        probe.pins_from_debugfs("pinctrl-bcm2835", (0, 1))
+
+
+def test_a_controller_whose_name_only_contains_the_label_is_not_it(chip, tmp_path):
+    chip(eeprom_bus(0x50), pinctrl=True)
+    base = tmp_path / "sys/kernel/debug/pinctrl"
+    (base / "3f200000.gpio-pinctrl-bcm2835").rename(base / "3f200000.gpio-pinctrl-bcm2835-aux")
+    with pytest.raises(probe.PinsUnreadableError, match="0 pin controllers"):
         probe.pins_from_debugfs("pinctrl-bcm2835", (0, 1))

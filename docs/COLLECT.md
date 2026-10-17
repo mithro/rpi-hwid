@@ -18,7 +18,11 @@ part of `--fpga` or `--jtag`); the Tiny Tapeout module with
 read unless `--no-stop-service` is given (see [PROBE.md](PROBE.md#a-port-a-service-already-holds));
 the SDR module with `--sdr`, which opens no radio, or `--sdr-open HOST` to open a
 free usdr card on that host as well (see [PROBE.md](PROBE.md#software-defined-radios)).
-A login banner before the JSON is skipped.
+A login banner before the JSON is skipped. The ssh user needs root or
+passwordless `sudo` on each Pi: a header bus read through its GPIO lines reads
+the pins' state from the kernel's debugfs and puts any changed pin back with
+`sudo -n pinctrl set` ([PROBE.md](PROBE.md)), and without it that host's read
+fails, its reason (the end of the probe's stderr) printed as the host's error.
 
 ```
 $ rpi-hwid collect --out data/ -J jump.example.org --fpga --jtag pi@10.21.2.16 \

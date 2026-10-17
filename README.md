@@ -167,12 +167,13 @@ On the Pi it wants root or passwordless `sudo`: for the firmware tool
 `vcgencmd`, for the camera-lens read (`modprobe i2c-dev`), and for the header.
 The 40-pin header's two buses are read straight from `/dev/i2c-*`, or, where the
 kernel has no node for one, from `/dev/gpiochip*` (the `i2c` and `gpio` groups),
-with no `dtparam`, no `modprobe` and no `i2c-tools`. But before a bus is touched
-its pins' function and pad are read from the kernel's debugfs, which is root's
-(`sudo -n ls` and `sudo -n cat` when not root), and any pin the read changed is put
-back with raspi-utils' `sudo -n pinctrl set`. Without `sudo` (and not root) the
-probe therefore cannot read the header of a Pi: it stops, with exit status 1, saying
-why, rather than read pins it could not show to be left as found.
+with no `dtparam`, no `modprobe` and no `i2c-tools`. But before it drives a bus's
+lines itself, its pins' function and pad are read from the kernel's debugfs, which
+is root's (`sudo -n ls` and `sudo -n cat` when not root), and any pin the read
+changed is put back with raspi-utils' `sudo -n pinctrl set`; through a node the pins
+are the kernel driver's and are left to it. Without `sudo` (and not root) the probe
+therefore cannot read a header bus that has no node: it stops, with exit status 1,
+saying why, rather than drive pins it could not show to be left as found.
 
 ## Quick start
 

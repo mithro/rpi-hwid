@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from id_bus_fixtures import SimBus, SimEeprom
+from id_bus_fixtures import WAVESHARE_BLOB, SimBus, SimEeprom
 from rpi_hwid import fpga, probe, tinytapeout
 from rpi_hwid.model import FpgaBoard
 
@@ -1369,15 +1369,20 @@ def test_hat_firmware_dir_and_id_bus(fake_root, monkeypatch):
         return ""
     monkeypatch.setattr(probe, "sh", fake_sh)
     # The I2C seam: a Pi's user bus is 1, and the Waveshare PoE HAT (B)'s
-    # two chips answer there. Nothing answers on the ID bus (0).
+    # two chips answer there. On the ID bus (0) a second HAT's EEPROM answers
+    # at 0x52, which the firmware does not read: the firmware's own (0x50)
+    # is named from /proc/device-tree/hat.
     monkeypatch.setattr(probe, "i2c_scan", lambda bus, **kw: ["20", "3c"] if bus == 1 else [])
-    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: None)
+    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256:
+                        WAVESHARE_BLOB if (bus, addr) == (0, 0x52) else None)
     d = probe.collect()
     assert d["hat_fw"]["product"] == "Pmod HAT Adaptor"
+    assert list(d["hat_eeproms"]) == ["0x52"]
     assert d["header_i2c"] == ["20", "3c"]
     assert d["undervoltage_since_boot"] is True
     v = probe.verdict(d)
     assert "Digilent Pmod HAT Adaptor" in v["summary"]["header"]
+    assert "Waveshare PoE M.2 HAT+ (B)" in v["summary"]["header"]
     assert "Waveshare PoE HAT (B)" in v["summary"]["header"]
     assert v["summary"]["hat_uuid"] == "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a"
 

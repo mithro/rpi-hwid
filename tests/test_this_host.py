@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from id_bus_fixtures import WAVESHARE_BLOB
 from rpi_hwid import cli, fpga, label_input, labels, probe, this_host, tinytapeout
 from test_probe_collect import _pi5_tree, _w
 
@@ -25,9 +26,15 @@ def host(tmp_path, monkeypatch):
     document. Nothing may reach the FPGA but that."""
     _pi5_tree(tmp_path)
     _w(tmp_path, "/dev/i2c-0", "")
-    _w(tmp_path, "/proc/device-tree/hat/vendor", "Waveshare\0")
-    _w(tmp_path, "/proc/device-tree/hat/product", "PoE M.2 HAT+ (B)\0")
+    # the firmware's reading of the HAT EEPROM that the ID bus answers with
+    # (the two agree, or the probe stops: a read that hears nothing where the
+    # firmware read a HAT is one that did not reach the bus)
+    _w(tmp_path, "/proc/device-tree/hat/vendor", "vendor \0")
+    _w(tmp_path, "/proc/device-tree/hat/product", "Waveshare PoE M.2 HAT+ (B)\0")
     monkeypatch.setattr(probe, "ROOT", str(tmp_path))
+    monkeypatch.setattr(probe, "eeprom_read", lambda bus, addr, length=256: WAVESHARE_BLOB
+                        if (bus, addr) == (0, 0x50) and (tmp_path / "proc/device-tree/hat").is_dir()
+                        else None)
     monkeypatch.setattr(fpga, "ROOT", str(tmp_path))
 
     def sh(args, timeout=15):

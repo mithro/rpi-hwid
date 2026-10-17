@@ -9,7 +9,7 @@ import typing
 
 import pytest
 
-from id_bus_fixtures import SimBus, eeprom_bus
+from id_bus_fixtures import PMOD_HAT_BLOB, SimBus, eeprom_bus
 from rpi_hwid import cli, fpga, label_input, probe, tinytapeout
 from rpi_hwid.model import Summary
 from test_probe_collect import _pi5_tree, _w
@@ -112,14 +112,29 @@ def test_an_empty_header_with_the_user_bus_unread_is_not_read(pi5):
     assert cli.pi_only_label_input("p48")["summary"]["header"] is None
 
 
-def test_a_hat_the_firmware_read_is_still_named(pi5):
-    root, _, _ = pi5
+def _firmware_hat(root):
     for key, value in (("vendor", "Digilent"), ("product", "Pmod HAT Adaptor"),
                        ("uuid", "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a")):
         _w(root, f"/proc/device-tree/hat/{key}", value + "\0")
+
+
+def test_a_hat_the_firmware_read_is_still_named(pi5, monkeypatch):
+    """Beside a second HAT EEPROM the probe reads at 0x52 itself."""
+    root, _, _ = pi5
+    _firmware_hat(root)
+    monkeypatch.setattr(probe, "open_lines", lambda chip, bus: eeprom_bus(0x52) if bus.number == 0
+                        else SimBus())
     s = cli.pi_only_label_input("p48")["summary"]
-    assert s["header"] == ["Digilent Pmod HAT Adaptor"]
+    assert s["header"] == ["Waveshare PoE M.2 HAT+ (B)", "Digilent Pmod HAT Adaptor"]
     assert s["hat_uuid"] == "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a"
+
+
+def test_a_hat_the_firmware_read_that_the_id_bus_does_not_answer_for_is_no_label_input(pi5):
+    """A read that did not reach the bus is not 'no EEPROM': no document."""
+    root, _, _ = pi5
+    _firmware_hat(root)
+    with pytest.raises(probe.IdBusError, match="the read did not reach the bus"):
+        cli.pi_only_label_input("p48")
 
 
 # --- --user-bus (contract 18) ------------------------------------------------
@@ -234,17 +249,24 @@ def decode(details):
     return out
 
 
-def test_the_document_survives_the_event_encoding(pi5):
+def _pmod_hat_on_the_id_bus(monkeypatch):
+    monkeypatch.setattr(probe, "open_lines", lambda chip, bus: eeprom_bus(0x50, PMOD_HAT_BLOB)
+                        if bus.number == 0 else SimBus())
+
+
+def test_the_document_survives_the_event_encoding(pi5, monkeypatch):
     root, _, _ = pi5
     _w(root, "/proc/device-tree/hat/product", "Pmod HAT Adaptor\0")
     _w(root, "/proc/device-tree/hat/vendor", "Digilent\0")
+    _pmod_hat_on_the_id_bus(monkeypatch)
     pi = cli.pi_only_label_input("p48")
     details = encode(pi["summary"])
     assert details["macs"] == '[{"kind":"eth","mac":"98:fe:54:13:f5:75","signal":"driver"}]'
     assert details["fpga"] == "[]"
     # contract 19: the adapters go too, so the site's usb_net matches
     assert json.loads(details["usb_net"])[0]["vidpid"] == "0bda:8153"
-    assert details["hat_uuid"] == "-"          # this HAT has none
+    assert details["header"] == '["Pmod HAT Adaptor"]'
+    assert details["hat_uuid"] == "6bcd3833-3d1d-4b3e-9ab1-945c71845f3a"  # from its EEPROM
     site = label_input.build("p48", decode(details), {"serial": "registration"})
     assert label_input.comparable(site) == label_input.comparable(pi)
 
@@ -390,8 +412,9 @@ def test_a_hat_the_firmware_read_settles_it_even_then(pi5, monkeypatch):
     monkeypatch.setattr(probe, "sh", lambda args, timeout=15: "")
     for key, value in (("vendor", "Digilent"), ("product", "Pmod HAT Adaptor")):
         _w(root, f"/proc/device-tree/hat/{key}", value + "\0")
+    _pmod_hat_on_the_id_bus(monkeypatch)
     doc = cli.pi_only_label_input("p48", user_bus=True)
-    assert doc["summary"]["header"] == ["Digilent Pmod HAT Adaptor"]
+    assert doc["summary"]["header"] == ["Pmod HAT Adaptor"]
 
 
 @pytest.mark.parametrize(("buses", "user_bus", "header", "want"), [
