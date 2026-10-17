@@ -225,6 +225,24 @@ def test_a_control_not_put_back_is_a_host_not_as_found(host):
     assert '"on"' in str(e.value)
 
 
+def test_a_sensor_that_stays_up_after_its_control_is_back_is_a_host_not_as_found(host):
+    """"auto" written back only lets the sensor suspend; one still up when
+    the wait runs out is not as it was found, and the probe says so."""
+    v1(host, power="suspended")
+    real = host.sh
+
+    def stays_up(args, timeout=15):
+        out = real(args, timeout)
+        if probe.POWER_WRITER in args and args[-1] == "auto":
+            (host.root / "sys/bus/i2c/devices/10-0036/power/runtime_status").write_text(
+                "active\n")
+        return out
+    host.sh = stays_up
+    probe.sh = stays_up
+    with pytest.raises(probe.HostNotAsFoundError, match='"active", not "suspended"'):
+        probe.collect_cameras()
+
+
 def test_a_sensor_already_held_on_is_left_held_on(host):
     """Someone set control to "on" by hand: it is read as it is, and left so."""
     v1(host, power="suspended")

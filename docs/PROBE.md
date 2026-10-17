@@ -153,7 +153,9 @@ Autofocus is settled in this order:
    `power/control`, as root, which resumes it through runtime PM as a stream
    would; the probe waits up to 2 s for `active`, reads the address, and
    writes the old control (`auto`) back. The control is compared before and
-   after like the i2c modules, and one not put back stops the probe. A
+   after like the i2c modules, and one not put back stops the probe; so does
+   a sensor that has not gone back to the status it was found in 2 s later,
+   since writing `auto` back only lets it suspend. A
    sensor that does not reach `active`, or has no `power/control`, leaves
    silence `null`, and the evidence says which. A control someone already
    set to `on` is read as it is and left so.

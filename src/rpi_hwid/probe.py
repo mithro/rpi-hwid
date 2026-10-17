@@ -1846,9 +1846,12 @@ def powered_lens_probe(slot, bus):
     """(lens_chip_probe(bus), the sensor's runtime status during it), with
     the sensor at `slot` held on for the read where it was idle. Its
     power/control is written back after, and checked (HostChanges): a host
-    left with the sensor held on raises HostNotAsFoundError."""
+    left with the sensor held on raises HostNotAsFoundError, as does one
+    whose sensor does not go back to the status it was found in: writing
+    the control back only lets it suspend, so that is waited for too."""
     base = ROOT + "/sys/bus/i2c/devices/%s/power/" % slot
     control = read(base + "control")
+    found = read(base + "runtime_status")
     if control in (None, "on"):
         # nothing to hold on (no runtime PM), or held on already by someone
         return lens_chip_probe(bus), read(base + "runtime_status")
@@ -1868,6 +1871,17 @@ def powered_lens_probe(slot, bus):
         changes.put_back(e)
         raise
     changes.put_back()
+    deadline = time.monotonic() + SENSOR_POWER_S
+    now = read(base + "runtime_status")
+    while now != found and time.monotonic() < deadline:
+        time.sleep(0.05)
+        now = read(base + "runtime_status")
+    if now != found:
+        raise HostNotAsFoundError(NOT_AS_FOUND + "after holding the sensor at %s on: its "
+                                  "control is back to %s, but it is %s, not %s as it was "
+                                  "found, %.0f s later" % (slot, json.dumps(control),
+                                                          json.dumps(now), json.dumps(found),
+                                                          SENSOR_POWER_S))
     return result, status
 
 
