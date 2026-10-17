@@ -231,6 +231,11 @@ def failure(e):
     return str(e) or type(e).__name__
 
 
+def command_failure(e):
+    """A CommandFailedError's reason, without the command it quotes."""
+    return str(e).rsplit("` ", 1)[-1]
+
+
 def sh_checked(args, timeout=15):
     """Run a command that changes the host, or whose answer the probe uses
     to put the host back, and return its stdout. A timeout, a command that
@@ -790,15 +795,17 @@ class HostChanges(object):
         if self.before is None:
             self.before = self.state()
 
-    def run(self, cmd, undo=None):
+    def run(self, cmd, undo=None, name=None, undo_name=None):
         """Run `cmd`; its `undo` (a command, run first among the undo
         steps) is recorded only once `cmd` has succeeded. One that failed
-        part way is caught by the comparison in put_back."""
+        part way is caught by the comparison in put_back. `name` and
+        `undo_name` stand for the commands in messages, where their argv
+        would say less (a script passed with -c)."""
         self.begin()
-        self.ran.append(" ".join(cmd))
+        self.ran.append(name or " ".join(cmd))
         out = sh_checked(cmd)
         if undo:
-            self.undo.insert(0, undo)
+            self.undo.insert(0, (undo, undo_name))
         return out
 
     def put_back(self, cause=None):
@@ -808,20 +815,22 @@ class HostChanges(object):
         if self.before is None:
             return
         failed = None
-        for i, step in enumerate(self.undo):
+        for i, (step, name) in enumerate(self.undo):
             try:
                 sh_checked(step)
             except CommandFailedError as e:
                 # no further undo on a host whose last step failed: an unload
                 # behind a removal stuck in the kernel can hang the same way
-                failed = (e, [" ".join(s) for s in self.undo[i + 1:]])
+                failed = ("`%s` %s" % (name, command_failure(e)) if name else str(e),
+                          [n or " ".join(s) for s, n in self.undo[i + 1:]])
                 break
         after = self.state()
         if failed is None and after == self.before:
             return
         why = []
         if cause is not None:
-            why.append("the read failed: %s" % failure(cause))
+            # a read that was itself a host not as found says so once
+            why.append("the read failed: %s" % failure(cause).replace(NOT_AS_FOUND, "", 1))
         if failed is not None:
             why.append("putting it back failed: %s" % failed[0])
             if failed[1]:
