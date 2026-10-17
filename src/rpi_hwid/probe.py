@@ -769,18 +769,26 @@ class HostChanges(object):
     HostNotAsFoundError, naming what was run (or `what`, the read, where
     nothing was), when an undo step failed or the state afterwards differs
     from the state before; it never reports success on a host it did not
-    put back."""
+    put back. `watch` names files whose contents join the state: what the
+    commands change beyond the i2c modules and nodes."""
 
-    def __init__(self, what=None):
+    def __init__(self, what=None, watch=()):
         self.what = what
+        self.watch = tuple(watch)
         self.before = None
         self.ran = []
         self.undo = []
 
+    def state(self):
+        st = host_state()
+        for path in self.watch:
+            st[path[len(ROOT):]] = read(path)
+        return st
+
     def begin(self):
         """Read the state, before anything changes."""
         if self.before is None:
-            self.before = host_state()
+            self.before = self.state()
 
     def run(self, cmd, undo=None):
         """Run `cmd`; its `undo` (a command, run first among the undo
@@ -808,7 +816,7 @@ class HostChanges(object):
                 # behind a removal stuck in the kernel can hang the same way
                 failed = (e, [" ".join(s) for s in self.undo[i + 1:]])
                 break
-        after = host_state()
+        after = self.state()
         if failed is None and after == self.before:
             return
         why = []
