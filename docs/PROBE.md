@@ -149,16 +149,23 @@ Autofocus is settled in this order:
 3. **Silence at `0x0c`** is `autofocus: false` only while the sensor is powered
    (its runtime status is `active`, as it is while a stream runs). A lens
    driver fed from the sensor's supply is off when the sensor is, so an idle
-   sensor is held on for the read: `on` is written to its
-   `power/control`, as root, which resumes it through runtime PM as a stream
-   would; the probe waits up to 2 s for `active`, reads the address, and
-   writes the old control (`auto`) back. The control is compared before and
-   after like the i2c modules, and one not put back stops the probe; so does
-   a sensor that has not gone back to the status it was found in 2 s later,
-   since writing `auto` back only lets it suspend. A
-   sensor that does not reach `active`, or has no `power/control`, leaves
-   silence `null`, and the evidence says which. A control someone already
-   set to `on` is read as it is and left so.
+   sensor is held on for the read: `on` is written to its `power/control`
+   (`sudo -n`), which resumes it through runtime PM as a stream would; the
+   probe waits up to 2 s for `active`, reads the address, and writes the old
+   control (`auto`) back.
+   - The control is compared before and after like the i2c modules, and one
+     not put back stops the probe. So does a sensor that has not gone back
+     to the status it was found in once its own `autosuspend_delay_ms` and
+     2 s more have passed, since writing `auto` back only lets it suspend
+     (`suspending` counts as back where it was found `suspended`).
+   - Where the control cannot be written (no passwordless sudo), the lens is
+     asked unpowered and the rest of the probe goes on: an answer still
+     counts, silence is `null`, and the evidence says the sensor could not be
+     held on, and why.
+   - A sensor with no `power/control` has no runtime PM to hold it on with,
+     and one that never reaches `active` was not powered: silence from
+     either is `null`, and the evidence says which.
+   - A control someone already set to `on` is read as it is and left so.
 
 Which lens driver chip it is cannot be read either: the common ones (AD5398,
 DW9714) have no ID register.
