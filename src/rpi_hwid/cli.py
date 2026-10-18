@@ -186,6 +186,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         offline = {resolve_host(args.hosts, h, "--force-offline")
                    for h in args.force_offline or ()}
         sdr_open = {resolve_host(args.hosts, h, "--sdr-open") for h in args.sdr_open or ()}
+        tt_rom = {resolve_host(args.hosts, h, "--read-tt-rom") for h in args.read_tt_rom or ()}
     except ValueError as exc:
         print(f"rpi-hwid collect: {exc}", file=sys.stderr)
         return 2
@@ -200,6 +201,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         esp32_gps=tuple(args.esp32_gps or ()), sdr=args.sdr,
         sdr_open_hosts=tuple(sorted(sdr_open)),
         base_timeout=args.timeout,
+        read_tt_rom_hosts=tuple(sorted(tt_rom)),
     )
     failed = 0
     for r in results:
@@ -412,6 +414,10 @@ def main(argv: list[str] | None = None) -> int:
                         "capture for a few seconds and may drop power to its TARGET port)")
     p.add_argument("--tinytapeout", action="store_true",
                    help="append the Tiny Tapeout module on every host")
+    p.add_argument("--read-tt-rom", action="append", metavar="HOST",
+                   help="read the Tiny Tapeout chip ROM on this host where the board's SDK "
+                        "would not (a TT04): selects project 0 and drives ui_in, then "
+                        "enables the project that was loaded again (implies --tinytapeout)")
     p.add_argument("--no-stop-service", action="store_true",
                    help=NO_STOP_SERVICE_HELP)
     p.add_argument("--esp32", action="store_true",
