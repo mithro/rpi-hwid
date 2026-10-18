@@ -186,6 +186,8 @@ def cmd_collect(args: argparse.Namespace) -> int:
         offline = {resolve_host(args.hosts, h, "--force-offline")
                    for h in args.force_offline or ()}
         sdr_open = {resolve_host(args.hosts, h, "--sdr-open") for h in args.sdr_open or ()}
+        no_user_bus = {resolve_host(args.hosts, h, "--no-user-bus")
+                       for h in args.no_user_bus or ()}
     except ValueError as exc:
         print(f"rpi-hwid collect: {exc}", file=sys.stderr)
         return 2
@@ -200,6 +202,7 @@ def cmd_collect(args: argparse.Namespace) -> int:
         esp32_gps=tuple(args.esp32_gps or ()), sdr=args.sdr,
         sdr_open_hosts=tuple(sorted(sdr_open)),
         base_timeout=args.timeout,
+        no_user_bus_hosts=tuple(sorted(no_user_bus)),
     )
     failed = 0
     for r in results:
@@ -412,6 +415,9 @@ def main(argv: list[str] | None = None) -> int:
                         "capture for a few seconds and may drop power to its TARGET port)")
     p.add_argument("--tinytapeout", action="store_true",
                    help="append the Tiny Tapeout module on every host")
+    p.add_argument("--no-user-bus", action="append", metavar="HOST",
+                   help="leave the header's user bus (GPIO2/3) alone on this host: pins "
+                        "wired to the board under test, or held by another program")
     p.add_argument("--no-stop-service", action="store_true",
                    help=NO_STOP_SERVICE_HELP)
     p.add_argument("--esp32", action="store_true",

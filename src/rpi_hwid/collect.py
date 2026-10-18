@@ -57,7 +57,9 @@ def probe_source(
     if not fpga and not tinytapeout and not esp32 and not sdr:
         return probe
     extra = ""
-    glue = "\n\n_doc = collect()\n_doc['verdict'] = verdict(_doc)\n"
+    # the probe's own --no-user-bus (probe_host passes it) holds here too
+    glue = ("\n\n_doc = collect(user_bus=False if '--no-user-bus' in sys.argv else None)\n"
+            "_doc['verdict'] = verdict(_doc)\n")
     if fpga:
         extra += "\n" + pkg.joinpath("fpga.py").read_text()
         # force_offline written out only when asked, so the script a host is
@@ -150,17 +152,19 @@ def probe_host(
     esp32_gps: Sequence[str] = (),
     sdr: bool = False,
     sdr_open: bool = False,
+    user_bus: bool = True,
 ) -> Result:
     """Run the probe on one host; `host` may carry its own ``user@``.
     `timeout` is the ssh timeout; by default ``probe_timeout()`` of the
-    reads asked for."""
+    reads asked for. `user_bus` False leaves the header's user bus (GPIO2/3)
+    alone, as the probe's --no-user-bus does."""
     if timeout is None:
         timeout = probe_timeout(BASE_TIMEOUT, esp32_read, esp32_radio, esp32_gps)
     source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32=esp32,
                           esp32_read=esp32_read, esp32_radio=esp32_radio,
                           force_offline=force_offline, esp32_gps=esp32_gps,
                           sdr=sdr or sdr_open, sdr_open=sdr_open)
-    args = ["--json"]
+    args = ["--json"] + ([] if user_bus else ["--no-user-bus"])
     if "@" in host:
         user_list: Sequence[str] = [host.split("@", 1)[0]]
         target = host.split("@", 1)[1]
@@ -260,6 +264,7 @@ def collect(
     sdr: bool = False,
     sdr_open_hosts: Sequence[str] = (),
     base_timeout: int = BASE_TIMEOUT,
+    no_user_bus_hosts: Sequence[str] = (),
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
@@ -280,7 +285,9 @@ def collect(
     read its ECP5 TraceID: its capture stops for a few seconds and its TARGET
     port may lose power, so only on the hosts named. `base_timeout` is each
     host's ssh timeout before the reads asked of it are allowed for
-    (``probe_timeout``).
+    (``probe_timeout``). `no_user_bus_hosts` are the hosts whose header user
+    bus (GPIO2/3) is left alone: pins wired to the board under test, or held
+    by another program, which the probe would otherwise refuse to read past.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -297,6 +304,7 @@ def collect(
                           esp32_read=reads.get(host, ()), esp32_radio=radios.get(host, ()),
                           force_offline=offline, esp32_gps=gpses.get(host, ()),
                           sdr=sdr, sdr_open=host in sdr_open_hosts,
+                          user_bus=host not in no_user_bus_hosts,
                           timeout=probe_timeout(base_timeout, reads.get(host, ()),
                                                 radios.get(host, ()), gpses.get(host, ())))
 
