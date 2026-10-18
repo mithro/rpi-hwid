@@ -2204,7 +2204,7 @@ def test_run_cmd_never_raises():
 def test_tinytapeout_collect_walks_the_usb_tree(fake_root, monkeypatch):
     asked = []
 
-    def fake_read_repl(tty, timeout=10, take_port=True):
+    def fake_read_repl(tty, timeout=10, take_port=True, read_rom=False):
         asked.append(tty)
         return TT06_ANSWER
     monkeypatch.setattr(tinytapeout, "read_repl", fake_read_repl)
@@ -2225,7 +2225,8 @@ def test_tinytapeout_collect_walks_the_usb_tree(fake_root, monkeypatch):
 
 def test_merge_tinytapeout_into_probe_document(fake_root, monkeypatch):
     monkeypatch.setattr(tinytapeout, "read_repl",
-                        lambda tty, timeout=10, take_port=True: TT06_ANSWER)
+                        lambda tty, timeout=10, take_port=True, read_rom=False:
+                        TT06_ANSWER)
     d = probe.collect()
     d["verdict"] = probe.verdict(d)
     tinytapeout.merge_tinytapeout(d, tinytapeout.collect_tinytapeout())
@@ -2236,7 +2237,8 @@ def test_merge_tinytapeout_into_probe_document(fake_root, monkeypatch):
 
 def test_tinytapeout_main_prints_text_and_json(fake_root, capsys, monkeypatch):
     monkeypatch.setattr(tinytapeout, "read_repl",
-                        lambda tty, timeout=10, take_port=True: TT06_ANSWER)
+                        lambda tty, timeout=10, take_port=True, read_rom=False:
+                        TT06_ANSWER)
     monkeypatch.setattr("sys.argv", ["tinytapeout.py"])
     tinytapeout.main()
     out = capsys.readouterr().out
