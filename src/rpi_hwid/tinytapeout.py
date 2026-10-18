@@ -421,8 +421,9 @@ print(json.dumps(d))
 # boot/rom.py) though its descriptor is the same ASCII key=value at bytes
 # 32-127. So only the first is required here, and the text is accepted only
 # if it parses (rom_from_read). The SDK's _send_and_rcv gives a LogicArray
-# on SDK 2.0.4, not an int, so each value goes through int(). This selects project 0 and drives ui_in, as
-# the SDK's own boot read does; the project enabled before is enabled again.
+# on SDK 2.0.4, not an int, so each value goes through int(). This selects
+# project 0 and drives ui_in, as the SDK's own boot read does; the project
+# enabled before is enabled again.
 ROM_SNIPPET = """
 import json
 d = {}

@@ -68,9 +68,9 @@ def probe_source(
         extra += "\n" + pkg.joinpath("tinytapeout.py").read_text()
         # Written out only when it differs from the module's default, so the
         # script a host is sent reads the same as it always has otherwise.
-        call = "collect_tinytapeout(%s)" % ", ".join(
-            (["take_port=False"] if not take_port else [])
-            + (["read_rom=True"] if read_tt_rom else []))
+        kwargs = ", ".join((["take_port=False"] if not take_port else [])
+                           + (["read_rom=True"] if read_tt_rom else []))
+        call = f"collect_tinytapeout({kwargs})"
         glue += f"merge_tinytapeout(_doc, {call})\n"
     if esp32:
         # the ESP32 module: the USB tree, and a reset-and-read of the ports
