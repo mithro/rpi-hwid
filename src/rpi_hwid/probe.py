@@ -1723,6 +1723,13 @@ def put_pins_back(label, bus, before, cause=None):
 SENSOR_DRIVER = re.compile(r"^(arducam|(ov|imx|s5k|gc|hm|og|ar|mt9[a-z])[0-9])")
 LENS_DRIVER = re.compile(r"^(ad5398|dw97|dw98|ak73|lc898)")
 LENS_ADDR = 0x0C
+# Addresses no Pi camera module puts anything at, read beside LENS_ADDR when
+# it fails with EIO: the bcm2835 adapter behind the camera mux (i2c-10 on a
+# Pi 4 or 3B+) reports an empty address as EIO, not as ENXIO or EREMOTEIO.
+# pi-sw2-p48, 2026-10-18: 0x0c, 0x0d, 0x0e and 0x40 all EIO, the ov5647 at
+# 0x36 answering. EIO at the lens address is silence only where these give
+# the very same EIO; anything else leaves the lens unread.
+LENS_EMPTY_REFS = (0x0D, 0x0E)
 
 # Run as root, like the other readers that need a device node a login cannot
 # open: one byte read from one address, which is what `i2cdetect -r` does and
@@ -1731,23 +1738,33 @@ LENS_ADDR = 0x0C
 LENS_READER = r'''
 import fcntl, os, sys
 bus, addr = int(sys.argv[1]), int(sys.argv[2], 16)
+refs = [int(a, 16) for a in sys.argv[3:]]
 try:
     fd = os.open("/dev/i2c-%d" % bus, os.O_RDWR)
 except OSError as e:
     print("ERROR=cannot open /dev/i2c-%d: %s" % (bus, e.strerror)); sys.exit(0)
+def errno_at(a):
+    try:
+        fcntl.ioctl(fd, 0x0703, a)
+        os.read(fd, 1)
+        return 0
+    except (OSError, IOError) as e:
+        return e.errno
 try:
-    fcntl.ioctl(fd, 0x0703, addr)
-    os.read(fd, 1)
-    print("LENS=ack")
-except (OSError, IOError) as e:
+    err = errno_at(addr)
     # only a NAK (ENXIO, EREMOTEIO) is silence; a timeout or a stuck bus
-    # says nothing about the lens
-    if e.errno in (6, 121):
+    # says nothing about the lens -- except an EIO that addresses known to
+    # be empty give alike, which is how this adapter says nothing is there
+    if err == 0:
+        print("LENS=ack")
+    elif err in (6, 121):
         print("LENS=nak")
-    elif e.errno == 16:
+    elif err == 16:
         print("ERROR=address owned by a kernel driver")
+    elif err == 5 and refs and all(errno_at(a) == 5 for a in refs):
+        print("LENS=nak")
     else:
-        print("ERROR=%s" % e.strerror)
+        print("ERROR=%s" % os.strerror(err))
 finally:
     os.close(fd)
 '''
@@ -1802,7 +1819,7 @@ def lens_chip_probe(bus):
             adapter = os.path.exists(ROOT + "/sys/bus/i2c/devices/i2c-%d" % bus)
             wait_for(ROOT + "/dev/i2c-%d" % bus, BUS_SETTLE_S if adapter else 0)
         out = sh(["sudo", sys.executable or "python3", "-c", LENS_READER,
-                  str(bus), "0x%02x" % LENS_ADDR])
+                  str(bus), "0x%02x" % LENS_ADDR] + ["0x%02x" % a for a in LENS_EMPTY_REFS])
     except BaseException as e:
         changes.put_back(e)
         raise
