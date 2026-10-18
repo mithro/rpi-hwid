@@ -9,9 +9,9 @@ import subprocess
 
 import pytest
 
-from test_collect_force_offline import reply
 from rpi_hwid import cli, collect
 from rpi_hwid.collect import probe_source
+from test_collect_force_offline import reply
 
 
 @pytest.fixture
