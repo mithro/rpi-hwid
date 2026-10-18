@@ -234,7 +234,7 @@ def test_eio_is_silence_where_the_empty_addresses_say_it_alike(monkeypatch, caps
 def test_eio_where_the_empty_addresses_differ_is_not_silence(monkeypatch, capsys, refs):
     """Where a reference answers, or fails otherwise, EIO at the lens says
     nothing settled about it: unread, as before."""
-    out = run_reader_at(monkeypatch, capsys, dict(refs, **{0x0C: "EIO"}))
+    out = run_reader_at(monkeypatch, capsys, {**refs, 0x0C: "EIO"})
     assert out.startswith("ERROR=")
 
 
