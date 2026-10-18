@@ -468,7 +468,7 @@ PI5_CHIPS = [(11, "gpio-brcmstb@107d517c00"), (12, "gpio-brcmstb@107d517c20"),
 @pytest.mark.parametrize(("chips", "expected"), [
     (PI3_CHIPS, 0), (PI4_CHIPS, 0), (PI5_CHIPS, 15), ([(3, "some-other-gpio")], None)])
 def test_the_header_chip_is_found_by_its_driver_label(chips, expected):
-    assert fpga.header_gpiochip(chips) == expected
+    assert fpga.jtag_header_gpiochip(chips) == expected
 
 
 def _linuxgpiod_openocd(monkeypatch):
@@ -545,7 +545,7 @@ def test_openfpgaloader_is_told_which_gpiochip_the_header_is(fake_root, monkeypa
     default lands on nothing. openocd is already told the chip by label;
     this hands it the same answer."""
     monkeypatch.setattr(fpga, "digilent_cables", list)
-    monkeypatch.setattr(fpga, "header_gpiochip", lambda chips: 15)
+    monkeypatch.setattr(fpga, "jtag_header_gpiochip", lambda chips: 15)
     monkeypatch.setattr(fpga, "gpiochips", lambda: [(15, "pinctrl-rp1")])
     seen = []
 

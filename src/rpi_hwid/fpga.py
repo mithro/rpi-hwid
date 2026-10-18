@@ -902,7 +902,7 @@ def gpiochips():
     return sorted(out)
 
 
-def header_gpiochip(chips):
+def jtag_header_gpiochip(chips):
     """The number of the chip that drives the 40-pin header, or None."""
     for want in HEADER_GPIO_LABELS:
         for number, label in chips:
@@ -939,10 +939,10 @@ def openocd_adapter(digilent_serial=None, pins=None):
         # Every signal has to name its chip: a gpio given without -chip is
         # left unassigned, and openocd then refuses with "Require tck, tms,
         # tdi and tdo gpios for JTAG mode" having driven nothing. Which chip
-        # is found by label (header_gpiochip). A board that will not say is
+        # is found by label (jtag_header_gpiochip). A board that will not say is
         # assumed to be chip 0 everywhere but a Pi 5, where guessing would
         # mean toggling pins on some other controller, so it is skipped.
-        chip = header_gpiochip(gpiochips())
+        chip = jtag_header_gpiochip(gpiochips())
         if chip is None:
             if pi5:
                 return None
@@ -1755,7 +1755,7 @@ def identity_probe(boards=1):
     return {"read": read, "error": why, "document": document}
 
 
-def pin_states(pins):
+def harness_pin_states(pins):
     """{gpio: the `pinctrl set` arguments that restore it} for the harness's
     pins, as `pinctrl get` reports them ("10: op dh pd | hi // GPIO10 =
     output"), or None where pinctrl cannot say."""
@@ -1772,7 +1772,7 @@ def restore_pins(states, pins):
     back as they were found, by gpio."""
     for gpio in sorted(states, key=int):
         sh(["sudo", "-n", "pinctrl", "set", gpio] + states[gpio])
-    after = pin_states(pins) or {}
+    after = harness_pin_states(pins) or {}
     return sorted((g for g in states if after.get(g) != states[g]), key=int)
 
 
@@ -1803,7 +1803,7 @@ def jtag_probe(want_flash=False, pins=None, parts=None, detach=None):
                 res["lock"] = "; ".join(notes)
             return res
         harness = pins or HARNESS_PINS
-        states = pin_states(harness)
+        states = harness_pin_states(harness)
         not_back = None
         try:
             res = jtag_probe_chain(want_flash, pins, parts, detach)
@@ -1859,7 +1859,7 @@ def jtag_probe_chain(want_flash=False, pins=None, parts=None, detach=None):
         # default is gpiochip0, which on a Pi 5 is not the header -- the RP1
         # registers as gpiochip15 -- and on pi-sw2-p48 there is no gpiochip0
         # at all, so the default reaches nothing.
-        chip = header_gpiochip(gpiochips())
+        chip = jtag_header_gpiochip(gpiochips())
         if chip is not None:
             harness += ["-d", "/dev/gpiochip%d" % chip]
     # stderr as well: that is where openFPGALoader says why it failed, and
