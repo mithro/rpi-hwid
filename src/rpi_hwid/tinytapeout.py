@@ -413,6 +413,74 @@ except Exception as e:
 print(json.dumps(d))
 """
 
+# A chip ROM the SDK would not trust, read by the probe with the SDK's own
+# ChipROM helpers, only when asked (read_rom) and only where the SDK said
+# "unknown". The SDK wants address 0 to give 0x78 and address 129 to give
+# 0x00 before it reads a byte of the descriptor; a TT04's ROM passes the
+# first and fails the second ("Fake reporting at tt04 chip", ttboard
+# boot/rom.py) though its descriptor is the same ASCII key=value at bytes
+# 32-127. So only the first is required here, and the text is accepted only
+# if it parses (rom_from_read). The SDK's _send_and_rcv gives a LogicArray
+# on SDK 2.0.4, not an int, so each value goes through int(). This selects
+# project 0 and drives ui_in, as the SDK's own boot read does; the project
+# enabled before is enabled again.
+ROM_SNIPPET = """
+import json
+d = {}
+try:
+    from ttboard.boot.rom import ChipROM
+    t = globals().get('tt')
+    sp = getattr(getattr(t, 'shuttle', None), '_shuttle_props', None)
+    if not isinstance(sp, ChipROM):
+        d['err'] = 'the shuttle is not read from a chip ROM'
+    else:
+        was = getattr(t.shuttle, 'enabled', None)
+        try:
+            sp.project_mux.reset_and_clock_mux(0)
+            d['magic0'] = int(sp._send_and_rcv(0))
+            d['magic129'] = int(sp._send_and_rcv(129))
+            text = ''
+            if d['magic0'] == 0x78:
+                for i in range(32, 128):
+                    b = int(sp._send_and_rcv(i))
+                    if b == 0:
+                        break
+                    text += chr(b)
+            d['text'] = text
+        finally:
+            sp.project_mux.disable()
+            if was is not None:
+                try:
+                    was.enable()
+                    d['restored'] = getattr(was, 'name', str(was))
+                except Exception as e:
+                    d['err_restore'] = repr(e)
+except Exception as e:
+    d['err'] = repr(e)
+print(json.dumps(d))
+"""
+
+
+def rom_from_read(answer, read):
+    """Fold the probe's own ROM read (ROM_SNIPPET's answer) into `answer`:
+    its rom where the text is printable key=value lines naming a shuttle,
+    and in every case what the read saw, under rom_probe."""
+    answer["rom_probe"] = read
+    text = read.get("text") or ""
+    if not text or any(not (32 <= ord(c) < 127 or c == "\n") for c in text):
+        return
+    rom = {}
+    for line in text.splitlines():
+        k, sep, v = line.partition("=")
+        if sep and k.strip():
+            rom[k.strip()] = v.strip()
+    if rom.get("shuttle"):
+        answer["rom"] = {"shuttle": rom["shuttle"], "repo": rom.get("repo", ""),
+                         "commit": rom.get("commit", "")}
+        answer["rom_text"] = text
+        answer["rom_read_by_probe"] = True
+
+
 RAW_REPL_BANNER = b"raw REPL; CTRL-B to exit\r\n>"
 
 
@@ -736,7 +804,7 @@ def service_holding(tty):
     return (unit, None)
 
 
-def take_port_from(tty, timeout, unit):
+def take_port_from(tty, timeout, unit, read_rom=False):
     """Stop `unit`, read the board, start `unit` again; returns the read's
     answer with a "service" key recording what was done to it.
 
@@ -759,7 +827,7 @@ def take_port_from(tty, timeout, unit):
         if fd is None:
             answer = blame(tty, "%s was stopped but %s stayed busy: %s" % (unit, tty, why))
         else:
-            answer = repl_on(fd, tty, timeout)
+            answer = repl_on(fd, tty, timeout, read_rom)
     finally:
         rc, out = run_cmd(SUDO + ["systemctl", "start", unit])
         service["restored"] = rc == 0
@@ -825,10 +893,18 @@ def blame(tty, what):
     return {"error": str(what)}
 
 
-def repl_on(fd, tty, timeout):
-    """Drive the REPL on an already-open `fd`, closing it either way."""
+def repl_on(fd, tty, timeout, read_rom=False):
+    """Drive the REPL on an already-open `fd`, closing it either way. With
+    `read_rom`, a chip ROM the SDK reported as unknown is read in the same
+    session (ROM_SNIPPET, rom_from_read)."""
     try:
         out, err = raw_repl_exec(fd, REPL_SNIPPET, timeout)
+        answer = answer_from(tty, out, err)
+        rom = answer.get("rom") or {}
+        if read_rom and (rom.get("shuttle") or "").lower() == "unknown":
+            rout, rerr = raw_repl_exec(fd, ROM_SNIPPET, timeout)
+            rom_from_read(answer, answer_from(tty, rout, rerr))
+        return answer
     except OSError as e:
         return blame(tty, e)
     finally:
@@ -836,6 +912,10 @@ def repl_on(fd, tty, timeout):
             os.close(fd)
         except OSError:
             pass
+
+
+def answer_from(tty, out, err):
+    """The JSON a snippet printed, or {"error": why}."""
     if err.strip():
         return {"error": "snippet raised: " + err.strip()[-200:]}
     start = out.find("{")
@@ -847,7 +927,7 @@ def repl_on(fd, tty, timeout):
         return {"error": "bad JSON from the board: %r" % out[-200:]}
 
 
-def read_repl(tty, timeout=10, take_port=True):
+def read_repl(tty, timeout=10, take_port=True, read_rom=False):
     """Ask the SDK on the board what it holds. Always returns a dict: the
     board's answer (see REPL_SNIPPET), or {"error": why}.
 
@@ -861,7 +941,7 @@ def read_repl(tty, timeout=10, take_port=True):
     """
     unit, why = service_holding(tty) if take_port else (None, None)
     if unit:
-        return take_port_from(tty, timeout, unit)
+        return take_port_from(tty, timeout, unit, read_rom)
     held, _holder = service_holder(tty)
     if held:
         # A service has it and it is not ours to take. Opening it anyway
@@ -877,7 +957,7 @@ def read_repl(tty, timeout=10, take_port=True):
     except (OSError, termios.error) as e:      # termios.error is not an OSError
         answer = blame(tty, "cannot open %s: %s" % (tty, e))
     else:
-        answer = repl_on(fd, tty, timeout)
+        answer = repl_on(fd, tty, timeout, read_rom)
     if why and answer.get("error"):
         answer["error"] += "; " + why
     return answer
@@ -942,7 +1022,9 @@ def tinytapeout_verdict(d):
         why = []
         if rom:
             why.append("chip ROM shuttle=%s%s" % (
-                raw_shuttle or "?", " (forced in config.ini)" if answer.get("rom_forced") else ""))
+                raw_shuttle or "?", " (forced in config.ini)" if answer.get("rom_forced")
+                else " (read by this probe: the SDK would not trust it)"
+                if answer.get("rom_read_by_probe") else ""))
         else:
             why.append("chip ROM not cached on the board")
         for key in ("err_rom", "err_demoboard"):
@@ -978,7 +1060,7 @@ def tinytapeout_summary(boards):
     return out
 
 
-def collect_tinytapeout(repl=True, timeout=10, take_port=True):
+def collect_tinytapeout(repl=True, timeout=10, take_port=True, read_rom=False):
     t = {"usb": usb_candidates(), "repl": None}
     if repl:
         t["repl"] = {}
@@ -988,7 +1070,7 @@ def collect_tinytapeout(repl=True, timeout=10, take_port=True):
             if not u["tty"]:
                 t["repl"][u["path"]] = {"error": "no tty for this device"}
                 continue
-            t["repl"][u["path"]] = read_repl(u["tty"], timeout, take_port)
+            t["repl"][u["path"]] = read_repl(u["tty"], timeout, take_port, read_rom)
     t["boards"] = tinytapeout_verdict(t)
     t["summary"] = tinytapeout_summary(t["boards"])
     return t

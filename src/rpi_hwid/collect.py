@@ -41,7 +41,7 @@ DEFAULT_USERS = (getpass.getuser(), "pi")
 def probe_source(
     fpga: bool = False, jtag: bool = False, flash: bool = False, tinytapeout: bool = False,
     take_port: bool = True, esp32: bool = False, esp32_read: Sequence[str] = (),
-    esp32_radio: Sequence[str] = (), force_offline: bool = False,
+    esp32_radio: Sequence[str] = (), force_offline: bool = False, read_tt_rom: bool = False,
     esp32_gps: Sequence[str] = (),
     sdr: bool = False, sdr_open: bool = False,
 ) -> str:
@@ -68,7 +68,9 @@ def probe_source(
         extra += "\n" + pkg.joinpath("tinytapeout.py").read_text()
         # Written out only when it differs from the module's default, so the
         # script a host is sent reads the same as it always has otherwise.
-        call = "collect_tinytapeout()" if take_port else "collect_tinytapeout(take_port=False)"
+        kwargs = ", ".join((["take_port=False"] if not take_port else [])
+                           + (["read_rom=True"] if read_tt_rom else []))
+        call = f"collect_tinytapeout({kwargs})"
         glue += f"merge_tinytapeout(_doc, {call})\n"
     if esp32:
         # the ESP32 module: the USB tree, and a reset-and-read of the ports
@@ -150,6 +152,7 @@ def probe_host(
     esp32_gps: Sequence[str] = (),
     sdr: bool = False,
     sdr_open: bool = False,
+    read_tt_rom: bool = False,
 ) -> Result:
     """Run the probe on one host; `host` may carry its own ``user@``.
     `timeout` is the ssh timeout; by default ``probe_timeout()`` of the
@@ -159,7 +162,7 @@ def probe_host(
     source = probe_source(fpga, jtag, flash, tinytapeout, take_port, esp32=esp32,
                           esp32_read=esp32_read, esp32_radio=esp32_radio,
                           force_offline=force_offline, esp32_gps=esp32_gps,
-                          sdr=sdr or sdr_open, sdr_open=sdr_open)
+                          sdr=sdr or sdr_open, sdr_open=sdr_open, read_tt_rom=read_tt_rom)
     args = ["--json"]
     if "@" in host:
         user_list: Sequence[str] = [host.split("@", 1)[0]]
@@ -260,6 +263,7 @@ def collect(
     sdr: bool = False,
     sdr_open_hosts: Sequence[str] = (),
     base_timeout: int = BASE_TIMEOUT,
+    read_tt_rom_hosts: Sequence[str] = (),
 ) -> list[Result]:
     """Probe every host and write ``<out_dir>/<host>.json`` for each success.
 
@@ -280,7 +284,9 @@ def collect(
     read its ECP5 TraceID: its capture stops for a few seconds and its TARGET
     port may lose power, so only on the hosts named. `base_timeout` is each
     host's ssh timeout before the reads asked of it are allowed for
-    (``probe_timeout``).
+    (``probe_timeout``). `read_tt_rom_hosts` are the hosts whose Tiny Tapeout chip ROM is read by
+    the probe where the board's SDK would not trust it (a TT04): it selects
+    project 0 and drives ui_in, so only on the hosts named.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -291,12 +297,14 @@ def collect(
     def one(host: str) -> Result:
         offline = host in force_offline_hosts
         return probe_host(host, users, jump, fpga or host in jtag_hosts or offline,
-                          host in jtag_hosts, host in flash_hosts, tinytapeout=tinytapeout,
+                          host in jtag_hosts, host in flash_hosts,
+                          tinytapeout=tinytapeout or host in read_tt_rom_hosts,
                           take_port=take_port,
                           esp32=esp32 or host in reads or host in radios or host in gpses,
                           esp32_read=reads.get(host, ()), esp32_radio=radios.get(host, ()),
                           force_offline=offline, esp32_gps=gpses.get(host, ()),
                           sdr=sdr, sdr_open=host in sdr_open_hosts,
+                          read_tt_rom=host in read_tt_rom_hosts,
                           timeout=probe_timeout(base_timeout, reads.get(host, ()),
                                                 radios.get(host, ()), gpses.get(host, ())))
 
