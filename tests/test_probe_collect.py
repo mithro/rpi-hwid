@@ -2901,3 +2901,32 @@ def test_main_passes_the_bus_switches(monkeypatch, capsys, argv, want):
                         lambda user_bus=None: got.append(user_bus) or dict(d_iter))
     probe.main()
     assert got == [want]
+
+
+# A redefinition the embedded script already carries, each checked to leave
+# its callers working: `main` is skipped when embedded; the others are
+# follow-ups, not crashes (fpga's sh lacks probe's run_bounded hang guard).
+KNOWN_REDEFINED = {"main", "sh", "describe", "flash_uid_from_raw"}
+
+
+def test_no_module_in_the_host_script_replaces_another_ones_function():
+    """collect sends one script: probe.py, then the modules it was asked for,
+    run as one file, so a later module's function silently replaces an
+    earlier one of the same name. fpga.py's header_gpiochip(chips) once did
+    that to probe.py's header_gpiochip(bus), and every --jtag read failed
+    with "'HeaderBus' object is not iterable"."""
+    import ast
+
+    from rpi_hwid import collect
+
+    script = collect.probe_source(
+        fpga=True, jtag=True, tinytapeout=True, esp32=True,
+        esp32_radio=["x"], esp32_gps=["x"], sdr=True)
+    first, clashes = {}, set()
+    for node in ast.parse(script).body:
+        if not isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            continue
+        if node.name in first and ast.dump(first[node.name]) != ast.dump(node):
+            clashes.add(node.name)
+        first.setdefault(node.name, node)
+    assert clashes - KNOWN_REDEFINED == set()
