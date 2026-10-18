@@ -468,7 +468,7 @@ PI5_CHIPS = [(11, "gpio-brcmstb@107d517c00"), (12, "gpio-brcmstb@107d517c20"),
 @pytest.mark.parametrize(("chips", "expected"), [
     (PI3_CHIPS, 0), (PI4_CHIPS, 0), (PI5_CHIPS, 15), ([(3, "some-other-gpio")], None)])
 def test_the_header_chip_is_found_by_its_driver_label(chips, expected):
-    assert fpga.header_gpiochip(chips) == expected
+    assert fpga.jtag_header_gpiochip(chips) == expected
 
 
 def _linuxgpiod_openocd(monkeypatch):
@@ -545,7 +545,7 @@ def test_openfpgaloader_is_told_which_gpiochip_the_header_is(fake_root, monkeypa
     default lands on nothing. openocd is already told the chip by label;
     this hands it the same answer."""
     monkeypatch.setattr(fpga, "digilent_cables", list)
-    monkeypatch.setattr(fpga, "header_gpiochip", lambda chips: 15)
+    monkeypatch.setattr(fpga, "jtag_header_gpiochip", lambda chips: 15)
     monkeypatch.setattr(fpga, "gpiochips", lambda: [(15, "pinctrl-rp1")])
     seen = []
 
@@ -2901,3 +2901,32 @@ def test_main_passes_the_bus_switches(monkeypatch, capsys, argv, want):
                         lambda user_bus=None: got.append(user_bus) or dict(d_iter))
     probe.main()
     assert got == [want]
+
+
+# A redefinition the embedded script already carries, each checked to leave
+# its callers working: `main` is skipped when embedded; the others are
+# follow-ups, not crashes (fpga's sh lacks probe's run_bounded hang guard).
+KNOWN_REDEFINED = {"main", "sh", "describe", "flash_uid_from_raw"}
+
+
+def test_no_module_in_the_host_script_replaces_another_ones_function():
+    """collect sends one script: probe.py, then the modules it was asked for,
+    run as one file, so a later module's function silently replaces an
+    earlier one of the same name. fpga.py's header_gpiochip(chips) once did
+    that to probe.py's header_gpiochip(bus), and every --jtag read failed
+    with "'HeaderBus' object is not iterable"."""
+    import ast
+
+    from rpi_hwid import collect
+
+    script = collect.probe_source(
+        fpga=True, jtag=True, tinytapeout=True, esp32=True,
+        esp32_radio=["x"], esp32_gps=["x"], sdr=True)
+    first, clashes = {}, set()
+    for node in ast.parse(script).body:
+        if not isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            continue
+        if node.name in first and ast.dump(first[node.name]) != ast.dump(node):
+            clashes.add(node.name)
+        first.setdefault(node.name, node)
+    assert clashes - KNOWN_REDEFINED == set()
