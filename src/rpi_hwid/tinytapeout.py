@@ -994,11 +994,49 @@ def collect_tinytapeout(repl=True, timeout=10, take_port=True):
     return t
 
 
+def from_identity(boards, identity):
+    """`boards` with each candidate (a MicroPython RP2 whose REPL could not
+    be read) named from fpgas-verify's identity document instead, where a
+    "tt" board there has the candidate's USB serial: the one thing sysfs
+    checks, and what the label is keyed on. A TT03.5 has no chip ROM and
+    its rig's demo board answered no REPL at all, not even Ctrl-C
+    (pi-sw2-p48, 2026-10-18), but fpgas-verify had read it at boot."""
+    if (not isinstance(identity, dict) or identity.get("schema") != "fpgas-verify/identity"
+            or identity.get("identity_version") != 1):
+        return boards
+    known = {b.get("usb_serial"): b for b in identity.get("boards") or ()
+             if isinstance(b, dict) and b.get("kind") == "tt" and b.get("usb_serial")}
+    out = []
+    for b in boards:
+        i = known.get(b.get("usb_serial")) if b["kind"] == "rp2-micropython" else None
+        if i is None:
+            out.append(b)
+            continue
+        shuttle = (i.get("shuttle") or "").lower() or None
+        info = shuttle_info(shuttle)
+        out.append({
+            "kind": "tinytapeout", "usb": b["usb"], "usb_serial": b["usb_serial"],
+            "tty": b["tty"], "shuttle": shuttle, "chip": i.get("chip"),
+            "repo": i.get("repo"), "commit": i.get("commit"),
+            "demoboard": i.get("demoboard"),
+            "demoboard_version": i.get("demoboard_version") or info["demoboard_version"],
+            "sdk": i.get("sdk"), "machine": None, "mcu": i.get("mcu"),
+            "chip_url": info["url"],
+            "how": "fpgas-verify identity (read %s) for USB serial %s: shuttle=%s; %s" % (
+                identity.get("read_at") or "?", b["usb_serial"], shuttle or "?", b["how"]),
+        })
+    return out
+
+
 def merge_tinytapeout(doc, t):
-    """Fold a tinytapeout document into a Pi probe document (in place)."""
+    """Fold a tinytapeout document into a Pi probe document (in place). With
+    the FPGA module run first, a board whose REPL could not be read is named
+    from fpgas-verify's identity document (from_identity)."""
     doc["tinytapeout"] = {k: t[k] for k in ("usb", "repl")}
-    doc["verdict"]["tinytapeout"] = t["boards"]
-    doc["verdict"]["summary"]["tinytapeout"] = t["summary"]
+    identity = ((doc.get("fpga") or {}).get("fpgas_verify") or {}).get("document")
+    boards = from_identity(t["boards"], identity)
+    doc["verdict"]["tinytapeout"] = boards
+    doc["verdict"]["summary"]["tinytapeout"] = tinytapeout_summary(boards)
     return doc
 
 
