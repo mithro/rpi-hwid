@@ -2061,6 +2061,46 @@ def test_a_failed_restart_leaves_the_deadman_armed(busy_board, systemctl):
     assert "systemd-run" in " ".join(calls[2])
 
 
+def test_a_bridge_that_ignores_sigterm_is_killed_and_given_back(busy_board, systemctl):
+    """A TT03.5 rig's bridge held out against SIGTERM for systemd's whole
+    90 s (2026-10-18). The rig is the reader's while it is read, so the
+    service is killed, the board read, and the service started again."""
+    calls, fails = systemctl
+    fails["stop fpgas-tt.service"] = (1, "timed out after 20 s")
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=5)
+
+    assert answer["sdk"] == TT06_ANSWER["sdk"], "the board was read once it was killed"
+    assert answer["service"] == {"unit": "fpgas-tt.service", "stopped": True,
+                                 "deadman": True, "restored": True, "killed": True}
+    ran = [" ".join(c) for c in calls]
+    stopped = ran.index("sudo -n systemctl stop fpgas-tt.service")
+    killed = ran.index("sudo -n systemctl kill --signal=SIGKILL fpgas-tt.service")
+    started = ran.index("sudo -n systemctl start fpgas-tt.service")
+    assert stopped < killed < started
+    # the deadman is armed afresh once the bridge is killed: the stop's own
+    # timeout has used up part of its delay, and it once fired mid-read
+    rearmed = [i for i, c in enumerate(ran) if "systemd-run" in c]
+    assert len(rearmed) == 2 and killed < rearmed[1] < started
+
+
+def test_a_bridge_that_cannot_be_killed_leaves_the_deadman_armed(busy_board, systemctl):
+    """The stop is still running in systemd and stops the unit after the
+    probe has given up, so the timer must stay to start it again."""
+    calls, fails = systemctl
+    fails["stop fpgas-tt.service"] = (1, "timed out after 20 s")
+    fails["kill --signal=SIGKILL"] = (1, "Failed to kill unit")
+
+    answer = tinytapeout.read_repl("/dev/ttyACM0", timeout=5)
+
+    assert answer["error"].startswith("stopping fpgas-tt.service failed")
+    assert "killing it failed" in answer["error"]
+    assert answer["service"] == {"unit": "fpgas-tt.service", "stopped": False,
+                                 "deadman": True, "restored": None, "killed": False}
+    assert not any(" ".join(c).endswith(f"stop {tinytapeout.RESTORE_UNIT}.timer")
+                   for c in calls[2:]), "armed, then never cancelled"
+
+
 def test_nothing_is_stopped_without_passwordless_sudo(busy_board, systemctl):
     calls, fails = systemctl
     fails["true"] = (1, "sudo: a password is required")
