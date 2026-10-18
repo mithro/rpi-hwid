@@ -2081,7 +2081,8 @@ def test_a_bridge_that_ignores_sigterm_is_killed_and_given_back(busy_board, syst
     # the deadman is armed afresh once the bridge is killed: the stop's own
     # timeout has used up part of its delay, and it once fired mid-read
     rearmed = [i for i, c in enumerate(ran) if "systemd-run" in c]
-    assert len(rearmed) == 2 and killed < rearmed[1] < started
+    assert len(rearmed) == 2
+    assert killed < rearmed[1] < started
 
 
 def test_a_bridge_that_cannot_be_killed_leaves_the_deadman_armed(busy_board, systemctl):
