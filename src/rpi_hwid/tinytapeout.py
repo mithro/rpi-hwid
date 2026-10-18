@@ -749,10 +749,24 @@ def take_port_from(tty, timeout, unit):
     service["deadman"] = arm_restore(unit)
     rc, out = run_cmd(SUDO + ["systemctl", "stop", unit])
     if rc != 0:
-        disarm_restore()
-        answer = blame(tty, "stopping %s failed: %s" % (unit, out))
-        answer["service"] = service
-        return answer
+        # A bridge that ignores SIGTERM (a TT03.5 rig's, 2026-10-18, held
+        # out for systemd's whole 90 s) is killed: the rig is the reader's
+        # while it is being read, and the restart below brings it back.
+        krc, kout = run_cmd(SUDO + ["systemctl", "kill", "--signal=SIGKILL", unit])
+        service["killed"] = krc == 0
+        if krc == 0:
+            # The stop's timeout has eaten into the deadman's delay: armed
+            # afresh, so that it cannot start the bridge again mid-read (it
+            # did, 20 s of stop and the read later, and took the port back).
+            service["deadman"] = arm_restore(unit)
+        else:
+            # The deadman stays armed: the stop is still running in systemd
+            # and stops the unit after we have given up. Starting a unit
+            # that is already running does nothing.
+            answer = blame(tty, "stopping %s failed: %s; killing it failed: %s" % (
+                unit, out, kout))
+            answer["service"] = service
+            return answer
     service["stopped"] = True
     try:
         fd, why = wait_for_port(tty, min(timeout, 10))
