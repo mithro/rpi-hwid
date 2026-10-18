@@ -35,10 +35,13 @@ def test_an_unread_board_is_named_from_the_identity_with_its_serial():
     doc = merge([CANDIDATE], IDENTITY)
     board, = doc["verdict"]["tinytapeout"]
     assert board["kind"] == "tinytapeout"
-    assert board["shuttle"] == "tt03p5" and board["chip"] == "asic"
-    assert board["mcu"] == "RP2040" and board["sdk"] == "1.2.2"
+    assert board["shuttle"] == "tt03p5"
+    assert board["chip"] == "asic"
+    assert board["mcu"] == "RP2040"
+    assert board["sdk"] == "1.2.2"
     assert board["demoboard_version"] == "v1.2.1"
-    assert "fpgas-verify identity" in board["how"] and "no raw REPL prompt" in board["how"]
+    assert "fpgas-verify identity" in board["how"]
+    assert "no raw REPL prompt" in board["how"]
     assert doc["verdict"]["summary"]["tinytapeout"] == [{
         "usb_serial": SERIAL, "mcu": "RP2040", "shuttle": "tt03p5", "chip": "asic",
         "repo": None, "commit": None, "demoboard": "TT06+", "demoboard_version": "v1.2.1",
