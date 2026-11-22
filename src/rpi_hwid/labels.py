@@ -2629,6 +2629,8 @@ def _main(ap, args, micro_kinds):
         ap.error("--start leaves a sheet's first positions blank: a roll has none")
     if args.print_to and not on_roll:
         ap.error("--print sends a roll to its printer: a sheet goes through rpi-hwid-sheet")
+    if args.print_to and (args.list or args.check):
+        ap.error("--print sends the roll it writes: --list and --check write none")
     stock = None if on_roll else STOCKS[args.stock]
     if args.check:
         return check_main(docs, only)
