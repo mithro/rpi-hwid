@@ -93,6 +93,29 @@ def test_a_roll_is_one_page_per_sticker(micro_docs):
     assert all(p == pytest.approx(R.page) for p in pages)
 
 
+def test_a_mixed_roll_is_the_full_labels_in_order_then_the_micro_pairs(docs, micro_docs):
+    """The spec's mixed roll: every full label in all_labels' order, each
+    drawn by its strip, then the micro labels two to a sticker; one page a
+    sticker, so pages = full labels + ceil(micro labels / 2)."""
+    assert not set(docs) & set(micro_docs)
+    both = {**docs, **micro_docs}
+    only = set(labels.KINDS) | set(micro.kinds())
+    whole = list(labels.whole_labels(both, only))
+    n_micro = len(micro.selected(both, only))
+    assert whole
+    assert n_micro == 3
+    rows = roll.roll_rows(both, only)
+    full = [r for r in rows if r[1] != "micro"]
+    assert full == [(h, k, t, strip.STRIP_OF[d], rec) for h, k, t, d, rec in whole]
+    # the full labels are all_labels' own leading rows, in its order
+    assert [r[:3] for r in full] == [r[:3] for r in labels.all_labels(both, only)][:len(full)]
+    assert [r[1] for r in rows[len(full):]] == ["micro"] * math.ceil(n_micro / 2)
+    buf = io.BytesIO()
+    n, stickers = labels.render(both, buf, only, invariant=True, stock="dymo-99010")
+    assert (n, stickers) == (len(whole) + n_micro, len(whole) + math.ceil(n_micro / 2))
+    assert len(_pages(buf.getvalue())) == stickers
+
+
 def test_a_roll_is_the_same_bytes_every_time(micro_docs):
     def once():
         buf = io.BytesIO()
