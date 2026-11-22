@@ -295,3 +295,77 @@ def draw_fpga_strip(s: Strip, board: Any) -> None:
 
 
 STRIP_OF[lb.draw_fpga] = draw_fpga_strip
+
+
+# --- USB network adapters ----------------------------------------------------
+#
+#  [usb][rj45] Linksys Linksys USB3GIGV1, across the whole strip
+#      USB  3.00 SS 5 Gbit/s                                    [    ]
+#   driver  r8152                                               [ QR ]
+#  VID:PID  13b1:0041                                           [    ]
+#  MAC                                                          [    ]
+#  60:38:e0:e3:56:4f                                            [    ]
+#
+# The full label as it is, squeezed: the glyphs and title along the top, the
+# facts, then the MAC under its caption along the foot, and the MAC's code at
+# the right end under the title. Every row has more room than its
+# counterpart on the full label (the title 65 mm where it has 42.5, a fact's
+# value 51.7 mm where it has 29.7, the MAC 60.2 mm where it has 58.5), so
+# nothing the full label prints whole is cut or set smaller than that
+# label's floor for it here.
+
+USB_BAND = 4.5 * mm             # the glyphs' band (5 mm on the full label)
+USB_TITLE = 11                  # the title's size (12 pt on the full label)
+USB_FACT = 8                    # a fact's value (9 pt on the full label)
+USB_MAC = 14                    # the MAC (16 pt on the full label)
+USB_VALUE_X = 8.5 * mm          # a fact's value, after its caption, as the full label
+
+
+def draw_usb_strip(s: Strip, dev: Any) -> None:
+    """The USB adapter label along a strip: bus and link glyphs with the
+    chip name across the top, the facts under them, the MAC under its
+    caption along the foot, and the MAC's code at the right end."""
+    W, H = s.w, s.h  # noqa: N806
+    h = USB_BAND
+
+    # --- the top: the glyphs, and the title the whole strip's width ---
+    w = lb.mark_usb(s, 0, h * 0.15, h * 0.7) + 1.5 * mm
+    w += (lb.mark_wifi if dev.kind == "wifi" else lb.mark_rj45)(s, w, 0, h)
+    tx = w + 2 * mm
+    s.fit(tx, (h - USB_TITLE * 0.72) / 2, dev.title, lb.SANS_BOLD, USB_TITLE, W - tx)
+
+    # --- the MAC's code: the right end, under the title's band ---
+    top = h + 1.5 * mm
+    qr = H - top
+    qx = W - qr
+    s.qr(qx, top, qr, dev.mac)
+    room = qx - 2 * mm
+
+    # --- the foot: the MAC under its caption ---
+    cap_gap = 0.7 * mm
+    mac_y = H - USB_MAC * 0.72
+    cap_y = mac_y - cap_gap - lb.CAPTION * 0.72
+    s.text(0, cap_y, "MAC", lb.SANS, lb.CAPTION, color=lb.GREY)
+    s.fit(0, mac_y, dev.mac, lb.MONO, USB_MAC, room)
+
+    # --- the facts, spread evenly between the title's band and the MAC's
+    # caption, each row clear of the one above's descenders. usb_records
+    # makes three; more are set smaller, to keep at least 0.4 mm apart ---
+    facts = lb.usb_facts(dev)
+    n = max(1, len(facts))
+    lo = top + 0.3 * mm
+    avail = cap_y - 0.8 * mm - lo           # cap height and descenders, every row
+    size = min(USB_FACT, (avail - (n - 1) * 0.4 * mm) / (0.93 * n))
+    gap = (avail - n * 0.93 * size) / max(1, n - 1)
+    if n == 1:
+        lo += gap / 2                       # a lone fact in the middle
+    val_w = room - USB_VALUE_X
+    for i, (k, v, font) in enumerate(facts):
+        y = lo + i * (0.93 * size + gap)
+        if k:
+            s.captioned(0, USB_VALUE_X, y, k, v, font, size, val_w)
+        else:
+            s.fit(USB_VALUE_X, y, v, font, size, val_w)
+
+
+STRIP_OF[lb.draw_usb] = draw_usb_strip

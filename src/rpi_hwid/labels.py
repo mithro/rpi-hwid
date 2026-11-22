@@ -1113,6 +1113,13 @@ def draw_board_macs(lab, b, x, tx, y, qr, col_w, qr_gap):
         y += qr + qr_gap
 
 
+def usb_facts(dev):
+    """(caption, value, font) of each fact a USB adapter's label prints,
+    in order: a line with no value is left out, and the VID:PID is set in
+    the monospaced face."""
+    return [(k, v, MONO if k == "VID:PID" else SANS) for k, v in dev.lines if v]
+
+
 def draw_usb(lab, dev):
     """Bus and link glyphs with the chip name across the top, the facts on
     the left with the MAC's QR on the right, and the MAC across the whole
@@ -1144,13 +1151,12 @@ def draw_usb(lab, dev):
     val_w = qx - 2 * mm - val_x
 
     # the facts, on a tight pitch so they read as one block, centred on the QR
-    lines = [(k, v) for k, v in dev.lines if v]
+    lines = usb_facts(dev)
     val_size = 9
     pitch = 4.5 * mm
     block = (len(lines) - 1) * pitch + val_size * 0.72
     ly = band_top + max(0, (qr - block) / 2)
-    for k, v in lines:
-        font = MONO if k == "VID:PID" else SANS
+    for k, v, font in lines:
         if k:
             lab.captioned(x, val_x, ly, k, v, font, val_size, val_w)
         else:

@@ -14,6 +14,7 @@ from rpi_hwid.model import Camera
 LAYOUTS = [
     (labels.draw_board, "board"),
     (labels.draw_fpga, "fpga"),
+    (labels.draw_usb, "usb"),
 ]
 
 
@@ -304,12 +305,12 @@ def test_the_widest_flash_lines_beside_every_uid(docs, flash, uid):
         _fpga_kept(_fpga(docs, kind, flash=flash, flash_uid=uid))
 
 
-def _longest_whole(rec, field, text):
-    """The longest prefix of `text` the full label prints as `rec`'s
-    `field` without cutting it: the full label's own limit, found by
+def _longest_whole_by(draw, make, text):
+    """The longest prefix of `text` the full label (`draw`) prints whole
+    in the record `make(prefix)` gives: that label's own limit, found by
     halving."""
     def whole(n):
-        got = sc.full(labels.draw_fpga, replace(rec, **{field: text[:n].rstrip()}))
+        got = sc.full(draw, make(text[:n].rstrip()))
         return not any(t.s.endswith("…") for t in got.texts)
     lo, hi = 1, len(text)
     assert not whole(hi), "the test's value should be too long for the full label"
@@ -317,6 +318,12 @@ def _longest_whole(rec, field, text):
         mid = (lo + hi) // 2
         lo, hi = (mid, hi) if whole(mid) else (lo, mid)
     return text[:lo].rstrip()
+
+
+def _longest_whole(rec, field, text):
+    """The longest prefix of `text` the full label prints as `rec`'s
+    `field` without cutting it."""
+    return _longest_whole_by(labels.draw_fpga, lambda v: replace(rec, **{field: v}), text)
 
 
 WORDS = "Wide Board Name With A Very Long String Revision Plus Extras " * 3
@@ -385,3 +392,140 @@ def test_a_roll_takes_every_fpga_board_a_sheet_takes(docs):
     assert [(h, k, t, rec) for h, k, t, _d, rec in sheet] == \
         [(h, k, t, rec) for h, k, t, _d, rec in rolled if k != "micro"]
     assert {d for *_x, d, _r in rolled if _x[1] != "micro"} == {strip.draw_fpga_strip}
+
+
+# --- USB network adapters: wired and Wi-Fi, and the longest value of each row ---
+
+def _usb_overlaps(d):
+    """_overlaps, with the bus and link glyphs taken as one mark: the RJ45
+    jack's contacts are inside its body, the Wi-Fi glyph's arcs over its
+    dot, by design."""
+    if not d.marks:
+        return _overlaps(d)
+    xs0, ys0, xs1, ys1 = zip(*d.marks, strict=True)
+    return _overlaps(replace(d, marks=[(min(xs0), min(ys0), max(xs1), max(ys1))]))
+
+
+def _usb_kept(rec):
+    _rules_kept(labels.draw_usb, rec)
+    assert _usb_overlaps(sc.on_strip(strip.draw_usb_strip, rec)) == []
+
+
+def test_no_usb_strip_fixture_overlaps(docs):
+    for _host, _title, rec in sc.rows_for(docs, labels.draw_usb):
+        assert _usb_overlaps(sc.on_strip(strip.draw_usb_strip, rec)) == [], rec.title
+
+
+USB_KINDS = ["ethernet", "wifi"]       # an RJ45 jack or the radio glyph by the title
+
+
+def _usb(docs, kind, **changes):
+    rec = next(r for _h, _t, r in sc.rows_for(docs, labels.draw_usb) if r.kind == kind)
+    return replace(rec, **changes)
+
+
+def _with_line(rec, key, value):
+    """`rec` with its `key` line's value changed (the line added if absent)."""
+    lines = [(k, value if k == key else v) for k, v in rec.lines]
+    if key not in dict(rec.lines):
+        lines.append((key, value))
+    return replace(rec, lines=tuple(lines))
+
+
+def _usb_lines():
+    """The widest USB lines usb_records can make: every bcdUSB a device can
+    report with every speed in labels.USB_SPEED, and a speed it does not
+    name (sysfs's 1.5, low speed), which is printed as sysfs gives it."""
+    bcds = ["1.00", "1.10", "2.00", "2.01", "2.10", "3.00", "3.10", "3.20"]
+    speeds = [*labels.USB_SPEED.values(), "1.5"]
+    return _widest([f"{b} {s}" for b in bcds for s in speeds], labels.SANS)
+
+
+@pytest.mark.parametrize("kind", USB_KINDS)
+@pytest.mark.parametrize("line", _usb_lines())
+def test_the_widest_usb_lines(docs, kind, line):
+    _usb_kept(_with_line(_usb(docs, kind), "USB", line))
+
+
+@pytest.mark.parametrize("kind", USB_KINDS)
+@pytest.mark.parametrize("changes", [
+    {"driver": ""},                     # no driver bound: its line is left out
+    {"USB": ""},                        # neither bcdUSB nor a speed read
+    {"driver": "", "USB": ""},
+], ids=lambda c: "+".join(c) + " empty")
+def test_a_usb_strip_with_lines_left_out(docs, kind, changes):
+    rec = _usb(docs, kind)
+    for key, value in changes.items():
+        rec = _with_line(rec, key, value)
+    _usb_kept(rec)
+
+
+@pytest.mark.parametrize("kind", USB_KINDS)
+def test_a_usb_line_without_a_caption(docs, kind):
+    """draw_usb sets a line with no caption in the values' column."""
+    _usb_kept(_with_line(_usb(docs, kind), "", "an uncaptioned fact"))
+
+
+USB_WORDS = "Wide Adapter Maker Name With A Very Long Product String Plus Extras " * 3
+MACS = "60:38:e0:e3:56:4f:" * 6
+
+
+@pytest.mark.parametrize("kind", USB_KINDS)
+@pytest.mark.parametrize(("field", "text"), [
+    ("title", USB_WORDS),               # the manufacturer and product strings: any length
+    ("mac", MACS),
+    ("USB", USB_WORDS),                 # a bcdUSB or speed sysfs reports as it likes
+    ("driver", USB_WORDS.replace(" ", "_")),
+    ("VID:PID", "0123456789abcdef:" * 6),
+], ids=lambda v: v if len(v) < 12 else "")
+def test_the_longest_usb_value_the_full_label_prints_whole_is_whole_on_the_strip(
+        docs, kind, field, text):
+    """Every value on the label is a string from the adapter's descriptors,
+    the kernel, or a label input's fields: whatever the full label has room
+    for, the strip has room for."""
+    rec = _usb(docs, kind)
+    if field in ("title", "mac"):
+        def make(v):
+            return replace(rec, **{field: v})
+    else:
+        def make(v):
+            return _with_line(rec, field, v)
+    _usb_kept(make(_longest_whole_by(labels.draw_usb, make, text)))
+
+
+def _usb_input_docs(**changes):
+    """pi-sw2-p37 as a label input, its adapter changed by `changes` after
+    the input was built (a file edited by hand, or written by another tool)."""
+    import copy
+
+    import conftest
+    from rpi_hwid import label_input
+    doc = label_input.to_probe_document(label_input.build(
+        "pi-sw2-p37", copy.deepcopy(conftest.RAW["pi-sw2-p37"]["verdict"]["summary"])))
+    evidence = copy.deepcopy(doc.evidence)
+    evidence["summary"]["usb_net"][0].update(changes)
+    return {"pi-sw2-p37": replace(doc, evidence=evidence)}
+
+
+@pytest.mark.parametrize("changes", [{"mac": None}, {"vidpid": None}],
+                         ids=lambda c: next(iter(c)))
+def test_a_roll_refuses_the_usb_adapters_a_sheet_refuses(changes):
+    """draw_usb never refuses: an adapter's label is refused before it is
+    drawn (labels.whole_labels), and a roll's rows are whole_labels' rows."""
+    from rpi_hwid import label_input, roll
+    docs = _usb_input_docs(**changes)
+    with pytest.raises(label_input.InputError) as sheet:
+        list(labels.whole_labels(docs, {"usb"}))
+    with pytest.raises(label_input.InputError) as on_roll:
+        roll.roll_rows(docs, {"usb"})
+    assert str(on_roll.value) == str(sheet.value)
+
+
+def test_a_roll_takes_every_usb_adapter_a_sheet_takes(docs):
+    from rpi_hwid import roll
+    sheet = list(labels.whole_labels(docs, {"usb"}))
+    rolled = roll.roll_rows(docs, {"usb"})
+    assert sheet
+    assert [(h, k, t, rec) for h, k, t, _d, rec in sheet] == \
+        [(h, k, t, rec) for h, k, t, _d, rec in rolled if k != "micro"]
+    assert {d for *_x, d, _r in rolled if _x[1] != "micro"} == {strip.draw_usb_strip}
