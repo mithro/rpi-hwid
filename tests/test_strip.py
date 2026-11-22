@@ -5,9 +5,10 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from reportlab.lib.units import mm
 
 import strip_checks as sc
-from rpi_hwid import labels, names, revision, sdr_labels, strip
+from rpi_hwid import labels, names, revision, sdr_labels, strip, tinytapeout
 from rpi_hwid.model import Camera
 
 # (full draw function, kind name for the test ids); one entry per layout task
@@ -619,6 +620,43 @@ def test_every_shuttles_marks_are_on_its_strip():
             plain = replace(rec, marks=())
             assert len(got.marks) == len(sc.on_strip(strip.draw_tinytapeout_strip,
                                                     plain).marks) + len(marks), shuttle
+
+
+@pytest.mark.parametrize("shuttle", [  # the shuttles whose ASIC records carry marks
+    sh for sh in sorted(tinytapeout.SHUTTLE_MARKS)
+    if _tt_records({"shuttle": sh, "chip": "asic"})[0].marks])
+def test_the_shuttle_marks_drop_out_below_2mm_where_the_full_labels_do(shuttle, monkeypatch):
+    """tinytapeout_subtitle shrinks the marks by 0.2 mm while a subtitle
+    crowds them, and drops them below 2 mm. The strip starts at
+    TT_SHUTTLE_MARK, not the full label's 3.4 mm, so its steps land
+    elsewhere: swept over every room the subtitle can leave, it draws the
+    marks exactly where the full label does, and never under 2 mm."""
+    (rec,) = _tt_records({"shuttle": shuttle, "chip": "asic"})
+    drawn: list[float] = []
+    monkeypatch.setattr(labels, "marks_row", lambda lab, names, right, y, h: drawn.append(h))
+
+    class Lab:
+        sub_w = 0.0
+
+        def text(self, *a, **k):
+            pass
+
+        def width(self, *a, **k):
+            return self.sub_w
+
+    lab, col_w = Lab(), strip.TT_COL
+    one = labels.marks_widths(rec.marks, 1.0, gap=0)[1]     # marks in a row, per point
+    gaps = labels.marks_widths(rec.marks, 0)[1]
+    for step in range(400):
+        room = gaps + one * (1.5 * mm + step * 0.005 * mm)  # a 1.5 to 3.5 mm row fits
+        lab.sub_w = col_w - 2 * mm - room
+        got = []
+        for mark_h in (3.4 * mm, strip.TT_SHUTTLE_MARK):
+            drawn.clear()
+            labels.tinytapeout_subtitle(lab, replace(rec, subtitle="x"), 0, 0, col_w, mark_h)
+            got.append(drawn[0] if drawn else None)
+            assert all(h >= 2 * mm - 1e-6 for h in drawn), (shuttle, room / mm, drawn)
+        assert (got[0] is None) == (got[1] is None), (shuttle, room / mm, got)
 
 
 def _colour_names():

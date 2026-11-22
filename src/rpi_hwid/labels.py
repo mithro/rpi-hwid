@@ -1278,7 +1278,9 @@ def tinytapeout_subtitle(lab, tt, x, y, col_w, mark_h=3.4 * mm):
     if tt.marks:
         free = col_w - lab.width(tt.subtitle, SANS, 6.5) - 2 * mm
         mh = mark_h
-        while mh > 2 * mm and marks_widths(tt.marks, mh)[1] > free:
+        # 2 mm within float noise: stepped down from 3.0 mm, 2 mm is
+        # 2.0000000000000004 mm, and one step more would be 1.8 mm
+        while mh > 2 * mm + 1e-6 and marks_widths(tt.marks, mh)[1] > free:
             mh -= 0.2 * mm
         if marks_widths(tt.marks, mh)[1] <= free:
             marks_row(lab, tt.marks, x + col_w, y - 0.4 * mm, mh)
