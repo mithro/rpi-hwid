@@ -700,14 +700,7 @@ def draw_sdr(lab, r):
     mark_h = 4.2 * lb.mm
     maker_mark(lab, r, x, pad, mark_h)
     y = pad + mark_h + 0.7 * lb.mm
-    title_size = 14
-    variant_w = (lab.width(r.variant, lb.SANS, 7) + 1.5 * lb.mm) if r.variant else 0
-    title_size = lab.fitted_size(r.title, lb.SANS_BOLD, title_size, col_w - variant_w)
-    lab.fit(x, y, r.title, lb.SANS_BOLD, title_size, col_w - variant_w)
-    if r.variant:
-        # the board revision, beside the name, on the name's baseline
-        tx = x + lab.width(r.title, lb.SANS_BOLD, title_size) + 1.5 * lb.mm
-        lab.text(tx, y + (title_size - 7) * 0.72, r.variant, lb.SANS, 7, color=lb.GREY)
+    title_size = title_line(lab, r, x, y, 14, col_w)
     y += title_size * 0.72 + 1.0 * lb.mm
     # the chips, each captioned as the FPGA label captions its rows: the
     # captions right-aligned in one column, the values in the next
@@ -724,28 +717,141 @@ def draw_sdr(lab, r):
 
     glyph = 4.2 * lb.mm
     used = channels(lab, pad + 0.3 * lb.mm, y, glyph, r)
-    fx = pad + used + 2 * lb.mm
-    fw = lb.LABEL_W - pad - fx
-    lab.fit(fx, y + 0.2 * lb.mm, r.facts[0], lb.SANS_BOLD, 7, fw, min_size=5)
-    y2 = y + 0.2 * lb.mm + 7 * 0.72 + 1.0 * lb.mm
+    fact_rows(lab, r, pad + used + 2 * lb.mm, y + 0.2 * lb.mm, lb.LABEL_W - pad)
+    foot(lab, r, pad, lb.LABEL_W - 2 * pad, lb.LABEL_H - pad)
+
+
+# --- pieces the label and its strip share ----------------------------------------
+
+def title_line(lab, r, x, y, size, w):
+    """The radio's name from `size` down to what fits `w`, its board
+    revision beside it on its baseline; `y` is the name's cap-height top.
+    Returns the name's size."""
+    variant_w = (lab.width(r.variant, lb.SANS, 7) + 1.5 * lb.mm) if r.variant else 0
+    title_size = lab.fitted_size(r.title, lb.SANS_BOLD, size, w - variant_w)
+    lab.fit(x, y, r.title, lb.SANS_BOLD, title_size, w - variant_w)
+    if r.variant:
+        # the board revision, beside the name, on the name's baseline
+        tx = x + lab.width(r.title, lb.SANS_BOLD, title_size) + 1.5 * lb.mm
+        lab.text(tx, y + (title_size - 7) * 0.72, r.variant, lb.SANS, 7, color=lb.GREY)
+    return title_size
+
+
+def fact_rows(lab, r, fx, y, right):
+    """The rate, ADC and clock from `fx` to `right`, `y` the first row's
+    cap-height top; the second row the clock, or the configuration flash."""
+    fw = right - fx
+    lab.fit(fx, y, r.facts[0], lb.SANS_BOLD, 7, fw, min_size=5)
+    y2 = y + 7 * 0.72 + 1.0 * lb.mm
     if r.flash:
         # the FPGA label's flash row: the part and its size set flush right,
         # the grey caption after them
-        cap_x = lb.LABEL_W - pad - lab.width("flash", lb.SANS, lb.CAPTION)
+        cap_x = right - lab.width("flash", lb.SANS, lb.CAPTION)
         lab.captioned_after(fx, cap_x, y2, "flash", r.flash, lb.SANS, 6.5, min_size=5)
     else:
         lab.fit(fx, y2, r.facts[1], lb.SANS, 6.5, fw, min_size=5)
 
-    # the foot: the identifier, or the shared serial and why it identifies nothing
-    size = 8
-    foot = lb.LABEL_H - pad - size * 0.72
-    cap_y = foot - 0.7 * lb.mm - lb.CAPTION * 0.72
+
+FOOT = 8                  # points: the identifier along the foot
+
+
+def foot(lab, r, x, w, bottom):
+    """The identifier under its caption, from `x` across `w`, ending at
+    `bottom` -- or the shared serial and why it identifies nothing."""
+    size = FOOT
+    foot_y = bottom - size * 0.72
+    cap_y = foot_y - 0.7 * lb.mm - lb.CAPTION * 0.72
     if r.ident:
         caption = r.ident_caption + (f"  \u00b7  {r.dna_note}" if r.dna_note else "")
-        lab.fit(pad, cap_y, caption, lb.SANS, lb.CAPTION, lb.LABEL_W - 2 * pad,
-                min_size=4.5, color=lb.GREY)
-        lab.fit(pad, foot, r.ident, lb.MONO, size, lb.LABEL_W - 2 * pad, min_size=5.5)
+        lab.fit(x, cap_y, caption, lb.SANS, lb.CAPTION, w, min_size=4.5, color=lb.GREY)
+        lab.fit(x, foot_y, r.ident, lb.MONO, size, w, min_size=5.5)
     else:
-        lab.fit(pad, cap_y, r.shared_caption, lb.SANS, lb.CAPTION, lb.LABEL_W - 2 * pad,
-                min_size=4.5, color=lb.NOTE)
-        lab.fit(pad, foot, r.shared or "", lb.MONO, size, lb.LABEL_W - 2 * pad)
+        lab.fit(x, cap_y, r.shared_caption, lb.SANS, lb.CAPTION, w, min_size=4.5,
+                color=lb.NOTE)
+        lab.fit(x, foot_y, r.shared or "", lb.MONO, size, w)
+
+
+# --- the strip (rpi_hwid.strip) ------------------------------------------------
+#
+#  [    ] [mark] ADALM-Pluto Rev.B
+#  [ QR ] radio  AD9363  FPGA  XC7Z010
+#  [    ] RX            325 MHz – 3.8 GHz ███████
+#  [    ] TX            325 MHz – 3.8 GHz ///////
+#  [    ]   100k   1M   10M   100M   1G   10G
+#  [ant] [ant]  30.72 MS/s  ·  12-bit
+#  RX ×1 TX ×1  40 MHz ref
+#  serial  (QSPI flash unique id)  ·  Device DNA not readable
+#  10447354119600022000120009f61e2b82
+#
+# The full label's column beside the code turned into rows: the mark and
+# name on one line, the chips on the next, then the coverage band; under the
+# code the channels and the facts beside them, and the identity along the
+# foot, the strip's whole length. The band is the full label's width, so it
+# is drawn exactly as there (its hatching, where each range's words go, the
+# direct-sampling path named); every value has at least its full-label room
+# (the radio's chips 37 mm beside the widest die the tables name, 36 there,
+# and 58.6 mm with none, 37.1 there; the facts beside smaller glyphs; the
+# identity 79.5 mm, 58.5 there), so nothing the full label prints whole is
+# cut or set smaller than that label's floor for it here.
+
+STRIP_QR = 13 * lb.mm             # the identity's code, as the full label's
+STRIP_MARK = 3.4 * lb.mm          # the maker's mark (4.2 mm on the full label)
+STRIP_TITLE = 12                  # the name (14 pt on the full label)
+STRIP_CHIP = 7                    # the chips, as the full label's
+STRIP_GLYPH = 2.8 * lb.mm         # an antenna (4.2 mm on the full label)
+STRIP_BAND_W = lb.LABEL_W - 2 * lb.PAD    # the coverage band, as the full label's
+
+
+def draw_sdr_strip(lab, r):
+    """The SDR label along a strip (rpi_hwid.strip): the identity's code at
+    the left; beside it the mark and name, the chips, and the coverage band;
+    under it the channel groups with the facts beside them; the identity,
+    or the shared serial, along the foot."""
+    W, H = lab.w, lab.h  # noqa: N806
+    q = STRIP_QR
+    if r.ident:
+        lab.qr(0, 0, q, r.ident)
+    else:
+        lab.no_code(0, 0, q, "not unique")
+    x = q + 2 * lb.mm
+
+    # --- the mark, and the name beside it centred on the mark ---
+    w = maker_mark(lab, r, x, 0, STRIP_MARK)
+    tx = x + w + 2 * lb.mm
+    title_line(lab, r, tx, (STRIP_MARK - STRIP_TITLE * 0.72) / 2, STRIP_TITLE, W - tx)
+
+    # --- the chips on one line: the radio, then its FPGA ---
+    y = STRIP_MARK + 0.75 * lb.mm         # clear of the name's descenders
+    gap = lab.CAPTION_GAP
+    fpga_w = (lab.width("FPGA", lb.SANS, lb.CAPTION) + gap
+              + lab.width(r.fpga, lb.SANS_BOLD, STRIP_CHIP)) if r.fpga else 0
+    x_val = x + lab.width("radio", lb.SANS, lb.CAPTION) + gap
+    room = W - x_val - (fpga_w + 2.5 * lb.mm if r.fpga else 0)
+    lab.captioned(x, x_val, y, "radio", r.radio, lb.SANS_BOLD, STRIP_CHIP, room, min_size=5)
+    if r.fpga:
+        size = lab.fitted_size(r.radio, lb.SANS_BOLD, STRIP_CHIP, room, min_size=5)
+        fx = min(x_val + lab.width(r.radio, lb.SANS_BOLD, size) + 2.5 * lb.mm, W - fpga_w)
+        fx_val = fx + lab.width("FPGA", lb.SANS, lb.CAPTION) + gap
+        lab.captioned(fx, fx_val, y, "FPGA", r.fpga, lb.SANS_BOLD, STRIP_CHIP, W - fx_val,
+                      min_size=5)
+    y += STRIP_CHIP * 0.72 + 0.6 * lb.mm  # clear of the chips' descenders
+
+    # --- the coverage band ---
+    band = coverage(lab, x, y, STRIP_BAND_W, r)
+
+    # --- under the code: the channels, the facts beside them ---
+    # The first group's caption is centred under it and can be wider than
+    # it (one glyph's "RX ×1"): the glyphs start in far enough to keep it
+    # on the strip, as the full label's margin does.
+    gy = max(q, y + band) + 0.45 * lb.mm
+    groups = channel_groups(r)
+    gx = 0.3 * lb.mm
+    if groups:
+        d, n = groups[0]
+        span = n * (STRIP_GLYPH * GLYPH_W + 0.5 * lb.mm) - 0.5 * lb.mm
+        cap = lab.width(group_caption(d, n), lb.SANS_BOLD, GROUP_CAPTION)
+        gx = max(gx, (cap - span) / 2)
+    used = channels(lab, gx, gy, STRIP_GLYPH, r)
+    fact_rows(lab, r, gx + used + 2 * lb.mm, gy + 0.2 * lb.mm, W)
+
+    foot(lab, r, 0, W, H)

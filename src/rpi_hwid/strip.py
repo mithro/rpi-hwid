@@ -458,3 +458,12 @@ def draw_tinytapeout_strip(s: Strip, tt: Any) -> None:
 
 
 STRIP_OF[lb.draw_tinytapeout] = draw_tinytapeout_strip
+
+
+# --- software-defined radios --------------------------------------------------
+#
+# The SDR label lives in sdr_labels.py, and its strip beside it.
+
+from rpi_hwid import sdr_labels  # noqa: E402  (it imports labels, not strip)
+
+STRIP_OF[sdr_labels.draw_sdr] = sdr_labels.draw_sdr_strip

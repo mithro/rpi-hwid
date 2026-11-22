@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 import strip_checks as sc
-from rpi_hwid import labels, names, revision, strip
+from rpi_hwid import labels, names, revision, sdr_labels, strip
 from rpi_hwid.model import Camera
 
 # (full draw function, kind name for the test ids); one entry per layout task
@@ -16,6 +16,7 @@ LAYOUTS = [
     (labels.draw_fpga, "fpga"),
     (labels.draw_usb, "usb"),
     (labels.draw_tinytapeout, "tt"),
+    (sdr_labels.draw_sdr, "sdr"),
 ]
 
 
@@ -32,8 +33,12 @@ def pytest_generate_tests(metafunc):
         import copy
 
         import conftest
+        import sdr_fixtures
         from rpi_hwid.model import ProbeDocument
-        docs = {n: ProbeDocument.from_dict(n, copy.deepcopy(r)) for n, r in conftest.RAW.items()}
+        # the shared fixtures and the fleet's SDR hosts, which tests/sdr_fixtures.py
+        # keeps apart from them so that every other test's counts stay as they are
+        raw = {**conftest.RAW, **sdr_fixtures.SDR_RAW}
+        docs = {n: ProbeDocument.from_dict(n, copy.deepcopy(r)) for n, r in raw.items()}
         metafunc.parametrize(("draw", "rec"), list(_cases(docs)))
 
 
@@ -707,3 +712,231 @@ def test_a_roll_takes_every_tt_board_a_sheet_takes(docs):
     assert [(h, k, t, rec) for h, k, t, _d, rec in sheet] == \
         [(h, k, t, rec) for h, k, t, _d, rec in rolled if k != "micro"]
     assert {d for *_x, d, _r in rolled if _x[1] != "micro"} == {strip.draw_tinytapeout_strip}
+
+
+# --- SDR: every radio the tables know, and the longest value of each row -------
+
+def _sdr_docs(host="rpi-sdr-pluto", **changes):
+    """The fleet's SDR hosts (tests/sdr_fixtures.py), `host`'s radio changed
+    by `changes` (None deletes a field)."""
+    import copy
+
+    import sdr_fixtures
+    from rpi_hwid.model import ProbeDocument
+    raw = copy.deepcopy(sdr_fixtures.SDR_RAW)
+    (radio,) = raw[host]["verdict"]["summary"]["sdr"]
+    for k, v in changes.items():
+        if v is None:
+            radio.pop(k, None)
+        else:
+            radio[k] = v
+    raw[host]["verdict"]["sdr"] = raw[host]["verdict"]["summary"]["sdr"]
+    return {n: ProbeDocument.from_dict(n, r) for n, r in raw.items()}
+
+
+def _sdr(kind, host=None, **changes):
+    """The record sdr_records makes of a fleet radio, with its probe's
+    fields changed."""
+    hosts = {"pluto": "rpi-sdr-pluto", "xsdr": "rpi-sdr-xsdr",
+             "rtl-sdr-blog-v3": "rpi-sdr-rtlsdr-v3", "krakensdr": "rpi-sdr-kraken"}
+    (rec,) = [r for r in sdr_labels.sdr_records(_sdr_docs(hosts[kind], **changes))
+              if r.kind == kind]
+    return rec
+
+
+def _sdr_overlaps(rec):
+    """What the strip draws over something else where the full label does
+    not. The full label sets a range's words inside its bar, the direct
+    sampling path's in its grey, "not unique" in its square, and builds an
+    antenna and the coverage band of parts laid over each other; the strip
+    draws all of those the same way, so only an overlap the full label does
+    not have is a fault."""
+    from collections import Counter
+
+    def pairs(d):
+        return Counter(tuple(sorted(p)) for p in _overlaps(d))
+    got = pairs(sc.on_strip(sdr_labels.draw_sdr_strip, rec))
+    return sorted((got - pairs(sc.full(sdr_labels.draw_sdr, rec))).elements())
+
+
+def _sdr_kept(rec):
+    _rules_kept(sdr_labels.draw_sdr, rec)
+    assert _sdr_overlaps(rec) == []
+
+
+SDR_KINDS = list(sdr_labels.MODELS)
+
+
+def test_the_fixtures_carry_every_sdr_model():
+    assert {r.kind for r in sdr_labels.sdr_records(_sdr_docs())} == set(SDR_KINDS)
+
+
+@pytest.mark.parametrize("kind", SDR_KINDS)
+def test_no_sdr_strip_fixture_overlaps(kind):
+    assert _sdr_overlaps(_sdr(kind)) == []
+
+
+@pytest.mark.parametrize("changes", [
+    {"hw_model": "Analog Devices PlutoSDR Rev.C (Z7020-AD9361)", "rf_chip": "ad9361"},
+    {"hw_model": "Analog Devices PlutoSDR"},                # no revision, no die: the SoC's
+    {"rf_chip": None},                                      # the datasheet's chip
+    {"rx_channels": 2, "tx_channels": 2},                   # a Rev.C's four ports
+    {"rx_channels": 2, "tx_channels": None},
+    {"xo_hz": 40000123},                                    # "40.0001 MHz ref"
+    {"rx_rate_hz": [520833, 61440000], "adc_bits": 16},     # "61.44 MS/s  ·  16-bit"
+    {"rx_rate_hz": [520833, 122880000], "xo_hz": 39999877, "adc_bits": 16},
+], ids=lambda c: "+".join(f"{k}={v}" for k, v in c.items()))
+def test_what_a_pluto_can_say_of_itself(changes):
+    """A Pluto's chip, die, revision, channels, rate, ADC and clock are what
+    its IIO context answered: the widest answers each can give."""
+    _sdr_kept(_sdr("pluto", **changes))
+
+
+@pytest.mark.parametrize("devid", sorted(f"{d:08x}" for d in sdr_labels.XILINX_DEVID))
+def test_every_xsdr_die(devid):
+    _sdr_kept(_sdr("xsdr", fpga_devid=devid))
+
+
+@pytest.mark.parametrize("flash", _flash_lines())
+def test_the_widest_flash_lines_on_an_xsdr(flash):
+    """The XSDR's flash row is flash_from_jedec's line, as an FPGA board's."""
+    _sdr_kept(replace(_sdr("xsdr"), flash=flash))
+
+
+@pytest.mark.parametrize("uid", [u for u in UIDS.values() if u], ids=[k for k, u in UIDS.items()
+                                                                     if u])
+def test_every_xsdr_uid(uid):
+    _sdr_kept(_sdr("xsdr", flash_uid=uid))
+
+
+def test_an_rtl_sdr_with_its_own_serial():
+    """A V3 whose EEPROM was given a serial of its own is keyed on it: a
+    code and the serial along the foot, where the factory default has
+    "not unique"."""
+    rec = _sdr("rtl-sdr-blog-v3", usb_serial="12345678")
+    assert rec.ident == "12345678"
+    _sdr_kept(rec)
+
+
+# not the KrakenSDR: its five channels are its model's, never read, and the
+# only ones a bracket joins
+@pytest.mark.parametrize("kind", [k for k in SDR_KINDS if not sdr_labels.MODELS[k].coherent])
+@pytest.mark.parametrize(("rx", "tx"), [(1, 0), (1, 1), (2, 2), (5, 0), (4, 4), (8, 0)])
+def test_every_channel_count(kind, rx, tx):
+    """A Pluto's channels are what its IIO scan elements say: one glyph
+    each, in groups the strip has room for wherever the full label has (and
+    any other radio's, should its model gain channels)."""
+    rec = _sdr(kind)
+    if tx and not rec.tx:
+        rec = replace(rec, tx=rec.rx)
+    _sdr_kept(replace(rec, rx_channels=rx, tx_channels=tx))
+
+
+SERIAL = "0123456789abcdef" * 8
+# what a probe reads, or a label input gives, as any string: the field's
+# value made of a prefix of the text
+SDR_FREE = {
+    "radio chip": ("pluto", WORDS, lambda v: {"rf_chip": v}),
+    "pluto serial": ("pluto", SERIAL, lambda v: {"hw_serial": v}),
+    "revision": ("pluto", "B" * 80,
+                 lambda v: {"hw_model": f"Analog Devices PlutoSDR Rev.{v} (Z7010-AD9363A)"}),
+    "rtl serial": ("rtl-sdr-blog-v3", SERIAL.upper(), lambda v: {"usb_serial": v}),
+    "channel serials": ("krakensdr", SERIAL, lambda v: {"channel_serials": ["1000", v]}),
+}
+
+
+@pytest.mark.parametrize(("kind", "text", "fields"), SDR_FREE.values(), ids=SDR_FREE.keys())
+def test_the_longest_sdr_value_the_full_label_prints_whole_is_whole_on_the_strip(
+        kind, text, fields):
+    """Whatever the full label has room for, the strip has room for."""
+    def make(v):
+        return _sdr(kind, **fields(v))
+    _sdr_kept(make(_longest_whole_by(sdr_labels.draw_sdr, make, text)))
+
+
+NOT_READ, NOT_IDENTIFIED = labels.IdentifierNotReadError, sdr_labels.RadioNotIdentifiedError
+SDR_REFUSED = {
+    "pluto ranges unread": ("rpi-sdr-pluto", {"rx_lo_hz": None, "tx_lo_hz": None}, NOT_READ),
+    "pluto rate unread": ("rpi-sdr-pluto", {"rx_rate_hz": None}, NOT_READ),
+    "pluto no serial": ("rpi-sdr-pluto", {"hw_serial": None, "usb_serial": None}, NOT_READ),
+    "xsdr uid unread": ("rpi-sdr-xsdr", {"flash_uid_state": None, "flash_uid": None}, NOT_READ),
+    "xsdr uid blank": ("rpi-sdr-xsdr", {"flash_uid_state": "blank"}, NOT_READ),
+    "xsdr not identified": ("rpi-sdr-xsdr", {"usdr_hwid": None}, NOT_IDENTIFIED),
+    "usdr error": ("rpi-sdr-xsdr", {"usdr_error": "the card did not answer"}, NOT_IDENTIFIED),
+    "kraken serials unread": ("rpi-sdr-kraken", {"channel_serials": None}, NOT_READ),
+    "rtl not identified": ("rpi-sdr-rtlsdr-v3", {"rtl_model": None}, NOT_IDENTIFIED),
+}
+
+
+@pytest.mark.parametrize(("host", "changes", "error"), SDR_REFUSED.values(),
+                         ids=SDR_REFUSED.keys())
+def test_a_roll_refuses_the_radios_a_sheet_refuses(host, changes, error):
+    """draw_sdr never refuses: a radio's label is refused before it is drawn
+    (sdr_labels.sdr_records and unreadable, through labels.whole_labels),
+    and a roll's rows are whole_labels' rows."""
+    from rpi_hwid import roll
+    docs = _sdr_docs(host, **changes)
+    with pytest.raises(error) as sheet:
+        list(labels.whole_labels(docs, {"sdr"}))
+    with pytest.raises(error) as on_roll:
+        roll.roll_rows(docs, {"sdr"})
+    assert str(on_roll.value) == str(sheet.value)
+    assert host in str(sheet.value)
+
+
+def test_a_roll_takes_every_radio_a_sheet_takes():
+    from rpi_hwid import roll
+    docs = _sdr_docs()
+    sheet = list(labels.whole_labels(docs, {"sdr"}))
+    rolled = roll.roll_rows(docs, {"sdr"})
+    assert len(sheet) == len(SDR_KINDS)
+    assert [(h, k, t, rec) for h, k, t, _d, rec in sheet] == \
+        [(h, k, t, rec) for h, k, t, _d, rec in rolled if k != "micro"]
+    assert {d for *_x, d, _r in rolled if _x[1] != "micro"} == {sdr_labels.draw_sdr_strip}
+
+
+# --- every full layout has a strip ----------------------------------------------
+
+def _full_draws():
+    """Every full draw function labels.whole_labels can yield, read from its
+    source and that of every function of labels and sdr_labels it calls
+    (sdr_row makes the SDR rows): not only those the fixtures reach."""
+    import ast
+    import inspect
+    import textwrap
+
+    def resolve(name):
+        for module in (labels, sdr_labels):
+            f = getattr(module, name, None)
+            if inspect.isfunction(f) and f.__module__ == module.__name__:
+                return f
+        return None
+    seen, draws = set(), set()
+
+    def walk(fn):
+        seen.add(fn)
+        for node in ast.walk(ast.parse(textwrap.dedent(inspect.getsource(fn)))):
+            name = (node.id if isinstance(node, ast.Name)
+                    else node.attr if isinstance(node, ast.Attribute) else None)
+            f = resolve(name) if name else None
+            if f is None or f in seen:
+                continue
+            if name.startswith("draw_"):
+                draws.add(f)
+            else:
+                walk(f)
+    walk(labels.whole_labels)
+    return draws
+
+
+def test_every_full_layout_has_a_strip(docs):
+    """Whatever whole label whole_labels can make can go on a roll: every
+    draw function its source names, and every one the fixtures (the shared
+    ones and the SDR hosts) reach."""
+    draws = _full_draws()
+    assert {labels.draw_board, labels.draw_fpga, labels.draw_usb, labels.draw_tinytapeout,
+            sdr_labels.draw_sdr} <= draws
+    assert draws <= set(strip.STRIP_OF)
+    every = {**docs, **_sdr_docs()}
+    reached = {d for _h, _k, _t, d, _r in labels.whole_labels(every, set(labels.KINDS))}
+    assert reached <= set(strip.STRIP_OF)
