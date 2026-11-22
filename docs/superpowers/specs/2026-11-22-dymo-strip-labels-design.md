@@ -48,11 +48,13 @@ Made while writing this spec (each may be overturned in review):
    layouts draw into a 79.5 x 23.3 mm box: the 99010 printable area
    (below) less a 1.0 mm pad, because the sticker's corners are rounded and
    the measured registration is good to about ±1 mm.
-7. **The smallest sizes are the full labels' smallest.** No strip text below
-   5.5 pt for a value or 6 pt for a caption (`CAPTION`), no QR module under
-   0.31 mm. A layout that cannot meet that for some record says so (the
-   existing `fit` elides with "…", which is allowed only where the full
-   label also elides).
+7. **The smallest sizes are the full labels' smallest.** Each element of a
+   strip may shrink no further than the same element may on the full label
+   (the `min_size` the full layout passes for it), and nothing anywhere goes
+   below the full labels' floors: 4.5 pt text (a swatch's colour names, a
+   crowded board subtitle), 6 pt captions (`CAPTION`), 0.26 mm QR modules (a
+   128-bit flash uid). Eliding with "…" (`fit`) is allowed only where the full
+   label also elides.
 8. **The PDF page is the driver's page.** One page per sticker, 79 x 252 pt
    portrait (the DYMO driver's `w79h252.2`), the strip drawn rotated onto it.
    `lp -d QUEUE file.pdf` then needs no size or orientation option.
@@ -73,6 +75,7 @@ driver (`printer-driver-dymo` 1.4.0, `lw450.ppd`, filter `raster2dymolw`):
 | printable area | `ImageableArea` 4.32 4.32 76.08 235.44 pt, i.e. 25.3 x 81.5 mm; margins 1.5 mm, except 1.0 mm on the x = W side and 5.8 mm at the y = H end | `lw450.ppd` |
 | registration | the page lands on the sticker to within ~1 mm, every edge's loss equal to the driver's margin | a mm-ladder test label, photographed |
 | resolution | 300 x 300 dpi (`DymoPrintQuality=Text`), 300 x 600 dpi (`Graphics`) | `lw450.ppd` |
+| as IPP sees it | `media-size-supported` has `{x-dimension: 2786, y-dimension: 8890}` (1/100 mm); `media-supported` names it `custom_27.86x88.9mm_27.86x88.9mm`; `media-col-database` gives it margins 152 / 102 / 152 / 584 (left / right / bottom / top); `printer-resolution-supported` 300x300 and 300x600 dpi; no `DymoPrintQuality` attribute; `media-default` `unknown` | Get-Printer-Attributes on `ipp://localhost:631/printers/LabelWriter-450`, 2026-11-22 |
 
 CUPS's generic `drv:///sample.drv/dymo.ppd` must not be used: it puts the
 image ~4.5 mm along and ~1.5 mm across off the sticker, and a `/PageOffset`
@@ -147,7 +150,9 @@ and after; a test pins this.
 
 ### `strip.py`
 
-- `STRIP_W`, `STRIP_H` (79.5 x 23.3 mm) and `STRIP_PAD`.
+- `STRIP_W`, `STRIP_H` (79.5 x 23.3 mm). The strip box is already 1 mm
+  inside the printable area, so a layout draws from its own edge: there is
+  no further pad.
 - `class Strip(labels.Label)` with `w, h = STRIP_W, STRIP_H`.
 - `draw_board_strip`, `draw_fpga_strip`, `draw_usb_strip`,
   `draw_tinytapeout_strip`: each takes `(strip, record)`, the same record its
@@ -160,16 +165,16 @@ and after; a test pins this.
   to strip draw function, so `labels.whole_labels`'s
   `(host, kind, title, draw, record)` tuples are reused unchanged. A full
   draw function with no strip is a test failure, not a runtime surprise.
-- `draw_micro_pair(strip, pair)`: two micro labels, as `micro.draw_quad`
-  does four.
 
 `sdr_labels.draw_sdr_strip` is registered in `STRIP_OF` the same way.
 
 ### `micro.py`
 
-`sticker_rows(docs, only)` groups micro labels four to a sticker; it takes
-`per_sticker` (default 4, unchanged output), and the roll asks for 2. The
-pairing keeps micro's ordering rules; only the group size changes.
+`pack(micros, start)` groups micro labels four to a sticker; it takes
+`per_sticker` (default 4, every existing caller unchanged), and the roll
+asks for 2. `draw_pair(strip, group)` draws a group of two centred in a
+strip with a cut line between them, as `draw_quad` draws four on a sheet's
+sticker. Micro labels keep their ordering; only the group size changes.
 
 ### The roll stock (`labels.py`)
 
@@ -179,15 +184,21 @@ class Roll:
     name: str                 # "dymo-99010"
     page: tuple[float, float] # (79, 252) pt, the driver's PaperDimension
     printable: tuple[float, float, float, float]  # ImageableArea, pt
-    media: str                # "w79h252.2", the driver's PageSize name
+    ppd_size: str             # "w79h252.2", the driver's PageSize name (docs, lp)
+    media_size: tuple[int, int]  # (2786, 8890), 1/100 mm, how IPP names it
     note: str                 # what LABELS.md and --help say about it
 
 ROLLS = {"dymo-99010": Roll(...)}
 ```
 
+The record is data and lives beside STOCKS; drawing and printing a roll
+live in a new module, `rpi_hwid/roll.py`, which `labels` imports only when
+a roll is asked for (`roll` imports `labels` and `strip`).
+
 `--stock` takes a sheet (STOCKS) or a roll (ROLLS); one namespace, checked
-not to collide. `render(...)` hands a roll to `render_roll(docs, out, roll,
-only, outline, pinned_names, invariant)`, which writes one page per sticker:
+not to collide. `render(...)` hands a roll to `roll.render_roll(docs, out,
+roll, only, outline, pinned_names, order, invariant)`, which writes one page
+per sticker:
 whole labels first, host by host, exactly in `all_labels` order, then the
 micro pairs. Each page: the `Strip` placed centred in the printable area and
 rotated 90° onto the portrait page.
@@ -209,19 +220,23 @@ as usual, then sends it to the queue and waits:
 
 - `QUEUE` is a CUPS queue name (sent to
   `ipp://localhost:631/printers/QUEUE`) or a full `ipp://` URI.
-- It uses the existing IPP client, `rpi_hwid.sheet.ipp.Printer`.
+- `roll.print_pdf` uses the existing IPP client, `rpi_hwid.sheet.ipp.Printer`.
   `print_job` there is hard-wired to A4 label stock in the manual feed; it
   becomes `print_document(pdf, job_name, job_attributes)`, with the sheet's
   `print_job` a thin caller of it (its bytes on the wire unchanged, tested).
-- Job attributes for the roll: `media` = the roll's `media`
-  (`w79h252.2`), `print-scaling` = `none`, and the PPD option
-  `DymoPrintQuality` = `Graphics` (300 x 600 dpi, for the QR codes). Which
-  of these CUPS honours, and under which names, is verified against the real
-  queue first (plan task 1); the spec follows what that finds.
+- Job attributes for the roll: `media-col` with `media-size` = the roll's
+  size in 1/100 mm (2786 x 8890: CUPS names PPD sizes by dimension, not by
+  the PPD's `w79h252.2`), `print-scaling` = `none`, and `printer-resolution`
+  = 300 x 600 dpi, which CUPS advertises in place of the PPD's
+  `DymoPrintQuality=Graphics`. That CUPS maps the resolution back to
+  `Graphics`, and picks the 99010 size from the dimensions, is checked on
+  paper (the plan's on-paper task); if it does not, the job sends the PPD option by name
+  as a job attribute, which CUPS hands to the filters.
 - Before sending: Get-Printer-Attributes, and refuse with the reason when
-  the queue is not idle/processing (stopped, disabled) or its
-  `media-supported` lacks the roll's media (a queue still on the generic
-  driver, or on another roll, is caught here).
+  the queue is stopped (`printer-state` 5, with its `printer-state-message`,
+  e.g. "Unplugged or turned off"), not accepting jobs, or its
+  `media-size-supported` lacks the roll's size (a queue on the generic
+  driver, or another printer, is caught here).
 - It polls the job to `completed`, `aborted` or `canceled` (timeout 120 s)
   and says which. Exit 0 only on `completed`.
 - `--print` with a sheet stock is refused: sheets go through
@@ -246,8 +261,9 @@ printed.
   before and after the `Label` refactor (golden hashes taken first).
 - **Every strip, every fixture**: each record in `tests/data` that makes a
   full label also makes a strip; the same records refuse. A recording canvas
-  checks every strip for text under 5.5 pt (6 pt captions), QR modules
-  under 0.31 mm and any mark drawn outside the strip box.
+  checks every strip against decision 7's floors (text under 4.5 pt, a
+  caption under 6 pt, a QR module under 0.26 mm) and for any mark drawn
+  outside the strip box.
 - **Same facts**: for each fixture, every identifier string the full label
   draws is also drawn on its strip (recorded `drawString` text, the same
   way), and every QR payload too.
