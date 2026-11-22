@@ -369,3 +369,92 @@ def draw_usb_strip(s: Strip, dev: Any) -> None:
 
 
 STRIP_OF[lb.draw_usb] = draw_usb_strip
+
+
+# --- Tiny Tapeout demo boards -------------------------------------------------
+#
+#  [TT] TT06                          [carrier] pink           [         ]
+#  ASIC  ·  sky130     [efabless][sky]  [ swatch] teal           [chip QR  ]
+#       board  TT06+  ·  Rev 2.0.1   [demo   ] pink           [         ]
+#  ROM commit  0f5a1b2c              [ board ] teal           [         ]
+#  RP2040 id (USB serial)                        id           chip page
+#  E6614C311B7A7A37                           [id QR]
+#
+# The full label's left column as it is (its width, its rows, the same
+# room for every value), the two board samples beside it instead of under
+# it, the chip page's code at the right end, and the demo board's id along
+# the foot with its own code at the row's end. The id has more room than on
+# the full label (50.9 mm, 50 there) and its code is bigger (7.6 mm, 6.5
+# there), so every id the full label prints whole is whole here, its code
+# at the module floor or above. Every other value has at least its
+# full-label room (the headline 32.5 mm, 31 there; a colour name 9 mm, 6.75
+# there; the board and ROM rows and the subtitle's free space for the
+# shuttle's marks the same), so nothing the full label prints whole is cut
+# or set smaller than that label's floor for it here, and the shuttle's
+# marks, starting smaller, are drawn wherever the full label draws them.
+
+TT_QR = 17 * mm                 # the chip page's code, as the full label's
+TT_COL = 38.5 * mm              # the left column, as the full label's
+TT_HEAD = 16                    # the headline (22 pt on the full label)
+TT_MARK = 4.5 * mm              # the Tiny Tapeout mark (6 mm on the full label)
+TT_SHUTTLE_MARK = 3.0 * mm      # the shuttle's marks, at most (3.4 mm there)
+TT_ROW = 7.5                    # the board and ROM rows, as the full label's
+TT_CAP_W = 14 * mm              # their values' indent, as the full label's
+TT_SWATCH = (10 * mm, 5.5 * mm)  # a board's sample (11 x 5.5 mm there)
+TT_ID = 15                      # the demo board's id, as the full label's
+TT_ID_QR = 7.6 * mm             # its code: 29 modules at 0.26 mm (6.5 mm there)
+
+
+def draw_tinytapeout_strip(s: Strip, tt: Any) -> None:
+    """The Tiny Tapeout label along a strip: the mark and shuttle, the
+    subtitle and the shuttle's marks, the board and ROM rows at the left;
+    the two board samples beside them; the chip page's code at the right
+    end; the demo board's id along the foot, its code at the row's end."""
+    W, H = s.w, s.h  # noqa: N806
+    qx = W - TT_QR
+
+    # --- the chip page's code, its caption under it ---
+    s.qr(qx, 0, TT_QR, tt.url)
+    s.text(qx + TT_QR / 2, TT_QR + 0.4 * mm, "chip page", lb.SANS, lb.CAPTION,
+           align="centre", color=lb.GREY)
+
+    # --- the foot: the id under its caption, its code at the row's end ---
+    id_y = H - 0.3 * mm - TT_ID * 0.72       # the id's cap-height top
+    cap_y = id_y - 0.7 * mm - lb.CAPTION * 0.72
+    s.text(0, cap_y, "%s id (USB serial)" % (tt.mcu or "RP2"), lb.SANS, lb.CAPTION,
+           color=lb.GREY)
+    if tt.usb_serial:
+        qr_x = qx - 2 * mm - TT_ID_QR
+        s.qr(qr_x, H - TT_ID_QR, TT_ID_QR, tt.usb_serial, error="l")
+        s.text(qr_x + TT_ID_QR / 2, H - TT_ID_QR - 0.6 * mm - lb.CAPTION * 0.72, "id",
+               lb.SANS, lb.CAPTION, align="centre", color=lb.GREY)
+        s.fit(0, id_y, tt.usb_serial, lb.MONO, TT_ID, qr_x - 2 * mm)
+    else:
+        s.rule(0, id_y + TT_ID * 0.72 + 0.2 * mm, qx - 2 * mm)
+
+    # --- the left column: the mark and headline, the subtitle and the
+    # shuttle's marks, the board and the ROM ---
+    col_w = TT_COL
+    w = lb.mark_tinytapeout(s, 0, 0, TT_MARK)
+    tx = w + 1.5 * mm if w else 0
+    head_cap = TT_HEAD * 0.72
+    t0 = (TT_MARK - head_cap) / 2           # the headline's capitals centred on the mark
+    s.fit(tx, t0, tt.headline, lb.SANS_BOLD, TT_HEAD, col_w - tx)
+    y = t0 + head_cap + 0.21 * TT_HEAD + 0.4 * mm   # clear of the headline's descenders
+    lb.tinytapeout_subtitle(s, tt, 0, y, col_w, TT_SHUTTLE_MARK)
+    y += TT_SHUTTLE_MARK
+    s.captioned(0, TT_CAP_W, y, "board", tt.demoboard_text, lb.SANS, TT_ROW,
+                col_w - TT_CAP_W)
+    y += 3.0 * mm
+    caption, text, font = lb.tinytapeout_rom_line(tt)
+    s.captioned(0, TT_CAP_W, y, caption, text, font, TT_ROW, col_w - TT_CAP_W)
+
+    # --- the two boards' samples, beside the column ---
+    sw, sh = TT_SWATCH
+    sx = col_w + 2 * mm
+    tw = qx - 2 * mm - (sx + sw + 1 * mm)
+    for i, sample in enumerate(lb.tinytapeout_samples(tt)):
+        lb.tinytapeout_sample(s, sx, 0.2 * mm + i * (sh + 1.5 * mm), sw, sh, tw, sample)
+
+
+STRIP_OF[lb.draw_tinytapeout] = draw_tinytapeout_strip

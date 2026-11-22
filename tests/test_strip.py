@@ -15,6 +15,7 @@ LAYOUTS = [
     (labels.draw_board, "board"),
     (labels.draw_fpga, "fpga"),
     (labels.draw_usb, "usb"),
+    (labels.draw_tinytapeout, "tt"),
 ]
 
 
@@ -529,3 +530,180 @@ def test_a_roll_takes_every_usb_adapter_a_sheet_takes(docs):
     assert [(h, k, t, rec) for h, k, t, _d, rec in sheet] == \
         [(h, k, t, rec) for h, k, t, _d, rec in rolled if k != "micro"]
     assert {d for *_x, d, _r in rolled if _x[1] != "micro"} == {strip.draw_usb_strip}
+
+
+# --- Tiny Tapeout: every shuttle the tables know, and the longest free values ---
+
+def _tt_overlaps(d):
+    """_overlaps, with each board's sample taken as one mark: a swatch is
+    lettered inside its box ("carrier", "demo", "board"), and an empty one
+    is struck through, by design."""
+    def inside(a, b):
+        return b[0] <= a[0] and b[1] <= a[1] and a[2] <= b[2] and a[3] <= b[3]
+    marks = [m for m in d.marks if not any(m is not o and inside(m, o) for o in d.marks)]
+    texts = [t for t in d.texts if not (t.s in ("carrier", "demo", "board")
+                                        and any(inside(t.box, m) for m in marks))]
+    return _overlaps(replace(d, marks=marks, texts=texts))
+
+
+def _tt_kept(rec):
+    _rules_kept(labels.draw_tinytapeout, rec)
+    assert _tt_overlaps(sc.on_strip(strip.draw_tinytapeout_strip, rec)) == []
+
+
+def test_no_tt_strip_fixture_overlaps(docs):
+    for _host, _title, rec in sc.rows_for(docs, labels.draw_tinytapeout):
+        assert _tt_overlaps(sc.on_strip(strip.draw_tinytapeout_strip, rec)) == [], \
+            rec.headline
+
+
+def _tt_records(*boards):
+    """The records tinytapeout_records makes of these demo boards (dicts of
+    model.TinyTapeoutBoard's fields), on rpi4-tt."""
+    import copy
+
+    import conftest
+    from rpi_hwid.model import ProbeDocument
+    raw = copy.deepcopy(conftest.RAW["rpi4-tt"])
+    raw["verdict"]["summary"]["tinytapeout"] = [
+        {**raw["verdict"]["summary"]["tinytapeout"][0], **b} for b in boards]
+    return labels.tinytapeout_records({"rpi4-tt": ProbeDocument.from_dict("rpi4-tt", raw)})
+
+
+def _tt_shuttles():
+    """Every shuttle the tables name: rpi_hwid.tinytapeout's own and the
+    sheet's (tt_boards.json), and one neither knows."""
+    from rpi_hwid import tinytapeout, tt_boards
+    return sorted(set(tinytapeout.SHUTTLES) | set(tinytapeout.SHUTTLE_MARKS)
+                  | set(tt_boards.load()["asics"]) | {"ttxyz99"})
+
+
+@pytest.mark.parametrize("chip", ["asic", "fpga"])
+@pytest.mark.parametrize("shuttle", _tt_shuttles())
+def test_every_shuttle_the_tables_know(shuttle, chip):
+    """Each shuttle's headline, subtitle, marks, chip page and colours, as
+    tinytapeout_records makes them, and every ROM line: a commit, and none
+    (an ASIC's "no commit", an FPGA's "none")."""
+    for commit in ("0f5a1b2c", None):
+        (rec,) = _tt_records({"shuttle": shuttle, "chip": chip, "commit": commit})
+        _tt_kept(rec)
+
+
+@pytest.mark.parametrize("board", [
+    {"shuttle": None, "chip": None, "commit": None},        # no ROM answered
+    {"shuttle": None, "chip": "fpga", "commit": None},      # an FPGA breakout
+    {"usb_serial": None},                                    # a rule where the id goes
+    {"usb_serial": None, "mcu": None},
+    {"demoboard": None, "demoboard_version": None},          # board "not read"
+    {"demoboard": "TTDBv3 [3.2]", "demoboard_version": None},
+], ids=lambda b: "+".join(f"{k}={v}" for k, v in b.items()))
+def test_the_tt_records_no_shuttle_makes(board):
+    (rec,) = _tt_records(board)
+    _tt_kept(rec)
+
+
+def test_every_shuttles_marks_are_on_its_strip():
+    """The full label drops a shuttle's marks where its subtitle leaves no
+    room; no subtitle the records make leaves too little, so every mark is
+    drawn on both (and test_it_draws_the_same_marks holds the counts)."""
+    from rpi_hwid import tinytapeout
+    for shuttle, marks in tinytapeout.SHUTTLE_MARKS.items():
+        for chip in ("asic", "fpga"):
+            (rec,) = _tt_records({"shuttle": shuttle, "chip": chip})
+            got = sc.on_strip(strip.draw_tinytapeout_strip, rec)
+            plain = replace(rec, marks=())
+            assert len(got.marks) == len(sc.on_strip(strip.draw_tinytapeout_strip,
+                                                    plain).marks) + len(marks), shuttle
+
+
+def _colour_names():
+    """Every colour name a swatch can be given: the sheet's (as plain_colour
+    leaves them) and rpi_hwid.tinytapeout's."""
+    from rpi_hwid import tinytapeout, tt_boards
+    names = {tt_boards.plain_colour((row.get(k) or "").lower() or None)
+             for kind in ("asics", "demoboards") for row in tt_boards.load()[kind].values()
+             for k in ("colour", "silk")}
+    names |= {n for row in tinytapeout.SHUTTLES.values() for n in row[:4]}
+    return _widest(names - {None}, labels.SANS, 4)
+
+
+@pytest.mark.parametrize("name", _colour_names())
+def test_the_widest_colour_names(docs, name):
+    rec = _tt(docs, "TT06")
+    _tt_kept(replace(rec, chip_colour_name=name, chip_silk_name=name,
+                     demoboard_colour_name=name, demoboard_silk_name=name))
+    # one name of a pair missing ("?"), and both ("unknown")
+    _tt_kept(replace(rec, chip_silk_name=None, demoboard_colour_name=None,
+                     demoboard_silk_name=None, chip_colour_name=name))
+
+
+def _tt(docs, headline, **changes):
+    rec = next(r for _h, _t, r in sc.rows_for(docs, labels.draw_tinytapeout)
+               if r.headline == headline)
+    return replace(rec, **changes)
+
+
+@pytest.mark.parametrize("headline", ["TT06", "FPGA"])
+@pytest.mark.parametrize(("field", "text"), [
+    ("headline", "TTWIDESHUTTLENAME" * 4),     # a shuttle the ROM names as it likes
+    ("demoboard_text", WORDS),                  # the board the SDK detected
+    ("commit", HEX),                            # the chip ROM's commit
+    ("usb_serial", HEX.upper()),                # the demo board's id
+    ("chip_colour_name", WORDS),                # the sheet's colour names
+    ("demoboard_silk_name", WORDS),
+], ids=lambda v: v if len(v) < 20 else "")
+def test_the_longest_tt_value_the_full_label_prints_whole_is_whole_on_the_strip(
+        docs, headline, field, text):
+    """A value from a document or the sheet can be any string: whatever the
+    full label has room for, the strip has room for."""
+    rec = _tt(docs, headline)
+
+    def make(v):
+        return replace(rec, **{field: v})
+    _tt_kept(make(_longest_whole_by(labels.draw_tinytapeout, make, text)))
+
+
+def _tt_input_docs(**changes):
+    """rpi4-tt as a label input, its first demo board changed by `changes`
+    after the input was built (a file edited by hand)."""
+    import copy
+
+    import conftest
+    from rpi_hwid import label_input
+    doc = label_input.to_probe_document(label_input.build(
+        "rpi4-tt", copy.deepcopy(conftest.RAW["rpi4-tt"]["verdict"]["summary"])))
+    evidence = copy.deepcopy(doc.evidence)
+    if changes.pop("unread", False):
+        evidence["summary"]["tinytapeout"] = None
+    else:
+        evidence["summary"]["tinytapeout"][0].update(changes)
+    return {"rpi4-tt": replace(doc, evidence=evidence)}
+
+
+TT_REFUSED = {"usb_serial": {"usb_serial": None}, "mcu": {"mcu": None},
+              "chip": {"chip": None}, "demoboard": {"demoboard": None},
+              "shuttle": {"shuttle": None}, "list unread": {"unread": True}}
+
+
+@pytest.mark.parametrize("changes", TT_REFUSED.values(), ids=TT_REFUSED.keys())
+def test_a_roll_refuses_the_tt_boards_a_sheet_refuses(changes):
+    """draw_tinytapeout never refuses: a demo board's label is refused
+    before it is drawn (labels.whole_labels), and a roll's rows are
+    whole_labels' rows."""
+    from rpi_hwid import roll
+    docs = _tt_input_docs(**changes)
+    with pytest.raises(labels.MissingFieldsError) as sheet:
+        list(labels.whole_labels(docs, {"tt"}))
+    with pytest.raises(labels.MissingFieldsError) as on_roll:
+        roll.roll_rows(docs, {"tt"})
+    assert str(on_roll.value) == str(sheet.value)
+
+
+def test_a_roll_takes_every_tt_board_a_sheet_takes(docs):
+    from rpi_hwid import roll
+    sheet = list(labels.whole_labels(docs, {"tt"}))
+    rolled = roll.roll_rows(docs, {"tt"})
+    assert sheet
+    assert [(h, k, t, rec) for h, k, t, _d, rec in sheet] == \
+        [(h, k, t, rec) for h, k, t, _d, rec in rolled if k != "micro"]
+    assert {d for *_x, d, _r in rolled if _x[1] != "micro"} == {strip.draw_tinytapeout_strip}

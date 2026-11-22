@@ -1247,18 +1247,7 @@ def draw_tinytapeout(lab, tt):
     tx = x + (w + 1.5 * mm if w else 0)
     lab.fit(tx, y, tt.headline, SANS_BOLD, head_size, col_w - (tx - x))
     y += head_cap + 1.2 * mm
-    # The subtitle line, with the marks of whoever ran the shuttle and whose
-    # silicon it is at its right edge: an Efabless chipIgnite run on
-    # SkyWater, a wafer.space run on GlobalFoundries, IHP's own. They shrink
-    # rather than crowd a long subtitle, and drop out below 2 mm.
-    lab.text(x, y, tt.subtitle, SANS, 6.5)          # fixed size, like the Pi subtitle
-    if tt.marks:
-        free = col_w - lab.width(tt.subtitle, SANS, 6.5) - 2 * mm
-        mh = 3.4 * mm
-        while mh > 2 * mm and marks_widths(tt.marks, mh)[1] > free:
-            mh -= 0.2 * mm
-        if marks_widths(tt.marks, mh)[1] <= free:
-            marks_row(lab, tt.marks, x + col_w, y - 0.4 * mm, mh)
+    tinytapeout_subtitle(lab, tt, x, y, col_w)
     row = 3.5 * mm
     y += row
     cap_w = 14 * mm
@@ -1274,24 +1263,51 @@ def draw_tinytapeout(lab, tt):
     # is. Beside it the two colours in words, soldermask over silkscreen,
     # for the reader whose eye the print cannot be trusted by.
     sw, sh = 11 * mm, 5.5 * mm
-    line = CAPTION * 0.72 + 0.5 * mm
-    for i, (cap, mask, silk, mask_name, silk_name) in enumerate((
-            ("carrier", tt.chip_colour, tt.chip_silk,
+    for i, sample in enumerate(tinytapeout_samples(tt)):
+        sx = x + i * (col_w / 2)
+        tinytapeout_sample(lab, sx, y, sw, sh, col_w / 2 - sw - 1.5 * mm, sample)
+
+
+def tinytapeout_subtitle(lab, tt, x, y, col_w, mark_h=3.4 * mm):
+    """The subtitle line at `y`, with the marks of whoever ran the shuttle
+    and whose silicon it is at its right edge, `x + col_w`: an Efabless
+    chipIgnite run on SkyWater, a wafer.space run on GlobalFoundries, IHP's
+    own. They start `mark_h` tall and shrink rather than crowd a long
+    subtitle, and drop out below 2 mm."""
+    lab.text(x, y, tt.subtitle, SANS, 6.5)          # fixed size, like the Pi subtitle
+    if tt.marks:
+        free = col_w - lab.width(tt.subtitle, SANS, 6.5) - 2 * mm
+        mh = mark_h
+        while mh > 2 * mm and marks_widths(tt.marks, mh)[1] > free:
+            mh -= 0.2 * mm
+        if marks_widths(tt.marks, mh)[1] <= free:
+            marks_row(lab, tt.marks, x + col_w, y - 0.4 * mm, mh)
+
+
+def tinytapeout_samples(tt):
+    """(caption, mask, silk, mask name, silk name) of the two boards a Tiny
+    Tapeout label samples: the chip carrier, then the demo board."""
+    return (("carrier", tt.chip_colour, tt.chip_silk,
              tt.chip_colour_name, tt.chip_silk_name),
             ("demo\nboard", tt.demoboard_colour, tt.demoboard_silk,
-             tt.demoboard_colour_name, tt.demoboard_silk_name))):
-        sx = x + i * (col_w / 2)
-        swatch(lab, sx, y, sw, sh, mask, silk, cap)
-        tx2 = sx + sw + 1 * mm
-        tw = col_w / 2 - sw - 1.5 * mm
-        if mask_name or silk_name:
-            ty = y + (sh - 2 * line + 0.5 * mm) / 2
-            lab.fit(tx2, ty, mask_name or "?", SANS, CAPTION, tw, min_size=4.5)
-            lab.fit(tx2, ty + line, silk_name or "?", SANS, CAPTION, tw, min_size=4.5,
-                    color=GREY)
-        else:
-            lab.fit(tx2, y + (sh - CAPTION * 0.72) / 2, "unknown", SANS, CAPTION,
-                    tw, min_size=4.5, color=GREY)
+             tt.demoboard_colour_name, tt.demoboard_silk_name))
+
+
+def tinytapeout_sample(lab, x, y, sw, sh, tw, sample):
+    """One board's sample: its swatch, `sw` x `sh` at (x, y), and beside it
+    the two colours in words, soldermask over silkscreen, in `tw`."""
+    cap, mask, silk, mask_name, silk_name = sample
+    line = CAPTION * 0.72 + 0.5 * mm
+    swatch(lab, x, y, sw, sh, mask, silk, cap)
+    tx2 = x + sw + 1 * mm
+    if mask_name or silk_name:
+        ty = y + (sh - 2 * line + 0.5 * mm) / 2
+        lab.fit(tx2, ty, mask_name or "?", SANS, CAPTION, tw, min_size=4.5)
+        lab.fit(tx2, ty + line, silk_name or "?", SANS, CAPTION, tw, min_size=4.5,
+                color=GREY)
+    else:
+        lab.fit(tx2, y + (sh - CAPTION * 0.72) / 2, "unknown", SANS, CAPTION,
+                tw, min_size=4.5, color=GREY)
 
 
 
