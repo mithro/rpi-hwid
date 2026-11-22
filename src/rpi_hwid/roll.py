@@ -111,9 +111,36 @@ def job_attributes(roll: labels.Roll) -> ipp.Attrs:
     }
 
 
-def _size(x: int, y: int) -> str:
-    """A media size given in 1/100 mm."""
-    return f"{x / 100:g} x {y / 100:g} mm"
+def _dim(d: Any) -> str:
+    """A dimension in 1/100 mm, or an IPP range of them (lo, hi), in mm."""
+    if isinstance(d, tuple):
+        return f"{d[0] / 100:g}-{d[1] / 100:g}"
+    return f"{d / 100:g}"
+
+
+def _size(x: Any, y: Any) -> str:
+    return f"{_dim(x)} x {_dim(y)} mm"
+
+
+def _holds(have: Any, want: int) -> bool:
+    """Whether a dimension the queue lists, a number or an IPP range
+    (lo, hi), covers `want`."""
+    if isinstance(have, tuple):
+        return bool(have[0] <= want <= have[1])
+    return bool(have == want)
+
+
+def _queue_sizes(a: dict[str, list[Any]]) -> list[tuple[Any, Any]]:
+    """The (x, y) of each media-size-supported member that has both; a
+    member without one (or a malformed one) is not a size to offer."""
+    out: list[tuple[Any, Any]] = []
+    for m in a.get("media-size-supported", []):
+        if not isinstance(m, dict):
+            continue
+        x, y = m.get("x-dimension"), m.get("y-dimension")
+        if x and y and (x[0], y[0]) not in out:
+            out.append((x[0], y[0]))
+    return out
 
 
 def print_pdf(pdf: bytes, queue: str, roll: labels.Roll, job_name: str,
@@ -133,11 +160,11 @@ def print_pdf(pdf: bytes, queue: str, roll: labels.Roll, job_name: str,
             raise PrintError(f"{queue}: the printer is stopped: {why}")
         if not (a.get("printer-is-accepting-jobs") or [True])[0]:
             raise PrintError(f"{queue}: the queue is not accepting jobs")
-        sizes = sorted({(m["x-dimension"][0], m["y-dimension"][0])
-                        for m in a.get("media-size-supported", []) if isinstance(m, dict)})
-        if tuple(roll.media_size) not in sizes:
+        sizes = _queue_sizes(a)
+        rx, ry = roll.media_size
+        if not any(_holds(x, rx) and _holds(y, ry) for x, y in sizes):
             has = ", ".join(_size(x, y) for x, y in sizes) or "no sizes"
-            raise PrintError(f"{queue}: the queue has no {_size(*roll.media_size)} size "
+            raise PrintError(f"{queue}: the queue has no {_size(rx, ry)} size "
                              f"({roll.ppd_size}); it supports {has}: is it on DYMO's driver, "
                              f"printer-driver-dymo's lw450.ppd?")
         job = pr.print_document(pdf, job_name, job_attributes(roll))

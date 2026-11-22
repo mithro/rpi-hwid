@@ -198,6 +198,12 @@ def test_the_library_api_gets_the_roll_through_render_sheet(data_dir):
 # --- printing: --print QUEUE ---------------------------------------------------
 
 
+def _size_member(x, y):
+    """A media-size-supported member: a size is an int or an ipp.range_of; None omits it."""
+    return ipp.collection({k: v for k, v in (("x-dimension", x), ("y-dimension", y))
+                           if v is not None})
+
+
 def _queue(states, *, printer_state=3, sizes=((2786, 8890),), accepting=True,
            message="", reasons=("none",)):
     """A fake CUPS queue: printer attributes, a job id, then `states` in turn."""
@@ -209,9 +215,9 @@ def _queue(states, *, printer_state=3, sizes=((2786, 8890),), accepting=True,
                 "printer-state": ipp.enum(printer_state),
                 "printer-state-message": ipp.text(message),
                 "printer-is-accepting-jobs": ipp.boolean(accepting),
-                "media-size-supported": [ipp.collection({
-                    "x-dimension": ipp.integer(x), "y-dimension": ipp.integer(y)})
-                    for x, y in sizes]})
+                "media-size-supported": [
+                    _size_member(*(ipp.integer(d) if isinstance(d, int) else d for d in xy))
+                    for xy in sizes]})
         if msg.code == ipp.PRINT_JOB:
             return ok(ipp.JOB_GROUP, {"job-id": ipp.integer(77), "job-state": ipp.enum(3)})
         return ok(ipp.JOB_GROUP, {"job-state": ipp.enum(next(seen)),
@@ -249,6 +255,30 @@ def test_a_queue_that_cannot_print_the_roll_is_refused_before_sending(kw, words)
     try:
         with pytest.raises(roll.PrintError, match=words):
             roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=0.01)
+        assert not any(m.code == ipp.PRINT_JOB for m in p.requests)
+    finally:
+        p.close()
+
+
+def test_a_range_that_holds_the_rolls_size_is_a_size_the_queue_has():
+    p = _queue([9], sizes=((ipp.range_of(1000, 5000), ipp.range_of(5000, 20000)),))
+    try:
+        assert roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=0.01) == "completed"
+        assert any(m.code == ipp.PRINT_JOB for m in p.requests)
+    finally:
+        p.close()
+
+
+def test_a_range_that_misses_the_roll_is_one_readable_line_not_a_traceback():
+    p = _queue([], sizes=((ipp.range_of(5000, 9000), ipp.range_of(5000, 20000)),
+                          (5419, 2227), (ipp.range_of(1, 2), None)))
+    try:
+        with pytest.raises(roll.PrintError) as got:
+            roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=0.01)
+        msg = str(got.value)
+        assert "\n" not in msg
+        # the member with no y-dimension is skipped, not a crash
+        assert "supports 50-90 x 50-200 mm, 54.19 x 22.27 mm" in msg
         assert not any(m.code == ipp.PRINT_JOB for m in p.requests)
     finally:
         p.close()

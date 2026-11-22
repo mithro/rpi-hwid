@@ -120,6 +120,11 @@ def resolution(x: int, y: int, units: int = 3) -> Value:
     return Value(RESOLUTION, (x, y, units))
 
 
+def range_of(lower: int, upper: int) -> Value:
+    """A rangeOfInteger, lower and upper both included (RFC 8010 3.9)."""
+    return Value(RANGE, (lower, upper))
+
+
 def collection(members: dict[str, Value | list[Value]]) -> Value:
     return Value(BEGIN_COLLECTION, members)
 
@@ -141,6 +146,8 @@ def _plain(v: Value) -> bytes:
         return _field(b"")
     if v.tag == RESOLUTION:
         return _field(struct.pack(">iib", *v.value))
+    if v.tag == RANGE:
+        return _field(struct.pack(">ii", *v.value))
     if isinstance(v.value, bytes):
         return _field(v.value)
     return _field(str(v.value).encode("utf-8"))

@@ -269,3 +269,14 @@ def test_print_document_sends_the_attributes_it_is_given(printer):
     assert msg.data == b"%PDF-roll"
     assert msg.attributes("job") == {"print-scaling": ["none"]}
     assert msg.attributes("operation")["requesting-user-name"] == ["rpi-hwid"]
+
+
+def test_a_range_is_two_ints_and_round_trips():
+    """RFC 8010 3.9: rangeOfInteger is two SIGNED-INTEGERs, lower then upper."""
+    got = ipp.encode_attribute("x-dimension", ipp.range_of(1000, 9000))
+    assert got == b"\x33\x00\x0bx-dimension\x00\x08" + struct.pack(">ii", 1000, 9000)
+    msg = ipp.decode(ipp.encode_response(0, 1, [(ipp.PRINTER_GROUP, {
+        "media-size-supported": ipp.collection({"x-dimension": ipp.range_of(1000, 9000),
+                                                "y-dimension": ipp.integer(5)})})]))
+    assert msg.attributes("printer")["media-size-supported"] == [
+        {"x-dimension": [(1000, 9000)], "y-dimension": [5]}]
