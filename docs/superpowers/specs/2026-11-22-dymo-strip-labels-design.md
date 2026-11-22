@@ -206,8 +206,9 @@ rotated 90° onto the portrait page.
 `--outline` on a roll draws the sticker's edge and the strip box, for a
 plain-paper proof. `--start` has no meaning on a roll and is refused; so are
 `--place` and `--list --json` (the existing "L7160 sheet tool's" refusal).
-`--list` prints `sticker N` (and `half H` for a micro label) instead of
-`sheet/row/col`.
+`--list` prints one line per sticker, `sticker N  host  kind  title`, instead
+of `sheet/row/col`; a sticker of two micro labels lists both titles joined by
+` | `, as the sheet listing does for a micro sticker.
 
 `render_sheet(inputs, ..., stock="dymo-99010")` returns the roll PDF, so the
 library API gets the roll for free. `render_label` is unchanged (a strip
