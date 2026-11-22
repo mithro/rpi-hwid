@@ -37,13 +37,14 @@ STRIP_OF: dict[Callable[..., Any], Callable[..., Any]] = {}
 
 # --- board: Raspberry Pi, Orange Pi, RISC-V, x86 ------------------------------
 #
-#  [mark] Title                [icons] | eth MAC            [eth ]
-#  [    ]              [cameras]       | 98:fe:54:13:f5:75  [ QR ]
+#  [mark] Title ............................ [fan][clock]  [eth ]
+#  [    ]              [cameras]       | eth MAC            [    ]
+#  [    ]                              | 98:fe:54:13:f5:75  [ QR ]
 #  HAT    subtitle  /  HAT line  /  uuid, across to the codes
 #  [ser ] serial                       | wlan MAC           [wlan]
 #  [ QR ] c36b093f773d46b8             | b8:27:eb:02:a3:24  [ QR ]
 #
-# The full label's columns turned into bands: the mark and the eth MAC
+# The full label's columns turned into bands: the mark, title and eth MAC
 # along the top, the serial and the wlan MAC along the bottom, each code at
 # its band's end, and between them the lines too long for half a strip
 # (a subtitle, a HAT's name, a uuid) running the strip's whole length.
@@ -68,14 +69,14 @@ def _draw_cameras(s: Strip, cams: list[Any], right: float, y: float) -> None:
         x += lb.camera_width(s, c, BOARD_CAMERA) + BOARD_GAP
 
 
-def _board_corner(s: Strip, b: Any, left: float, right: float, y: float,
-                  cam_y: float) -> tuple[float, list[Any]]:
-    """The fan and clock right-aligned at `right` on the title's line at
-    `y`, and the cameras in a row under them at `cam_y`, no further left
-    than `left`. Returns the width the title gives up, and the cameras that
-    row has no room for: the full label stacks its cameras two deep, so a
-    multiplexer's four can be more than one row holds, and the rest go to
-    the end of the subtitle's line (`_board_spill`).
+def _board_corner(s: Strip, b: Any, icons_right: float, y: float, left: float,
+                  right: float, cam_y: float) -> tuple[float, list[Any]]:
+    """The fan and clock right-aligned at `icons_right` on the title's line
+    at `y`, and the cameras in a row under the title at `cam_y`, between
+    `left` and `right`. Returns the width the title gives up, and the
+    cameras that row has no room for: the full label stacks its cameras two
+    deep, so a multiplexer's four can be more than one row holds, and the
+    rest go to the end of the subtitle's line.
 
     The full label's own corner is measured first, for its refusal: a strip
     refuses exactly the boards the full label refuses, and takes every set
@@ -86,7 +87,7 @@ def _board_corner(s: Strip, b: Any, left: float, right: float, y: float,
     icon = 2.6 * mm
     icons = [m for m, on in ((lb.mark_fan, b.fan), (lb.mark_clock, b.rtc_battery)) if on]
     icons_w = len(icons) * icon + max(0, len(icons) - 1) * BOARD_GAP
-    x = right - icons_w
+    x = icons_right - icons_w
     for draw in icons:
         draw(s, x, y - 0.2 * mm, icon)          # centred on the title's capitals
         x += icon + BOARD_GAP
@@ -116,20 +117,24 @@ def draw_board_strip(s: Strip, b: Any) -> None:
     qx = W - q                              # the MAC codes' left edge
     mx = BOARD_MAC_X
     tw = qx - 1.5 * mm - mx                 # the MAC column's width
-    left_w = mx - 1.5 * mm - bx             # the title's and serial's
+    left_w = mx - 1.5 * mm - bx             # the serial's
     mid_w = qx - 1.5 * mm - bx              # a middle line's
     mac_size = s.fitted_size("00:00:00:00:00:00", lb.MONO, 13, tw)
     block = (lb.CAPTION + mac_size) * 0.72 + 0.7 * mm
-    top = (q - block) / 2                   # the top band's caption line
-    bot = H - q + top                       # the bottom band's
+    bot = H - q + (q - block) / 2           # the wlan MAC's caption line
 
-    # --- top band: mark, title, corner; eth MAC ---
-    # the title and serial a step under the MACs, which are what the label is for
+    # --- top band: mark; the title across to the codes, the fan and clock
+    # at its end; under it the cameras, then the eth MAC beside its code ---
+    # The title has the strip's whole width (54.7 mm with both icons, where
+    # the full label's has 41.9 mm at most), so a name the full label prints
+    # whole is never cut here. It and the serial are a step under the MACs,
+    # which are what the label is for.
     lb.mark_fitted(s, b.mark, 0, 0, lc, q)
     title_size = mac_size - 0.5
-    cam_y = top + title_size * 0.72 + 1.0 * mm      # under the title's descenders
-    corner, spill = _board_corner(s, b, bx, mx - 1.5 * mm, top, cam_y)
-    s.fit(bx, top, b.title, lb.SANS_BOLD, title_size, left_w - corner)
+    t0 = 0.2 * mm                           # the title's cap-height top
+    top = t0 + title_size * 0.72 + 0.8 * mm  # the eth MAC's caption line
+    corner, spill = _board_corner(s, b, qx - 1.5 * mm, t0, bx, mx - 1.5 * mm, top)
+    s.fit(bx, t0, b.title, lb.SANS_BOLD, title_size, mid_w - corner)
 
     # --- bottom band: the serial and its code ---
     if b.serial:
@@ -183,9 +188,7 @@ def draw_board_strip(s: Strip, b: Any) -> None:
                                               6.5, mid_w, min_size=5))
     # spread evenly between the eth MAC's value and the wlan MAC's caption
     row_h = 6.5 * 0.72                     # a middle line's cap height
-    lo, hi = top + block, bot
-    if b.cameras:
-        lo = max(lo, cam_y + BOARD_CAMERA)
+    lo, hi = top + block, bot               # the cameras end above `lo`
     pitch = (hi - lo) / (len(rows) + 1)
     ys = [lo + i * pitch - row_h / 2 for i in range(1, len(rows) + 1)]
     for y, row in zip(ys, rows, strict=True):

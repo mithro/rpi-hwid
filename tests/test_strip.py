@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 import strip_checks as sc
-from rpi_hwid import labels, strip
+from rpi_hwid import labels, revision, strip
 from rpi_hwid.model import Camera
 
 # (full draw function, kind name for the test ids); one entry per layout task
@@ -96,6 +96,58 @@ def test_a_board_strip_takes_exactly_the_cameras_the_full_label_takes(docs, host
             sc.on_strip(strip.draw_board_strip, rec)
         return
     _rules_kept(labels.draw_board, rec)
+
+
+# --- every title the full label prints whole, the strip prints whole -----------
+
+PI_MODELS = sorted(set(revision.PI_TYPE.values())
+                   | {model for model, _rev, _mem in revision.OLD_STYLE.values()})
+
+
+@pytest.mark.parametrize("cameras", [None, (V1_AF, HQ)], ids=["no camera", "two cameras"])
+@pytest.mark.parametrize(("fan", "clock"), [(None, None), (True, None), (True, True)],
+                         ids=["no icons", "fan", "fan and clock"])
+@pytest.mark.parametrize("model", PI_MODELS)
+def test_every_raspberry_pi_title_is_whole_on_its_strip(docs, model, fan, clock, cameras):
+    """Every model name revision.py can decode, beside a fan, a clock and
+    two cameras (a Compute Module 5 has the Pi 5's fan and RTC): what the
+    full label prints whole, the strip prints whole too."""
+    rec = _board(docs, "pi-sw2-p47", title="Raspberry Pi " + model, fan=fan,
+                 rtc_battery=clock, cameras=cameras)
+    try:
+        sc.full(labels.draw_board, rec)
+    except labels.CameraMarkDoesNotFitError:
+        with pytest.raises(labels.CameraMarkDoesNotFitError):
+            sc.on_strip(strip.draw_board_strip, rec)
+        return
+    _rules_kept(labels.draw_board, rec)
+
+
+def _longest_whole_title(rec, words):
+    """The longest prefix of `words` the full label prints as `rec`'s title
+    without cutting it: the full label's own limit, found by halving."""
+    def whole(n):
+        title = words[:n].rstrip()
+        got = sc.full(labels.draw_board, replace(rec, title=title))
+        return not any(t.s.endswith("…") for t in got.texts)
+    lo, hi = 1, len(words)
+    assert not whole(hi), "the test's title should be too long for the full label"
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        lo, hi = (mid, hi) if whole(mid) else (lo, mid)
+    return words[:lo].rstrip()
+
+
+@pytest.mark.parametrize("host", ["pi-sw2-p22", "hifive-unmatched-1", "minnow-turbot-2",
+                                  "pi-sw2-p47"])
+def test_the_longest_title_the_full_label_prints_whole_is_whole_on_the_strip(docs, host):
+    """Orange Pi, RISC-V and PC titles come from the board's own device tree
+    or DMI, not a table: any length. Whatever the full label has room for,
+    the strip has room for (Pi 5: beside its fan and clock)."""
+    words = "Wide Board Name With A Very Long Model String Revision Plus Extras " * 2
+    rec = _board(docs, host)
+    title = _longest_whole_title(rec, words)
+    _rules_kept(labels.draw_board, replace(rec, title=title))
 
 
 @pytest.mark.parametrize("changes", [
