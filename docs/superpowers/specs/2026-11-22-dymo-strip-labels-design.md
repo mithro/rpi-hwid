@@ -143,8 +143,7 @@ dashed cut line between them (micro's own `cut_guides` style).
 today; micro's `Cell` overrides them. `Label` gains `w`, `h` (defaulting to
 `LABEL_W`, `LABEL_H`) and uses them, and `Cell` passes its size instead of
 overriding. Every full and micro label must render **byte-identical** before
-and after (a test pins this: decision 2 of the full labels is unchanged by
-this work).
+and after; a test pins this.
 
 ### `strip.py`
 
