@@ -751,6 +751,23 @@ def mark_rj45(lab, x, y, height):
 
 # --- the four label designs ---------------------------------------------------
 
+def fpga_headline(board):
+    """An FPGA label's headline and the row under it: (word, model line).
+
+    The headline is the derived name where there is one. Without a name it
+    falls back to the model, and for a board known only by its chain that
+    model is "FPGA" -- which printed FPGA twice, once as the headline and
+    again in the row below. The die is the more useful of the two, so it
+    takes the headline and the row stops repeating it."""
+    if board.name:
+        word = board.name.split("-", 1)[1]
+    else:
+        word = board.part or board.model.split()[0]
+    if board.part and board.part != word:
+        return word, "{}  ·  {}".format(board.model, board.part)
+    return word, board.model
+
+
 def draw_fpga(lab, board):
     """One design for every Artix-7 board. Left: a QR of the board's
     identity, the DNA when it is known and otherwise the Digilent serial,
@@ -798,23 +815,12 @@ def draw_fpga(lab, board):
     mark_h = 6 * mm if board.kind in ("arty", "cynthion") else 5 * mm
     mark_maker(lab, board, x, y, mark_h)
     y += mark_h + 0.5 * mm
-    # The headline is the derived name where there is one. Without a name it
-    # falls back to the model, and for a board known only by its chain that
-    # model is "FPGA" -- which printed FPGA twice, once as the headline and
-    # again in the row below. The die is the more useful of the two, so it
-    # takes the headline and the row stops repeating it.
-    if board.name:
-        word = board.name.split("-", 1)[1]
-    else:
-        word = board.part or board.model.split()[0]
+    word, line = fpga_headline(board)
     # 20 pt: the largest that leaves an Arty's S/N a clear gap above the flash
     # rows, an Arty being the board with the most in this column
     lab.fit(x, y, word, SANS_BOLD, 20, col_w)
     y += 7.2 * mm
-    if board.part and board.part != word:
-        lab.fit(x, y, "{}  ·  {}".format(board.model, board.part), SANS, 8, col_w)
-    else:
-        lab.fit(x, y, board.model, SANS, 8, col_w)
+    lab.fit(x, y, line, SANS, 8, col_w)
     if board.kind == "arty":
         # the serial is a board-printed identifier: its own row, larger
         # 8 pt on a tighter pitch than it used to have: an Arty is the only

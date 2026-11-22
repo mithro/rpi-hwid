@@ -207,3 +207,91 @@ def draw_board_strip(s: Strip, b: Any) -> None:
 
 
 STRIP_OF[lb.draw_board] = draw_board_strip
+
+
+# --- FPGA boards: NeTV2, Arty, Acorn, PCILeech, Cynthion, a bare chain -------
+#
+#  [    ] [mark]
+#  [    ] hoopoe
+#  [ QR ] Arty A7-35T  ·  XC7A35T
+#  [    ] S/N 210319A43AD3
+#  [    ]                     Micron N25Q128  ·  16 MiB  flash  [fl ]
+#  [    ]                  235351451900080037091015126b  uid    [QR ]
+#  Device DNA  0x0064f5483229085c
+#
+# The full label's two columns side by side again, the identity's code at
+# the left and the board's column beside it, with the flash rows at the
+# column's foot against the flash's own code, and the identifier along the
+# bottom after its caption (over it, on the full label). Every row has more
+# room than its counterpart on the full label -- the word and the model line
+# the column's whole width, the flash rows and the identifier everything up
+# to the flash's code -- so nothing the full label prints whole is cut or set
+# smaller than that label's floor for it here.
+
+FPGA_FOOT = 14                  # the identifier's size (15 pt on the full label)
+FPGA_FLASH_QR = 6.5 * mm        # the flash's code, as the full label's
+FPGA_ROW = 7                    # a row of the board's column
+FPGA_PITCH = 2.3 * mm           # between the flash rows, as the full label's
+FPGA_WORD = 13                  # the board's word (20 pt on the full label)
+
+
+def draw_fpga_strip(s: Strip, board: Any) -> None:
+    """The FPGA label along a strip: the identity's code at the left; the
+    mark, the board's word, model and die and an Arty's serial beside it;
+    the flash rows against the flash's own code under them; the identifier
+    across the foot."""
+    W, H = s.w, s.h  # noqa: N806
+    fq = FPGA_FLASH_QR
+    fx = W - fq                             # the flash code's left edge
+    row = FPGA_ROW * 0.72                   # a row's cap height
+    foot_y = H - FPGA_FOOT * 0.72           # the identifier's cap-height top
+
+    # --- the foot: the identifier after its caption, the whole width short
+    # of the flash's code, which comes down beside it ---
+    cap_w = s.width(board.ident_caption, lb.SANS, lb.CAPTION)
+    val_x = cap_w + s.CAPTION_GAP
+    s.captioned(0, val_x, foot_y, board.ident_caption, board.ident, lb.MONO, FPGA_FOOT,
+                fx - 1.5 * mm - val_x)
+
+    # --- the identity's code, as tall as the room above the foot ---
+    q = foot_y - 1.2 * mm
+    ident = board.ident or board.serial
+    if ident:
+        s.qr(0, 0, q, ident)
+    x = q + 1.5 * mm                        # the board's column
+    col_w = W - x
+
+    # --- the flash rows, flush right against the flash's code, the uid's
+    # row just above the foot; both centred on the code as on the
+    # full label, the flash row alone beside a "no id" square ---
+    uid_y = foot_y - 0.9 * mm - row
+    flash_y = uid_y - FPGA_PITCH
+    fy = (flash_y + uid_y + row) / 2 - fq / 2
+    if not board.flash_uid:
+        flash_y = fy + (fq - row) / 2
+    cap_x = fx - 1.5 * mm - max(s.width(c, lb.SANS, lb.CAPTION) for c in ("flash", "uid"))
+    s.captioned_after(x, cap_x, flash_y, "flash", board.flash, lb.SANS, FPGA_ROW, min_size=5)
+    if board.flash_uid:
+        s.captioned_after(x, cap_x, uid_y, "uid", board.flash_uid, lb.MONO_REGULAR,
+                          FPGA_ROW, min_size=5)
+        s.qr(fx, fy, fq, board.flash_uid, error="l")
+    elif board.flash:
+        s.no_code(fx, fy, fq)
+
+    # --- the board's column, from the top: the maker's mark, the word, the
+    # model and die, an Arty's serial ---
+    # a compact mark a little taller than a wide one, as on the full label
+    mark_h = 4.4 * mm if board.kind in ("arty", "cynthion") else 4 * mm
+    lb.mark_maker(s, board, x, 0, mark_h)
+    word, line = lb.fpga_headline(board)
+    y = mark_h + 0.8 * mm                   # clear of a maker's name's descenders
+    s.fit(x, y, word, lb.SANS_BOLD, FPGA_WORD, col_w)
+    y += FPGA_WORD * 0.72 + 1.2 * mm        # clear of the word's descenders
+    s.fit(x, y, line, lb.SANS, FPGA_ROW, col_w)
+    if board.kind == "arty":
+        y += row + 0.8 * mm
+        s.captioned(x, x + 5 * mm, y, "S/N", board.serial, lb.MONO, FPGA_ROW,
+                    fx - 1.5 * mm - x - 5 * mm)
+
+
+STRIP_OF[lb.draw_fpga] = draw_fpga_strip
