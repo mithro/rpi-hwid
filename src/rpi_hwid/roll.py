@@ -99,15 +99,19 @@ def queue_uri(queue: str) -> str:
 
 
 def job_attributes(roll: labels.Roll) -> ipp.Attrs:
-    """The roll's size as CUPS lists it, no scaling, and 300 x 600 dpi --
-    which is how CUPS offers the DYMO driver's DymoPrintQuality=Graphics,
-    the quality for codes."""
+    """The roll's size as CUPS lists it, no scaling, and 300 x 600 dpi for
+    the codes. lw450.ppd sets HWResolution twice: Resolution (order 20),
+    which is CUPS's printer-resolution, then DymoPrintQuality (order 21,
+    default Text: 300 x 300), so the job names DymoPrintQuality=Graphics as
+    well -- CUPS hands a job attribute named after a PPD option to the
+    driver's filters as that option."""
     x, y = roll.media_size
     return {
         "media-col": ipp.collection({"media-size": ipp.collection({
             "x-dimension": ipp.integer(x), "y-dimension": ipp.integer(y)})}),
         "print-scaling": ipp.keyword("none"),
         "printer-resolution": ipp.resolution(300, 600),
+        "DymoPrintQuality": ipp.keyword("Graphics"),
     }
 
 

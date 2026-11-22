@@ -240,6 +240,9 @@ def test_the_roll_is_printed_at_its_size_unscaled_for_codes():
                                                        "y-dimension": [8890]}]}]
         assert attrs["print-scaling"] == ["none"]
         assert attrs["printer-resolution"] == [(300, 600, 3)]
+        # lw450.ppd's DymoPrintQuality (default Text: HWResolution 300 300)
+        # is set after Resolution, so it has to say Graphics too
+        assert attrs["DymoPrintQuality"] == ["Graphics"]
     finally:
         p.close()
 
