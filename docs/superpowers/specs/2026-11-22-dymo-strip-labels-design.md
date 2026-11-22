@@ -146,7 +146,10 @@ dashed cut line between them (micro's own `cut_guides` style).
 today; micro's `Cell` overrides them. `Label` gains `w`, `h` (defaulting to
 `LABEL_W`, `LABEL_H`) and uses them, and `Cell` passes its size instead of
 overriding. Every full and micro label must render **byte-identical** before
-and after; a test pins this.
+and after. No test in the suite pins it: it was checked task by task by
+hashing every sheet each stock and `--outline` makes before and after
+(`tmp/golden.py` against `tmp/golden-before.txt`), and per label kind in
+review.
 
 ### `strip.py`
 
@@ -227,29 +230,45 @@ as usual, then sends it to the queue and waits:
   `print_job` a thin caller of it (its bytes on the wire unchanged, tested).
 - Job attributes for the roll: `media-col` with `media-size` = the roll's
   size in 1/100 mm (2786 x 8890: CUPS names PPD sizes by dimension, not by
-  the PPD's `w79h252.2`), `print-scaling` = `none`, and `printer-resolution`
-  = 300 x 600 dpi, which CUPS advertises in place of the PPD's
-  `DymoPrintQuality=Graphics`. That CUPS maps the resolution back to
-  `Graphics`, and picks the 99010 size from the dimensions, is checked on
-  paper (the plan's on-paper task); if it does not, the job sends the PPD option by name
-  as a job attribute, which CUPS hands to the filters.
+  the PPD's `w79h252.2`), `print-scaling` = `none`, `printer-resolution`
+  = 300 x 600 dpi, and `DymoPrintQuality` = `Graphics`. The resolution
+  alone is not enough: `lw450.ppd` sets `HWResolution` from `*Resolution`
+  (OrderDependency 20; CUPS builds `printer-resolution-supported` from it)
+  and then from `*DymoPrintQuality` (OrderDependency 21, default `Text`,
+  `<</HWResolution[300 300]>>`), so a job that names only the resolution
+  is reset to 300 x 300. The job therefore sends the PPD option by name as a
+  job attribute, which CUPS hands to the filters; the setup docs also set it
+  as the queue's default (`lpadmin -o DymoPrintQuality=Graphics`). That
+  CUPS picks the 99010 size from the dimensions and prints at `Graphics` is
+  checked on paper (the plan's on-paper task).
 - Before sending: Get-Printer-Attributes, and refuse with the reason when
   the queue is stopped (`printer-state` 5, with its `printer-state-message`,
   e.g. "Unplugged or turned off"), not accepting jobs, or its
   `media-size-supported` lacks the roll's size (a queue on the generic
   driver, or another printer, is caught here).
-- It polls the job to `completed`, `aborted` or `canceled` (timeout 120 s)
-  and says which. Exit 0 only on `completed`.
+- It polls the job to `completed`, `aborted` or `canceled` and says which.
+  It waits as long as the job shows progress (a new `job-state` or more
+  `job-impressions-completed`); one that shows none for 60 s plus 4.8 s a
+  sticker (a LabelWriter 450 does ~25 a minute at 300 x 600) is given up
+  on, saying the job may still be printing and naming its id. Exit 0 only
+  on `completed`.
 - `--print` with a sheet stock is refused: sheets go through
   `rpi-hwid-sheet`, which knows the manual feed and the slots.
 
 ## Errors
 
-Every refusal is one line on stderr naming the cause, exit status 1:
-unknown stock; `--start`/`--place`/`--list --json` with a roll; `--print`
-with a sheet; queue unreachable (the URI tried); queue stopped; media not
-supported (what the queue does support); job aborted or canceled (the
-job's `job-state-reasons`); timeout (the job id, to check with `lpstat`).
+Option combinations are refused by argparse, like the command's other
+option errors (the usage line and the reason, exit status 2): unknown
+stock; `--start`/`--place`/`--list --json` with a roll; `--print` with a
+sheet; `--print` with `--list` or `--check`, which write no roll.
+
+Every other refusal is one line on stderr naming the cause, exit status 1:
+queue unreachable (the URI tried); queue stopped; media not supported (what
+the queue does support); job aborted or canceled (the job's
+`job-state-reasons`); no progress before the deadline, or the printer lost
+after sending (the job id, that it may still be printing, and `lpstat` for
+a CUPS queue). Job attributes the printer ignored are a warning, not a
+refusal.
 A label short of a field is refused exactly as today, before anything is
 printed.
 

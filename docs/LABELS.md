@@ -110,7 +110,7 @@ to that CUPS queue (or an `ipp://` URI) and waits for the job:
 The queue must use DYMO's own driver, which places the print on the sticker:
 
     sudo apt install cups printer-driver-dymo
-    sudo lpadmin -p LabelWriter-450 -E -v "$(lpinfo -v | grep -o 'usb://DYMO/[^ ]*' | head -1)" -m dymo:0/cups/model/lw450.ppd -o PageSize=w79h252.2
+    sudo lpadmin -p LabelWriter-450 -E -v "$(lpinfo -v | grep -o 'usb://DYMO/[^ ]*' | head -1)" -m dymo:0/cups/model/lw450.ppd -o PageSize=w79h252.2 -o DymoPrintQuality=Graphics
     lpoptions -p LabelWriter-450 -l
 
 The last command is the check: its list should show `w79h252.2` among the
@@ -118,8 +118,9 @@ page sizes and a `DymoPrintQuality` option. CUPS's generic `DYMO Label
 Printer` driver (`sample.drv/dymo.ppd`) prints about 4.5 mm along and 1.5 mm
 across off the sticker, and no setting moves it. The LabelWriter cannot say
 what roll is loaded, so the queue is told: `PageSize=w79h252.2` is the 99010.
-The strips keep 1 mm inside the driver's printable area (1.5 mm from the
-sticker's edges, 5.8 mm at one end).
+The driver's printable area (`*ImageableArea` 4.32 4.32 76.08 235.44 pt on
+the 79 x 252 pt page) leaves 1.5 mm and 1.0 mm unprinted across the sticker,
+and 1.5 mm and 5.8 mm along it; the strips keep 1 mm inside that area.
 
 The images below are the strips as rendered, with `--outline` drawn: the
 sticker's edge and the strip's box.
@@ -143,21 +144,34 @@ Other options on a roll:
 What a roll refuses, with a message naming the problem and a non-zero exit:
 
 - `--start` (a roll has no positions to skip), `--place` and `--list --json`
-  (the L7160 sheet tool's), and `--print` with a sheet `--stock` (a sheet goes
-  through `rpi-hwid-sheet`).
+  (the L7160 sheet tool's), `--print` with a sheet `--stock` (a sheet goes
+  through `rpi-hwid-sheet`), and `--print` with `--list` or `--check` (they
+  write no roll to print). These are option errors: the usage line, exit 2.
 - A label kind with no strip layout.
 - Before anything is sent, `--print` checks the queue and refuses one that is
   unreachable, stopped (with the printer's own reason), not accepting jobs,
   or without a 27.86 x 88.9 mm size; the last message lists the sizes the
   queue does support and asks whether it is on DYMO's driver.
 - After sending, a job that ends canceled or aborted is an error giving the
-  job's reasons, as is one still going after 120 s (see `lpstat -W all -o
-  QUEUE`). Only a completed job prints "printed on QUEUE: job completed".
+  job's reasons. The command waits as long as the job shows progress (its
+  state or its count of stickers printed moves); one that shows none for a
+  minute plus about 5 s a sticker is given up on, with its job id and a
+  warning that it may still be printing: check `lpstat -W all -o QUEUE`
+  before printing again, or the roll comes out twice. Losing the printer
+  after the job was sent says the same. Only a completed job prints
+  "printed on QUEUE: job completed".
+- A job attribute the queue ignored is a warning on stderr ("the printer
+  ignored ..."), and the job goes on.
 
-The job asks for the 27.86 x 88.9 mm size, no scaling, and 300 x 600 dpi,
-which is how CUPS offers the DYMO driver's `DymoPrintQuality=Graphics`, the
-quality for codes. That is how the code asks; it has not been checked on paper
-here, so print one sticker and scan its codes before a run.
+The job asks for the 27.86 x 88.9 mm size, no scaling, 300 x 600 dpi
+(`printer-resolution`) and `DymoPrintQuality=Graphics`, the quality for
+codes. Both are needed: `lw450.ppd` sets the resolution twice, first from its
+`Resolution` option (which CUPS offers as `printer-resolution`) and then from
+`DymoPrintQuality`, whose default `Text` sets it back to 300 x 300 dpi. CUPS
+passes a job attribute named after a PPD option to the driver as that option;
+`-o DymoPrintQuality=Graphics` on the queue (above) makes it the queue's
+default as well. It has not been checked on paper here, so print one sticker
+and scan its codes before a run.
 
 ### Chosen labels in chosen slots
 
