@@ -134,6 +134,8 @@ class _Recorder:
         self.inside = 0     # >0 while a recorded call is running: its inner calls are its own
         self.min: float | None = None    # min_size of the fit/captioned call being run
         self.queue: list[str] = []       # what the next Label.text calls are: "cap" or "val"
+        # (size, min_size) of every Label.fitted_size result so far
+        self.fitted: list[tuple[float, float]] = []
 
     def floor_of(self, size: float) -> float:
         """The floor of the string a Label.text call is about to draw."""
@@ -142,7 +144,18 @@ class _Recorder:
             return lb.CAPTION
         if self.min is not None:
             return self.min
-        return lb.CAPTION if abs(size - lb.CAPTION) < 1e-9 else TEXT_FLOOR
+        floor = lb.CAPTION if abs(size - lb.CAPTION) < 1e-9 else TEXT_FLOOR
+        # A layout that sizes with Label.fitted_size and then draws with plain
+        # Label.text holds that text to the fitted_size call's min_size. The two
+        # are tied by size alone, not by string or order: one fitted size is
+        # often computed first (from a template such as a zero MAC, or for
+        # several strings) and applied to many strings. This cannot flag a text
+        # that is not under that min_size: a text exactly at a fitted size that
+        # came back at or above its min_size is itself at or above that floor.
+        for fitted, min_size in self.fitted:
+            if abs(fitted - size) < 1e-9:
+                floor = max(floor, min_size)
+        return floor
 
     @contextlib.contextmanager
     def helper(self, min_size: float | None, queue: list[str]) -> Iterator[None]:
@@ -224,7 +237,18 @@ class _Recorder:
                     return real(*a, **k)
             return mock.patch.object(lb.Label, name, call)
 
+        real_fitted = lb.Label.fitted_size
+        fitted_sig = inspect.signature(real_fitted)
+
+        def fitted_size(*a: Any, **k: Any) -> Any:
+            got = real_fitted(*a, **k)
+            bound = fitted_sig.bind(*a, **k)
+            bound.apply_defaults()
+            self.fitted.append((got, bound.arguments["min_size"]))
+            return got
+
         out: list[Any] = [
+            mock.patch.object(lb.Label, "fitted_size", fitted_size),
             helper_patch("fit", []),
             helper_patch("captioned", ["cap", "val"]),
             helper_patch("captioned_after", ["val", "cap"]),

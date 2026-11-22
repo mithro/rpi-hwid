@@ -390,3 +390,54 @@ def test_a_wedge_includes_its_centre():
 
     (box,) = sc.on_strip(d, None).marks
     assert box[1] == pytest.approx(6)
+
+
+# --- fitted_size then plain text: the min_size follows the size --------------
+
+
+def test_a_plain_text_at_a_fitted_size_is_held_to_that_min_size():
+    """The probe's case: a value sized by fitted_size(min_size=5.5) and drawn
+    with plain text is held to 5.5; an unrelated 5.0 pt text is not."""
+    def d(lab, _r):
+        s = "a long value that shrinks"
+        size = lab.fitted_size(s, lb.SANS, 8, 15 * mm, min_size=5.5)
+        lab.text(1 * mm, 1 * mm, s, lb.SANS, size)
+        lab.text(1 * mm, 9 * mm, "x", lb.SANS, 5.0)
+
+    r = sc.on_strip(d, None)
+    assert [(t.size, t.floor) for t in r.texts] == [(5.5, 5.5), (5.0, 4.5)]
+
+
+def test_fitted_size_squeezed_under_its_min_size_is_a_problem():
+    def d(lab, _r):
+        size = lab.fitted_size("x", lb.SANS, 5.0, 60 * mm, min_size=5.5)   # already under
+        lab.text(1 * mm, 1 * mm, "x", lb.SANS, size)
+
+    r = sc.on_strip(d, None)
+    assert r.texts[0].size == 5.0
+    assert r.texts[0].floor == 5.5
+    assert any("under its floor 5.5 pt" in p for p in sc.problems(r, *sc.STRIP))
+
+
+def test_one_fitted_size_applies_to_several_strings_whatever_the_order():
+    def d(lab, _r):
+        a = lab.fitted_size("00:00:00:00:00:00", lb.MONO, 8, 15 * mm, min_size=6)
+        b = lab.fitted_size("short", lb.SANS, 8, 60 * mm, min_size=4.5)
+        for i, mac in enumerate(("aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66")):
+            lab.text(1 * mm, (1 + 8 * i) * mm, mac, lb.MONO, a)
+        lab.text(1 * mm, 17 * mm, "short", lb.SANS, b)
+
+    r = sc.on_strip(d, None)
+    assert r.texts[0].size < 8                       # it really was squeezed
+    assert [t.floor for t in r.texts] == [6, 6, 4.5]
+    assert sc.problems(r, *sc.STRIP) == []
+
+
+def test_a_fitted_size_at_or_above_its_min_size_never_flags_its_own_text():
+    def d(lab, _r):
+        size = lab.fitted_size("a string", lb.SANS, 8, 60 * mm, min_size=5.5)
+        lab.text(1 * mm, 1 * mm, "a string", lb.SANS, size)
+
+    r = sc.on_strip(d, None)
+    assert r.texts[0].floor == 5.5
+    assert sc.problems(r, *sc.STRIP) == []
