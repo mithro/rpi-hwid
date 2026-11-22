@@ -2568,6 +2568,9 @@ def main(argv=None):
                     help="the sheet: L7160 (A4, the default), avery-5163 (US Letter, 4 x 2 in "
                          "stickers) or letter-plain (plain US Letter, with cut lines); or the "
                          "roll: dymo-99010 (DYMO 99010, 28 x 89 mm, one strip per sticker)")
+    ap.add_argument("--print", metavar="QUEUE", dest="print_to",
+                    help="with a roll --stock: also send the PDF to this CUPS queue (or ipp:// "
+                         "URI) and wait for the job, e.g. --print LabelWriter-450")
     ap.add_argument("--artwork", type=Path, help="directory holding the maker marks")
     ap.add_argument("--names", type=Path,
                     help="JSON map of Arty serial -> name, the registry that pins names")
@@ -2624,6 +2627,8 @@ def _main(ap, args, micro_kinds):
     on_roll = ROLLS.get(args.stock)
     if on_roll and args.start:
         ap.error("--start leaves a sheet's first positions blank: a roll has none")
+    if args.print_to and not on_roll:
+        ap.error("--print sends a roll to its printer: a sheet goes through rpi-hwid-sheet")
     stock = None if on_roll else STOCKS[args.stock]
     if args.check:
         return check_main(docs, only)
@@ -2643,6 +2648,10 @@ def _main(ap, args, micro_kinds):
                 for i, (host, kind, title, _, _) in enumerate(rows):
                     print("sticker %d  %-*s  %-6s %s" % (i + 1, width, host, kind, title))
                 return 0
+            if not roll.roll_rows(docs, set(only), pinned):
+                # nothing to draw: not a blank sticker, in a file or on a printer
+                print("no labels selected: nothing to put on the roll", file=sys.stderr)
+                return 1
             n, stickers = render(docs, args.out, only, 0, args.outline, pinned,
                                  stock=args.stock)
         except roll.NoStripError as exc:
@@ -2650,6 +2659,14 @@ def _main(ap, args, micro_kinds):
             return 1
         print("%d label%s on %d sticker%s -> %s" % (n, "" if n == 1 else "s", stickers,
                                                     "" if stickers == 1 else "s", args.out))
+        if args.print_to:
+            try:
+                state = roll.print_pdf(args.out.read_bytes(), args.print_to, on_roll,
+                                       "rpi-hwid labels %s" % args.out.name)
+            except roll.PrintError as exc:
+                print(exc, file=sys.stderr)
+                return 1
+            print("printed on %s: job %s" % (args.print_to, state))
         return 0
     if args.list:
         rows = list(all_labels(docs, set(only), pinned))

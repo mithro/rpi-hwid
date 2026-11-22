@@ -213,3 +213,59 @@ def test_the_printer_and_job_are_asked_their_state(printer):
 def test_an_unreachable_printer_is_an_error_naming_it():
     with pytest.raises(ipp.IppError, match=r"127\.0\.0\.1:9"):
         ipp.Printer("ipp://127.0.0.1:9/ipp/print", timeout=2).attributes(["printer-state"])
+
+
+SHEET_REQUEST_ON_THE_WIRE = bytes.fromhex(
+    "020000020000000101470012617474726962757465732d6368617273657400057574662d3848001b"
+    "617474726962757465732d6e61747572616c2d6c616e67756167650002656e45000b7072696e7465"
+    "722d757269001d6970703a2f2f3132372e302e302e313a3633312f6970702f7072696e7442001472"
+    "657175657374696e672d757365722d6e616d65000374696d4200086a6f622d6e616d650009736865"
+    "6574206a6f6249000f646f63756d656e742d666f726d6174000f6170706c69636174696f6e2f7064"
+    "66023400096d656469612d636f6c00004a0000000c6d656469612d736f7572636544000000066d61"
+    "6e75616c4a0000000a6d656469612d7479706544000000066c6162656c734a0000000a6d65646961"
+    "2d73697a6534000000004a0000000b782d64696d656e73696f6e2100000004000052084a0000000b"
+    "792d64696d656e73696f6e2100000004000074043700000000370000000044000d7072696e742d73"
+    "63616c696e6700046e6f6e654400107072696e742d636f6c6f722d6d6f64650005636f6c6f724400"
+    "05736964657300096f6e652d736964656403255044462d78")
+
+
+def test_print_job_puts_exactly_the_same_bytes_on_the_wire(monkeypatch):
+    """The sheet tool's request, byte for byte, as it was before print_document
+    was split out of print_job (captured 2026-11-22)."""
+    sent = []
+
+    class Reply:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return ipp.encode_response(0, 1, [(ipp.JOB_GROUP, {
+                "job-id": ipp.integer(1), "job-state": ipp.enum(3)})])
+
+    monkeypatch.setattr(ipp.urllib.request, "urlopen",
+                        lambda req, timeout=0: (sent.append(req.data), Reply())[1])
+    ipp.Printer("ipp://127.0.0.1:631/ipp/print").print_job(b"%PDF-x", "sheet job", "tim")
+    assert sent == [SHEET_REQUEST_ON_THE_WIRE]
+
+
+def test_a_resolution_is_two_ints_and_a_unit_byte():
+    """RFC 8010 3.9: resolution is SIGNED-INTEGER x, SIGNED-INTEGER y,
+    SIGNED-BYTE units (3 = dots per inch)."""
+    got = ipp.encode_attribute("printer-resolution", ipp.resolution(300, 600))
+    assert got == (b"\x32\x00\x12printer-resolution\x00\x09"
+                   + struct.pack(">iib", 300, 600, 3))
+
+
+def test_print_document_sends_the_attributes_it_is_given(printer):
+    p = printer(lambda msg: ok(ipp.JOB_GROUP, {"job-id": ipp.integer(5),
+                                               "job-state": ipp.enum(3)}))
+    job = ipp.Printer(p.uri).print_document(b"%PDF-roll", "rpi-hwid labels",
+                                            {"print-scaling": ipp.keyword("none")})
+    assert job.id == 5
+    (msg,) = p.requests
+    assert msg.data == b"%PDF-roll"
+    assert msg.attributes("job") == {"print-scaling": ["none"]}
+    assert msg.attributes("operation")["requesting-user-name"] == ["rpi-hwid"]

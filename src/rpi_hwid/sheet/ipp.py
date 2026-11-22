@@ -115,6 +115,11 @@ def mime(v: str) -> Value:
     return Value(MIME_TYPE, v)
 
 
+def resolution(x: int, y: int, units: int = 3) -> Value:
+    """A resolution, `units` 3 for dots per inch (RFC 8010 3.9)."""
+    return Value(RESOLUTION, (x, y, units))
+
+
 def collection(members: dict[str, Value | list[Value]]) -> Value:
     return Value(BEGIN_COLLECTION, members)
 
@@ -134,6 +139,8 @@ def _plain(v: Value) -> bytes:
         return _field(b"\x01" if v.value else b"\x00")
     if v.tag in (UNSUPPORTED, UNKNOWN, NO_VALUE):
         return _field(b"")
+    if v.tag == RESOLUTION:
+        return _field(struct.pack(">iib", *v.value))
     if isinstance(v.value, bytes):
         return _field(v.value)
     return _field(str(v.value).encode("utf-8"))
@@ -369,14 +376,24 @@ class Printer:
                                      keyword("job-impressions-completed")]})
         return msg.attributes("job")
 
-    def print_job(self, pdf: bytes, job_name: str, user: str = "rpi-hwid-sheet") -> Job:
-        """Print `pdf` from the manual feed slot onto A4 label stock, at full
-        size and in colour."""
+    def print_document(self, pdf: bytes, job_name: str, job: Attrs,
+                       user: str = "rpi-hwid") -> Job:
+        """Print `pdf` with the job attributes `job`."""
         msg = self._call(PRINT_JOB, {
             "requesting-user-name": name(user),
             "job-name": name(job_name),
             "document-format": mime("application/pdf"),
-        }, {
+        }, job, data=pdf)
+        j = msg.attributes("job")
+        if "job-id" not in j:
+            raise IppError(f"printer {self.where} accepted the job but gave it no job-id")
+        return Job(j["job-id"][0], (j.get("job-state") or [JOB_PENDING])[0],
+                   sorted(msg.attributes("unsupported")))
+
+    def print_job(self, pdf: bytes, job_name: str, user: str = "rpi-hwid-sheet") -> Job:
+        """Print `pdf` from the manual feed slot onto A4 label stock, at full
+        size and in colour."""
+        return self.print_document(pdf, job_name, {
             "media-col": collection({
                 "media-source": keyword("manual"),
                 "media-type": keyword("labels"),
@@ -386,9 +403,4 @@ class Printer:
             "print-scaling": keyword("none"),
             "print-color-mode": keyword("color"),
             "sides": keyword("one-sided"),
-        }, data=pdf)
-        j = msg.attributes("job")
-        if "job-id" not in j:
-            raise IppError(f"printer {self.where} accepted the job but gave it no job-id")
-        return Job(j["job-id"][0], (j.get("job-state") or [JOB_PENDING])[0],
-                   sorted(msg.attributes("unsupported")))
+        }, user)

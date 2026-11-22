@@ -10,6 +10,8 @@ import pytest
 from reportlab.lib.units import mm
 
 from rpi_hwid import labels, micro, roll, strip
+from rpi_hwid.sheet import ipp
+from test_sheet_ipp import FakePrinter, ok
 from test_tasmota_micro import DEVICES, _docs
 
 R = labels.ROLLS["dymo-99010"]
@@ -191,3 +193,130 @@ def test_the_library_api_gets_the_roll_through_render_sheet(data_dir):
     assert len(roll.roll_rows(labels.documents(inputs), {"rpi"})) == 1
     pdf = labels.render_sheet(inputs, only={"rpi"}, stock="dymo-99010")
     assert _pages(pdf) == [pytest.approx(R.page)]
+
+
+# --- printing: --print QUEUE ---------------------------------------------------
+
+
+def _queue(states, *, printer_state=3, sizes=((2786, 8890),), accepting=True,
+           message="", reasons=("none",)):
+    """A fake CUPS queue: printer attributes, a job id, then `states` in turn."""
+    seen = iter(states)
+
+    def answer(msg):
+        if msg.code == ipp.GET_PRINTER_ATTRIBUTES:
+            return ok(ipp.PRINTER_GROUP, {
+                "printer-state": ipp.enum(printer_state),
+                "printer-state-message": ipp.text(message),
+                "printer-is-accepting-jobs": ipp.boolean(accepting),
+                "media-size-supported": [ipp.collection({
+                    "x-dimension": ipp.integer(x), "y-dimension": ipp.integer(y)})
+                    for x, y in sizes]})
+        if msg.code == ipp.PRINT_JOB:
+            return ok(ipp.JOB_GROUP, {"job-id": ipp.integer(77), "job-state": ipp.enum(3)})
+        return ok(ipp.JOB_GROUP, {"job-state": ipp.enum(next(seen)),
+                                  "job-state-reasons": [ipp.keyword(r) for r in reasons]})
+    return FakePrinter(answer)
+
+
+def test_a_queue_name_is_the_local_cups_queue():
+    assert roll.queue_uri("LabelWriter-450") == "ipp://localhost:631/printers/LabelWriter-450"
+    assert roll.queue_uri("ipp://h/ipp/print") == "ipp://h/ipp/print"
+
+
+def test_the_roll_is_printed_at_its_size_unscaled_for_codes():
+    p = _queue([5, 9])
+    try:
+        assert roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=0.01) == "completed"
+        job = next(m for m in p.requests if m.code == ipp.PRINT_JOB)
+        attrs = job.attributes("job")
+        assert attrs["media-col"] == [{"media-size": [{"x-dimension": [2786],
+                                                       "y-dimension": [8890]}]}]
+        assert attrs["print-scaling"] == ["none"]
+        assert attrs["printer-resolution"] == [(300, 600, 3)]
+    finally:
+        p.close()
+
+
+@pytest.mark.parametrize(("kw", "words"), [
+    ({"printer_state": 5, "message": "Unplugged or turned off"},
+     "stopped.*Unplugged or turned off"),
+    ({"accepting": False}, "not accepting"),
+    ({"sizes": ((5419, 2227),)}, r"27\.86 x 88\.9 mm.*supports 54\.19 x 22\.27 mm"),
+])
+def test_a_queue_that_cannot_print_the_roll_is_refused_before_sending(kw, words):
+    p = _queue([], **kw)
+    try:
+        with pytest.raises(roll.PrintError, match=words):
+            roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=0.01)
+        assert not any(m.code == ipp.PRINT_JOB for m in p.requests)
+    finally:
+        p.close()
+
+
+@pytest.mark.parametrize(("state", "name"), [(8, "aborted"), (7, "canceled")])
+def test_a_job_that_does_not_complete_is_an_error_naming_why(state, name):
+    p = _queue([state], reasons=("job-canceled-at-device",))
+    try:
+        with pytest.raises(roll.PrintError, match=f"{name}.*job-canceled-at-device"):
+            roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=0.01)
+    finally:
+        p.close()
+
+
+def test_a_job_still_going_at_the_deadline_names_it_for_lpstat():
+    p = _queue([5] * 1000)
+    try:
+        with pytest.raises(roll.PrintError, match=r"job 77.*lpstat"):
+            roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=0.01, wait=0.05)
+    finally:
+        p.close()
+
+
+def test_an_unreachable_queue_is_an_error_naming_the_uri_tried():
+    uri = "ipp://127.0.0.1:9/ipp/print"
+    with pytest.raises(roll.PrintError, match=r"ipp://127\.0\.0\.1:9/ipp/print"):
+        roll.print_pdf(b"%PDF-roll", uri, R, "labels", poll=0.01)
+
+
+def test_print_is_for_a_roll(data_dir):
+    with pytest.raises(SystemExit):
+        labels.main(["--data", str(data_dir), "--print", "LabelWriter-450"])
+
+
+def test_the_command_prints_the_roll_it_wrote(micro_data, tmp_path, monkeypatch, capsys):
+    sent = []
+    monkeypatch.setattr(roll, "print_pdf", lambda pdf, q, r, name, **k: (
+        sent.append((pdf[:5], q, r.name)), "completed")[1])
+    out = tmp_path / "roll.pdf"
+    only = [a for k in micro.kinds() for a in ("--only", k)]
+    assert labels.main(["--data", str(micro_data), *only, "--stock", "dymo-99010",
+                        "--out", str(out), "--print", "LabelWriter-450"]) == 0
+    assert sent == [(b"%PDF-", "LabelWriter-450", "dymo-99010")]
+    assert "completed" in capsys.readouterr().out
+
+
+def test_a_failed_print_is_one_line_on_stderr_and_exit_1(micro_data, tmp_path, monkeypatch,
+                                                         capsys):
+    def refuse(*a, **k):
+        raise roll.PrintError("LabelWriter-450: the queue is not accepting jobs")
+    monkeypatch.setattr(roll, "print_pdf", refuse)
+    only = [a for k in micro.kinds() for a in ("--only", k)]
+    assert labels.main(["--data", str(micro_data), *only, "--stock", "dymo-99010",
+                        "--out", str(tmp_path / "r.pdf"), "--print", "LabelWriter-450"]) == 1
+    assert capsys.readouterr().err.strip() == "LabelWriter-450: the queue is not accepting jobs"
+
+
+@pytest.mark.parametrize("extra", [[], ["--print", "LabelWriter-450"]])
+def test_a_roll_with_no_labels_is_refused_before_writing_or_printing(
+        micro_data, tmp_path, monkeypatch, capsys, extra):
+    monkeypatch.setattr(roll, "print_pdf",
+                        lambda *a, **k: pytest.fail("a blank sticker would be printed"))
+    out = tmp_path / "roll.pdf"
+    # --only of a kind this data has no label of: nothing is selected
+    assert labels.main(["--data", str(micro_data), "--only", "usb", "--stock", "dymo-99010",
+                        "--out", str(out), *extra]) == 1
+    err = capsys.readouterr().err
+    assert len(err.strip().splitlines()) == 1
+    assert "no labels" in err
+    assert not out.exists()
