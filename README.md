@@ -119,6 +119,40 @@ otherwise be typed is also a QR code. Cropped from a rendered sheet:
 </tr>
 </table>
 
+### On a DYMO roll
+
+`--stock dymo-99010` puts each label on its own 28 x 89 mm DYMO 99010 sticker,
+re-flowed along it (drawn here with `--outline`, the sticker's edge and the
+strip's box); [docs/LABELS.md](docs/LABELS.md) has the queue setup and
+`--print`. These renders have not been checked on paper yet.
+
+<table>
+<tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/strip-rpi5.png" alt="A Pi 5 on a DYMO 99010 sticker" width="320"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/strip-arty.png" alt="An Arty A7-35T on a DYMO 99010 sticker" width="320"></td>
+</tr>
+<tr>
+<td>Pi 5, along<br>the sticker</td>
+<td>Arty A7-35T,<br>along the sticker</td>
+</tr>
+<tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/strip-usb-asix.png" alt="A USB adapter on a DYMO 99010 sticker" width="320"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/strip-tinytapeout.png" alt="A Tiny Tapeout chip on a DYMO 99010 sticker" width="320"></td>
+</tr>
+<tr>
+<td>USB adapter,<br>along the sticker</td>
+<td>Tiny Tapeout,<br>along the sticker</td>
+</tr>
+<tr>
+<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/strip-sdr-pluto.png" alt="An ADALM-Pluto SDR on a DYMO 99010 sticker" width="320"></td>
+<td width="50%"><img src="https://raw.githubusercontent.com/mithro/rpi-hwid/main/docs/examples/strip-micro-pair.png" alt="Two micro labels on one DYMO 99010 sticker" width="320"></td>
+</tr>
+<tr>
+<td>ADALM-Pluto SDR,<br>along the sticker</td>
+<td>Two micro labels,<br>a line to cut between</td>
+</tr>
+</table>
+
 Print at 100 % — "fit to page" shrinks the grid and every label lands off its
 sticker. The layouts band by band, the other options, the derived board names and
 the artwork are in [docs/LABELS.md](docs/LABELS.md).

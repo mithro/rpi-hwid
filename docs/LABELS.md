@@ -96,6 +96,69 @@ Avery one says it is untried, the plain one says to cut along the lines.
 Print at 100 %, as on A4. The sheet tool (`rpi-hwid-sheet`, and `--place`),
 which records what was printed on which sticker, knows only L7160.
 
+### A DYMO roll: `--stock dymo-99010`
+
+`--stock dymo-99010` lays each label out as a strip for one DYMO 99010
+sticker (28 x 89 mm) in a LabelWriter 450: the same facts and codes as the
+sheet label, re-flowed along the sticker, one sticker per page. Every kind
+has a strip (board, FPGA, USB, Tiny Tapeout, SDR), and micro labels go two to
+a sticker with a line to cut between them. `--print QUEUE` also sends the PDF
+to that CUPS queue (or an `ipp://` URI) and waits for the job:
+
+    rpi-hwid labels --data data/ --stock dymo-99010 --print LabelWriter-450
+
+The queue must use DYMO's own driver, which places the print on the sticker:
+
+    sudo apt install cups printer-driver-dymo
+    sudo lpadmin -p LabelWriter-450 -E -v "$(lpinfo -v | grep -o 'usb://DYMO/[^ ]*' | head -1)" -m dymo:0/cups/model/lw450.ppd -o PageSize=w79h252.2
+    lpoptions -p LabelWriter-450 -l
+
+The last command is the check: its list should show `w79h252.2` among the
+page sizes and a `DymoPrintQuality` option. CUPS's generic `DYMO Label
+Printer` driver (`sample.drv/dymo.ppd`) prints about 4.5 mm along and 1.5 mm
+across off the sticker, and no setting moves it. The LabelWriter cannot say
+what roll is loaded, so the queue is told: `PageSize=w79h252.2` is the 99010.
+The strips keep 1 mm inside the driver's printable area (1.5 mm from the
+sticker's edges, 5.8 mm at one end).
+
+The images below are the strips as rendered, with `--outline` drawn: the
+sticker's edge and the strip's box.
+
+| | |
+|---|---|
+| ![Pi 5](examples/strip-rpi5.png) | ![Arty](examples/strip-arty.png) |
+| ![USB adapter](examples/strip-usb-asix.png) | ![Tiny Tapeout](examples/strip-tinytapeout.png) |
+| ![SDR](examples/strip-sdr-pluto.png) | ![Two micro labels](examples/strip-micro-pair.png) |
+
+Other options on a roll:
+
+- `--list` prints one line per sticker: `sticker N  host  kind  title`
+  (a micro sticker names both its labels).
+- `--outline` draws the sticker's edge and the strip's box on each page, for
+  a proof on plain paper laid against a sticker.
+- `--only` selects kinds as for a sheet. An empty selection is refused ("no
+  labels selected: nothing to put on the roll"), so no blank sticker is
+  written or printed.
+
+What a roll refuses, with a message naming the problem and a non-zero exit:
+
+- `--start` (a roll has no positions to skip), `--place` and `--list --json`
+  (the L7160 sheet tool's), and `--print` with a sheet `--stock` (a sheet goes
+  through `rpi-hwid-sheet`).
+- A label kind with no strip layout.
+- Before anything is sent, `--print` checks the queue and refuses one that is
+  unreachable, stopped (with the printer's own reason), not accepting jobs,
+  or without a 27.86 x 88.9 mm size; the last message lists the sizes the
+  queue does support and asks whether it is on DYMO's driver.
+- After sending, a job that ends canceled or aborted is an error giving the
+  job's reasons, as is one still going after 120 s (see `lpstat -W all -o
+  QUEUE`). Only a completed job prints "printed on QUEUE: job completed".
+
+The job asks for the 27.86 x 88.9 mm size, no scaling, and 300 x 600 dpi,
+which is how CUPS offers the DYMO driver's `DymoPrintQuality=Graphics`, the
+quality for codes. That is how the code asks; it has not been checked on paper
+here, so print one sticker and scan its codes before a run.
+
 ### Chosen labels in chosen slots
 
 A sheet that is printed a few labels at a time keeps its used stickers where

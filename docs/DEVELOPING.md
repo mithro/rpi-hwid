@@ -45,6 +45,7 @@ uv run docs/examples/render_esp32_433.py   # docs/examples/esp32-433-sticker.png
 uv run docs/examples/render_esp32_gps.py   # docs/examples/esp32-gps-sticker.png, the GPS-node labels
 uv run docs/examples/render_tasmota.py # docs/examples/tasmota-4up.png; --data DIR adds tasmota-sheet.png
 uv run docs/examples/render_cameras.py # docs/examples/camera-icons*.png, every camera mark on fake boards
+uv run docs/examples/render_strips.py # docs/examples/strip-*.png, the labels on a DYMO 99010 roll
 ```
 
 Both read `tests/conftest.py`, so the images track the generator. `render.py` cuts
