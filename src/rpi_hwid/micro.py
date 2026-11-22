@@ -1213,12 +1213,14 @@ def strip_width(specs: Sequence[Icon]) -> float:
 Group = tuple[MicroLabel | None, ...]
 
 
-def pack(micros: Sequence[MicroLabel], start: int = 0) -> list[Group]:
-    """The labels in fours, in order, one group per sticker; `start` quarters
-    of the first sticker are left empty (a partly used one)."""
+def pack(micros: Sequence[MicroLabel], start: int = 0,
+         per_sticker: int = PER_STICKER) -> list[Group]:
+    """The labels in groups of `per_sticker` (four to a sheet's sticker, two
+    to a roll's), in order, one group per sticker; `start` places of the
+    first sticker are left empty (a partly used one)."""
     slots: list[MicroLabel | None] = [None] * start + list(micros)
-    slots += [None] * (-len(slots) % PER_STICKER)
-    return [tuple(slots[i:i + PER_STICKER]) for i in range(0, len(slots), PER_STICKER)]
+    slots += [None] * (-len(slots) % per_sticker)
+    return [tuple(slots[i:i + per_sticker]) for i in range(0, len(slots), per_sticker)]
 
 
 def micro_origin(x0: float, y0: float, quarter: int) -> tuple[float, float]:
@@ -1251,6 +1253,25 @@ def draw_quad(lab: Any, group: Group) -> None:
             draw_micro(Cell(lab.c, *micro_origin(lab.x0, lab.y0, q)), m)
     if sum(m is not None for m in group) > 1:
         cut_guides(lab)
+
+
+def draw_pair(lab: Any, group: Group) -> None:
+    """One roll sticker: up to two micro labels at their true size, end to
+    end and centred in the strip `lab`, with a guide to cut them apart."""
+    x = (lab.w - 2 * MICRO_W) / 2
+    y = (lab.h - MICRO_H) / 2
+    for i, m in enumerate(group):
+        if m is not None:
+            draw_micro(Cell(lab.c, lab.x0 + x + i * MICRO_W, lab.y0 + y), m)
+    if sum(m is not None for m in group) > 1:
+        c = lab.c
+        c.saveState()
+        c.setStrokeColor(GUIDE)
+        c.setLineWidth(0.3)
+        c.setDash(1, 1.5)
+        xm = lab.x0 + x + MICRO_W
+        c.line(xm, lab.y0, xm, lab.y0 + lab.h)
+        c.restoreState()
 
 
 def listing(micros: Sequence[MicroLabel], start: int = 0

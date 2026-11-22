@@ -156,6 +156,47 @@ STOCKS = {s.name: s for s in (
 )}
 DEFAULT_STOCK = "L7160"
 
+
+@dataclass(frozen=True)
+class Roll:
+    """A roll of stickers in a label printer, one sticker per page: the
+    driver's page (`page`, points) and the part of it the driver prints
+    (`printable`, its ImageableArea: x0, y0, x1, y1), the driver's name for
+    the size (`ppd_size`, for lp and the docs) and IPP's (`media_size`,
+    hundredths of a millimetre, which is how CUPS lists a PPD size). Labels
+    on a roll are strips (rpi_hwid.strip), drawn in `strip_box` turned a
+    quarter so they run along the sticker."""
+    name: str
+    page: tuple[float, float]
+    printable: tuple[float, float, float, float]
+    ppd_size: str
+    media_size: tuple[int, int]
+    note: str
+
+    @property
+    def strip_box(self):
+        """(x, y, w, h) on the page, points: the printable area less 1 mm
+        all round (the sticker's corners are rounded, and the print lands
+        on it to about a millimetre)."""
+        x0, y0, x1, y1 = self.printable
+        return x0 + mm, y0 + mm, x1 - x0 - 2 * mm, y1 - y0 - 2 * mm
+
+
+# dymo-99010: DYMO 99010 address labels, 28 x 89 mm, in a LabelWriter 450
+# with DYMO's own CUPS driver (printer-driver-dymo 1.4.0, lw450.ppd, filter
+# raster2dymolw): its *PageSize w79h252.2 "99010 Standard Address" and that
+# size's *ImageableArea. Measured with a mm-ladder label on 2026-11-21: the
+# page lands on the sticker to within ~1 mm. CUPS's generic sample.drv DYMO
+# driver puts it ~4.5 mm along and ~1.5 mm across off the sticker, and no PPD
+# setting can move it (docs/superpowers/specs/2026-11-22-dymo-strip-labels-design.md).
+ROLLS = {r.name: r for r in (
+    Roll("dymo-99010", (79.0, 252.0), (4.32, 4.32, 76.08, 235.44), "w79h252.2",
+         (2786, 8890),
+         note="DYMO 99010 (28 x 89 mm) in a LabelWriter 450 on DYMO's own driver "
+              "(printer-driver-dymo, lw450.ppd)"),
+)}
+assert not set(ROLLS) & set(STOCKS), "a stock is a sheet or a roll, never both"
+
 # --- fonts --------------------------------------------------------------------
 #
 # The identifiers must be unambiguous when read by eye and typed, so they are
@@ -2289,7 +2330,13 @@ def render(docs, out, only=KINDS, start=0, outline=False,
     """Write the PDF to `out` (a path or a binary file); returns (label
     count, sheet count). `invariant` leaves the creation date and document
     id out, so the same labels make the same bytes. `stock` names the sheet
-    (STOCKS)."""
+    (STOCKS) or the roll (ROLLS: then the count is of stickers)."""
+    if stock in ROLLS:
+        if start:
+            raise ValueError("a roll has no positions to leave blank: --start is for sheets")
+        from rpi_hwid import roll
+        return roll.render_roll(docs, out, ROLLS[stock], only, outline, pinned_names,
+                                order, invariant)
     register_fonts()
     stock = STOCKS[stock]
     labels = list(all_labels(docs, set(only), pinned_names, order))
@@ -2458,9 +2505,10 @@ def main(argv=None):
     ap.add_argument("--start", type=int, default=0,
                     help="leave the first N positions of the first sheet blank")
     ap.add_argument("--outline", action="store_true", help="draw each label's edge")
-    ap.add_argument("--stock", choices=sorted(STOCKS), default=DEFAULT_STOCK,
+    ap.add_argument("--stock", choices=sorted(STOCKS) + sorted(ROLLS), default=DEFAULT_STOCK,
                     help="the sheet: L7160 (A4, the default), avery-5163 (US Letter, 4 x 2 in "
-                         "stickers) or letter-plain (plain US Letter, with cut lines)")
+                         "stickers) or letter-plain (plain US Letter, with cut lines); or the "
+                         "roll: dymo-99010 (DYMO 99010, 28 x 89 mm, one strip per sticker)")
     ap.add_argument("--artwork", type=Path, help="directory holding the maker marks")
     ap.add_argument("--names", type=Path,
                     help="JSON map of Arty serial -> name, the registry that pins names")
@@ -2514,7 +2562,10 @@ def _main(ap, args, micro_kinds):
         ap.error("--place gives every label its slot: it takes no --list or --start")
     if args.stock != DEFAULT_STOCK and (args.place or (args.list and args.json)):
         ap.error("--place and --list --json are the L7160 sheet tool's: they take no --stock")
-    stock = STOCKS[args.stock]
+    on_roll = ROLLS.get(args.stock)
+    if on_roll and args.start:
+        ap.error("--start leaves a sheet's first positions blank: a roll has none")
+    stock = None if on_roll else STOCKS[args.stock]
     if args.check:
         return check_main(docs, only)
     from rpi_hwid import placement
@@ -2524,6 +2575,23 @@ def _main(ap, args, micro_kinds):
     if args.place:
         return placement.place_main(docs, args.place, args.out, set(only), pinned,
                                     args.outline)
+    if on_roll:
+        from rpi_hwid import roll
+        try:
+            if args.list:
+                rows = roll.roll_rows(docs, set(only), pinned)
+                width = max([len(r[0]) for r in rows] or [0])
+                for i, (host, kind, title, _, _) in enumerate(rows):
+                    print("sticker %d  %-*s  %-6s %s" % (i + 1, width, host, kind, title))
+                return 0
+            n, stickers = render(docs, args.out, only, 0, args.outline, pinned,
+                                 stock=args.stock)
+        except roll.NoStripError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        print("%d label%s on %d sticker%s -> %s" % (n, "" if n == 1 else "s", stickers,
+                                                    "" if stickers == 1 else "s", args.out))
+        return 0
     if args.list:
         rows = list(all_labels(docs, set(only), pinned))
         # The host column is as wide as the widest host and no wider: these
