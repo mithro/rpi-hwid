@@ -319,7 +319,9 @@ def record(draw: Callable[[Any, Any], None], rec: Any,
     """Draw one label with `draw` on a canvas the label's size, recording
     every string (Label.text, Label.rotated), code (Label.qr) and SVG mark
     (Label.svg) in the canvas's own coordinates, and watching the canvas
-    underneath for anything drawn past those helpers."""
+    underneath for anything drawn past those helpers. The fonts are the
+    ones a real render registers, whatever ran before."""
+    lb.register_fonts()  # type: ignore[no-untyped-call]
     r = _Recorder()
     c = canvas.Canvas(io.BytesIO())
     lab = make(c)

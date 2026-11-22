@@ -441,3 +441,16 @@ def test_a_fitted_size_at_or_above_its_min_size_never_flags_its_own_text():
     r = sc.on_strip(d, None)
     assert r.texts[0].floor == 5.5
     assert sc.problems(r, *sc.STRIP) == []
+
+
+def test_the_checker_measures_in_the_fonts_a_render_registers(monkeypatch):
+    """render_roll registers the DejaVu mono faces before drawing; the
+    checker must too, or a strip is measured in Courier (about 0.3% narrower)
+    whenever no earlier test happened to register them."""
+    import os
+    monkeypatch.setattr(lb, "MONO", "Courier-Bold")
+    monkeypatch.setattr(lb, "MONO_REGULAR", "Courier")
+    d = sc.on_strip(lambda lab, _r: lab.text(1 * mm, 1 * mm, "0123", lb.MONO, 8), None)
+    assert d.texts[0].font == lb.MONO
+    if os.path.exists("/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"):
+        assert lb.MONO == "LabelMono"
