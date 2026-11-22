@@ -200,18 +200,7 @@ class Cell(labels.Label):
 
     def __init__(self, c: Any, x0: float, y0: float,
                  w: float = MICRO_W, h: float = MICRO_H) -> None:
-        super().__init__(c, x0, y0)
-        self.w, self.h = w, h
-
-    def pt(self, x: float, y: float) -> tuple[float, float]:
-        return self.x0 + x, self.y0 + self.h - y
-
-    def outline(self) -> None:
-        c = self.c
-        c.setStrokeColor(HexColor("#bbbbbb"))
-        c.setLineWidth(0.3)
-        c.rect(self.x0, self.y0, self.w, self.h, stroke=1, fill=0)
-        c.setStrokeColor(black)
+        super().__init__(c, x0, y0, w, h)
 
 
 # --- glyphs -------------------------------------------------------------------

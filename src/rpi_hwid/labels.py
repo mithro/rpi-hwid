@@ -191,13 +191,16 @@ def register_fonts():
 
 class Label:
     """A drawing context whose origin is the label's top-left corner, with y
-    growing downwards, because that is how one thinks about a label."""
+    growing downwards, because that is how one thinks about a label. It is
+    LABEL_W x LABEL_H unless given another size (a micro label's quarter, a
+    roll's strip)."""
 
-    def __init__(self, c, x0, y0):
+    def __init__(self, c, x0, y0, w=LABEL_W, h=LABEL_H):
         self.c, self.x0, self.y0 = c, x0, y0
+        self.w, self.h = w, h
 
     def pt(self, x, y):
-        return self.x0 + x, self.y0 + LABEL_H - y
+        return self.x0 + x, self.y0 + self.h - y
 
     def text(self, x, y, s, font=SANS, size=8, align="left", color=black):
         """Draw `s` with its cap-height top at y."""
@@ -342,7 +345,7 @@ class Label:
         c = self.c
         c.setStrokeColor(HexColor("#bbbbbb"))
         c.setLineWidth(0.3)
-        c.rect(self.x0, self.y0, LABEL_W, LABEL_H, stroke=1, fill=0)
+        c.rect(self.x0, self.y0, self.w, self.h, stroke=1, fill=0)
         c.setStrokeColor(black)
 
     def cut_line(self):
@@ -350,7 +353,7 @@ class Label:
         c = self.c
         c.setStrokeColor(GREY)
         c.setLineWidth(0.5)
-        c.rect(self.x0, self.y0, LABEL_W, LABEL_H, stroke=1, fill=0)
+        c.rect(self.x0, self.y0, self.w, self.h, stroke=1, fill=0)
         c.setStrokeColor(black)
 
 
