@@ -51,41 +51,51 @@ STRIP_OF: dict[Callable[..., Any], Callable[..., Any]] = {}
 BOARD_MAC_QR = 7.5 * mm         # 25 modules at 0.30 mm (0.28 on the full label)
 BOARD_MAC_X = 39.5 * mm         # where the MAC column starts
 BOARD_CAMERA = 2.8 * mm         # a camera mark's height: its words at 4.6 pt
+BOARD_GAP = 1.1 * mm            # between the corner's marks, as the full label
+
+
+def _row_width(s: Strip, cams: list[Any]) -> float:
+    """The width of camera marks set in a row."""
+    return (sum(lb.camera_width(s, c, BOARD_CAMERA) for c in cams)
+            + BOARD_GAP * max(0, len(cams) - 1))
+
+
+def _draw_cameras(s: Strip, cams: list[Any], right: float, y: float) -> None:
+    """Camera marks in a row ending flush at `right`, their tops at `y`."""
+    x = right - _row_width(s, cams)
+    for c in cams:
+        lb.mark_camera(s, c, x, y, BOARD_CAMERA)
+        x += lb.camera_width(s, c, BOARD_CAMERA) + BOARD_GAP
 
 
 def _board_corner(s: Strip, b: Any, left: float, right: float, y: float,
-                  cam_y: float) -> float:
+                  cam_y: float) -> tuple[float, list[Any]]:
     """The fan and clock right-aligned at `right` on the title's line at
-    `y`, and the cameras in one row under them at `cam_y`, no further left
-    than `left`; the width the title gives up.
+    `y`, and the cameras in a row under them at `cam_y`, no further left
+    than `left`. Returns the width the title gives up, and the cameras that
+    row has no room for: the full label stacks its cameras two deep, so a
+    multiplexer's four can be more than one row holds, and the rest go to
+    the end of the subtitle's line (`_board_spill`).
 
     The full label's own corner is measured first, for its refusal: a strip
-    refuses the boards the full label refuses. The strip has one row for
-    cameras where the full label stacks them two deep, so a multiplexer's
-    four that the full label takes can still be too many here, and are
-    refused rather than run into the mark. The marks are a little taller
-    than the full label's 2.6 mm, whose words come out at 4.3 pt: here
-    they keep to the 4.5 pt floor."""
+    refuses exactly the boards the full label refuses, and takes every set
+    of cameras it takes. The marks are a little taller than the full
+    label's 2.6 mm, whose words come out at 4.3 pt: here they keep to the
+    4.5 pt floor."""
     lb.board_corner(s, b, lb.board_geometry(b, lb.BOARD_COLUMNS_X).head_w)
-    icon, gap, cam = 2.6 * mm, 1.1 * mm, BOARD_CAMERA
-    cams = list(b.cameras or ())
-    cams_w = sum(lb.camera_width(s, c, cam) for c in cams) + gap * max(0, len(cams) - 1)
-    if cams_w > right - left:
-        said = ", ".join(" ".join(w for w in lb.camera_words(c) if w) for c in cams)
-        raise lb.CameraMarkDoesNotFitError(
-            f"{b.host}: the camera marks ({said}) are {cams_w / mm:.1f} mm, wider than "
-            f"the {(right - left) / mm:.1f} mm a strip has for them under the {b.title}")
+    icon = 2.6 * mm
     icons = [m for m, on in ((lb.mark_fan, b.fan), (lb.mark_clock, b.rtc_battery)) if on]
-    icons_w = len(icons) * icon + max(0, len(icons) - 1) * gap
+    icons_w = len(icons) * icon + max(0, len(icons) - 1) * BOARD_GAP
     x = right - icons_w
     for draw in icons:
         draw(s, x, y - 0.2 * mm, icon)          # centred on the title's capitals
-        x += icon + gap
-    x = right - cams_w
-    for c in cams:
-        lb.mark_camera(s, c, x, cam_y, cam)
-        x += lb.camera_width(s, c, cam) + gap
-    return icons_w + 1.5 * mm if icons else 0
+        x += icon + BOARD_GAP
+    cams = list(b.cameras or ())
+    k = len(cams)                               # the row takes cams[k:]
+    while k and _row_width(s, cams[k - 1:]) <= right - left:
+        k -= 1
+    _draw_cameras(s, cams[k:], right, cam_y)
+    return (icons_w + 1.5 * mm if icons else 0), cams[:k]
 
 
 def _two_lines(s: Strip, x: float, y: float, cap: str, val: str, font: str, size: float,
@@ -118,7 +128,7 @@ def draw_board_strip(s: Strip, b: Any) -> None:
     lb.mark_fitted(s, b.mark, 0, 0, lc, q)
     title_size = mac_size - 0.5
     cam_y = top + title_size * 0.72 + 1.0 * mm      # under the title's descenders
-    corner = _board_corner(s, b, bx, mx - 1.5 * mm, top, cam_y)
+    corner, spill = _board_corner(s, b, bx, mx - 1.5 * mm, top, cam_y)
     s.fit(bx, top, b.title, lb.SANS_BOLD, title_size, left_w - corner)
 
     # --- bottom band: the serial and its code ---
@@ -146,8 +156,12 @@ def draw_board_strip(s: Strip, b: Any) -> None:
     # captions, or the mark that stands for them: the RISC-V mark beside the
     # ISA and harts lines, a PC maker's mark (beside the project's on the
     # full label, here under it, so the title keeps its room).
+    # Cameras the row under the title has no room for end the subtitle's
+    # line, which gives up their width (it keeps 51 mm, more than the full
+    # label's subtitle has).
+    spill_w = _row_width(s, spill) + 1.5 * mm if spill else 0
     rows: list[Callable[[float], Any]] = [
-        lambda y: s.fit(bx, y, b.subtitle, lb.SANS, 6.5, mid_w)]
+        lambda y: s.fit(bx, y, b.subtitle, lb.SANS, 6.5, mid_w - spill_w)]
     side = None                             # the mark in the left column
     if b.kind == "riscv":
         path = side = lb.artwork(riscv.RISCV_MARK)
@@ -176,6 +190,10 @@ def draw_board_strip(s: Strip, b: Any) -> None:
     ys = [lo + i * pitch - row_h / 2 for i in range(1, len(rows) + 1)]
     for y, row in zip(ys, rows, strict=True):
         row(y)
+    if spill:
+        # centred between the eth MAC's value and the line under the subtitle
+        below = ys[1] if len(ys) > 1 else hi
+        _draw_cameras(s, spill, qx - 1.5 * mm, (top + block + below - BOARD_CAMERA) / 2)
     if side:
         # a maker's mark has the column to itself; the RISC-V mark spans the
         # ISA and harts rows (all but the subtitle's)

@@ -68,14 +68,26 @@ def _board(docs, host, **changes):
 
 WIDE = Camera("imx708", variant="wide_noir", autofocus=True)
 V1 = Camera("ov5647", autofocus=False)
+V1_AF = Camera("ov5647", autofocus=True)
+OV9281 = Camera("ov9281", autofocus=False)
+HQ = Camera("imx477", autofocus=False)
 
 
-@pytest.mark.parametrize("host", ["pi-sw2-p47", "rpicm1-serial", "pi-sw2-p33"])
+@pytest.mark.parametrize("host", ["pi-sw1-p10", "pi-sw2-p47", "rpicm1-serial", "pi-sw2-p48",
+                                  "hifive-unmatched-1", "minnow-turbot-2"])
 @pytest.mark.parametrize("cameras", [
-    (V1,), (WIDE,), (Camera("ov5647", autofocus=True), V1), (WIDE, WIDE), (V1,) * 4,
+    (V1,), (WIDE,), (V1_AF, V1), (WIDE, WIDE), (V1,) * 4,
     (Camera("imx708", variant="wide", autofocus=True, fov=120),), (V1,) * 5,
+    # the widest sets the full label takes (stacked two deep there), more
+    # than the row under a strip's title holds: some end the subtitle's line
+    (OV9281, OV9281, HQ, HQ), (V1_AF, V1_AF, HQ, HQ), (V1_AF, OV9281, HQ, HQ),
+    (WIDE, V1_AF, HQ), (OV9281,) * 3,
 ], ids=lambda cams: "+".join(" ".join(w for w in labels.camera_words(c) if w) for c in cams))
-def test_a_board_strip_with_cameras_refuses_as_the_full_label_does(docs, host, cameras):
+def test_a_board_strip_takes_exactly_the_cameras_the_full_label_takes(docs, host, cameras):
+    """Spec decision 2: a strip refuses exactly when the full label
+    refuses. A brute force over one to four cameras of eight kinds on every
+    board fixture (the full label takes no set of five) found the sets
+    above the widest the full label takes."""
     rec = _board(docs, host, cameras=cameras)
     try:
         sc.full(labels.draw_board, rec)
@@ -84,17 +96,6 @@ def test_a_board_strip_with_cameras_refuses_as_the_full_label_does(docs, host, c
             sc.on_strip(strip.draw_board_strip, rec)
         return
     _rules_kept(labels.draw_board, rec)
-
-
-def test_cameras_the_full_label_stacks_but_a_strip_has_no_row_for_are_refused(docs):
-    """The full label stacks cameras two deep; a strip has one row under the
-    title. Four wide marks on a multiplexer fit the one and not the other:
-    refused, rather than drawn into the board's mark."""
-    cams = (Camera("ov9281", autofocus=False),) * 2 + (Camera("imx477", autofocus=False),) * 2
-    rec = _board(docs, "pi-sw1-p10", cameras=cams)
-    sc.full(labels.draw_board, rec)
-    with pytest.raises(labels.CameraMarkDoesNotFitError, match=r"pi-sw1-p10.*strip"):
-        sc.on_strip(strip.draw_board_strip, rec)
 
 
 @pytest.mark.parametrize("changes", [
