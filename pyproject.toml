@@ -124,9 +124,9 @@ ignore_errors = true
 module = ["rpi_hwid.esp32", "rpi_hwid.esp32_radio", "rpi_hwid.esp32_gps"]
 ignore_errors = true
 
-# The micro-label layout draws with rpi_hwid.labels' helpers, which are untyped.
+# The micro-label and strip layouts draw with rpi_hwid.labels' helpers, which are untyped.
 [[tool.mypy.overrides]]
-module = "rpi_hwid.micro"
+module = ["rpi_hwid.micro", "rpi_hwid.strip"]
 disallow_untyped_calls = false
 warn_return_any = false
 

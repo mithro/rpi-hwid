@@ -52,6 +52,7 @@ import sys
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import segno
@@ -874,6 +875,8 @@ def draw_fpga(lab, board):
 # shipped SVG) is fixed here so the bands are the same on every board
 # label, whatever mark sits in the box and even when there is none.
 MARK_ASPECT = 262.5 / 205.554
+BOARD_SERIAL_QR = 6.5 * mm             # 21 modules at 0.31 mm
+BOARD_COLUMNS_X = PAD + BOARD_SERIAL_QR + 1.5 * mm   # where the columns start
 
 
 def draw_board(lab, b):
@@ -896,7 +899,7 @@ def draw_board(lab, b):
     # have a 2.5 mm cap height in the room under the QR (one line of 16 at
     # that size would be longer than the label). The first half is the
     # left column, as rotated lines stack to the right.
-    ser_qr = 6.5 * mm                  # 21 modules at 0.31 mm
+    ser_qr = BOARD_SERIAL_QR
     ser_size = 10
     if not b.serial:
         # only a PC gets here: its firmware carries no serial at all (an
@@ -904,7 +907,7 @@ def draw_board(lab, b):
         # identify it
         lab.no_code(PAD, PAD, ser_qr, "none")
         lab.rotated(PAD, LABEL_H - PAD, "no serial in firmware", SANS, CAPTION, color=GREY)
-        return draw_board_columns(lab, b, PAD + ser_qr + 1.5 * mm)
+        return draw_board_columns(lab, b, BOARD_COLUMNS_X)
     lab.qr(PAD, PAD, ser_qr, b.serial, error="l")
     half = (len(b.serial) + 1) // 2
     col_pitch = ser_size * 0.72 + 0.7 * mm
@@ -913,12 +916,14 @@ def draw_board(lab, b):
     ser_len = max(lab.width(b.serial[:half], MONO, ser_size),
                   lab.width(b.serial[half:], MONO, ser_size))
     lab.rotated(PAD, LABEL_H - PAD - ser_len - 1 * mm, "serial", SANS, CAPTION, color=GREY)
-    return draw_board_columns(lab, b, PAD + ser_qr + 1.5 * mm)
+    return draw_board_columns(lab, b, BOARD_COLUMNS_X)
 
 
-def draw_board_columns(lab, b, x):
-    """The two columns right of a board label's spine, from `x`."""
-    # --- two columns ---
+def board_geometry(b, x):
+    """The full board label's columns right of its spine at `x`: the left
+    column's width (the MAC QRs' size), the mark's height, where the text
+    column starts and its width, and where the title starts and its width
+    (past a PC maker's mark, which `maker_path` is)."""
     title_h = 8.2 * mm                 # title over subtitle
     hat_rows = 3.2 * mm + 3.4 * mm
     qr_gap = 2 * mm                    # quiet zone between the stacked QRs
@@ -930,19 +935,24 @@ def draw_board_columns(lab, b, x):
     logo_h = qr * MARK_ASPECT
     tx = x + qr + 1.5 * mm
     col_w = LABEL_W - PAD - tx
-    mark_fitted(lab, b.mark, x, PAD, qr, logo_h)
-    y = PAD + max(0, (logo_h - title_h) / 2)
-
     # A PC's maker is a mark beside the project's (ADI Engineering's or
     # CircuitCo's beside the MinnowBoard fish), in a box the fish's size,
     # with no word of text; the title and subtitle move over past it.
     head_x = tx
     maker_path = artwork(b.maker_mark) if b.kind == "x86" and b.maker_mark else None
     if maker_path:
-        mark_in_box(lab, maker_path, tx, PAD, qr, logo_h)
         head_x = tx + qr + 1.5 * mm
     head_w = LABEL_W - PAD - head_x
+    return SimpleNamespace(title_h=title_h, hat_rows=hat_rows, qr_gap=qr_gap, qr=qr,
+                           logo_h=logo_h, tx=tx, col_w=col_w, maker_path=maker_path,
+                           head_x=head_x, head_w=head_w)
 
+
+def board_corner(lab, b, head_w):
+    """What goes in a board label's corner beside a title `head_w` wide,
+    and the room it leaves the title and subtitle; refuses camera marks that
+    would cut either short. A strip calls it too, so a strip refuses exactly
+    the boards the full label refuses."""
     # What the board is wearing that is not a HAT and has no MAC: a fan on
     # the header, a cell behind the RTC. Both are Pi 5 signals and both are
     # None on every other model, so nothing is drawn where nothing could
@@ -991,6 +1001,27 @@ def draw_board_columns(lab, b, x):
             "revision code, which would be cut short" % (
                 b.host, ", ".join(" ".join(w for w in camera_words(c) if w) for c in cams),
                 b.title))
+    return SimpleNamespace(icons=icons, icon=icon, icon_gap=icon_gap, icons_w=icons_w,
+                           cam_cols=cam_cols, col_ws=col_ws, cams_w=cams_w,
+                           corner_w=corner_w, cam_row=cam_row, title_w=title_w,
+                           sub_w=sub_w, sub_min=sub_min)
+
+
+def draw_board_columns(lab, b, x):
+    """The two columns right of a board label's spine, from `x`."""
+    # --- two columns ---
+    g = board_geometry(b, x)
+    title_h, hat_rows, qr_gap, qr, logo_h = g.title_h, g.hat_rows, g.qr_gap, g.qr, g.logo_h
+    tx, col_w, maker_path, head_x = g.tx, g.col_w, g.maker_path, g.head_x
+    mark_fitted(lab, b.mark, x, PAD, qr, logo_h)
+    y = PAD + max(0, (logo_h - title_h) / 2)
+    if maker_path:
+        mark_in_box(lab, maker_path, tx, PAD, qr, logo_h)
+
+    k = board_corner(lab, b, g.head_w)
+    icons, icon, icon_gap, cam_cols, col_ws = k.icons, k.icon, k.icon_gap, k.cam_cols, k.col_ws
+    cams_w, corner_w, cam_row = k.cams_w, k.corner_w, k.cam_row
+    title_w, sub_w, sub_min = k.title_w, k.sub_w, k.sub_min
 
     ix = LABEL_W - PAD - corner_w
     for draw in icons:

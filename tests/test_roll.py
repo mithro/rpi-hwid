@@ -178,3 +178,16 @@ def test_the_transform_render_roll_applies_puts_the_strip_in_the_printable_area(
     x0, y0, x1, y1 = R.printable
     assert x0 + mm - 1e-6 <= x <= x1 - mm + 1e-6
     assert y0 + mm - 1e-6 <= y <= y1 - mm + 1e-6
+
+
+def test_the_library_api_gets_the_roll_through_render_sheet(data_dir):
+    import json
+
+    from rpi_hwid import label_input
+    from rpi_hwid.collect import load_collected
+    host = "pi-sw2-p47"                 # a Pi: one board label, so one sticker
+    doc = load_collected(data_dir)[host]
+    inputs = [json.loads(label_input.dumps(label_input.from_probe(host, doc.evidence)))]
+    assert len(roll.roll_rows(labels.documents(inputs), {"rpi"})) == 1
+    pdf = labels.render_sheet(inputs, only={"rpi"}, stock="dymo-99010")
+    assert _pages(pdf) == [pytest.approx(R.page)]
