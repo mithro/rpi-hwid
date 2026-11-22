@@ -143,3 +143,38 @@ def test_a_kind_with_no_strip_stops_the_command_with_its_reason(data_dir, tmp_pa
     assert labels.main(["--data", str(data_dir), "--only", "rpi", "--stock", "dymo-99010",
                         "--out", str(tmp_path / "r.pdf")]) == 1
     assert "no strip layout" in capsys.readouterr().err
+
+
+class _Ctm:
+    """A canvas that only keeps the transform _place builds (translate and
+    rotate), as the matrix a point is mapped through."""
+
+    def __init__(self):
+        self.m = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)  # a b c d e f, PDF order
+
+    def translate(self, dx, dy):
+        a, b, c, d, e, f = self.m
+        self.m = (a, b, c, d, a * dx + c * dy + e, b * dx + d * dy + f)
+
+    def rotate(self, deg):
+        a, b, c, d, e, f = self.m
+        s, k = math.sin(math.radians(deg)), math.cos(math.radians(deg))
+        self.m = (a * k + c * s, b * k + d * s, -a * s + c * k, -b * s + d * k, e, f)
+
+    def map(self, u, v):
+        a, b, c, d, e, f = self.m
+        return a * u + c * v + e, b * u + d * v + f
+
+
+@pytest.mark.parametrize("u", [0, strip.STRIP_W])
+@pytest.mark.parametrize("v", [0, strip.STRIP_H])
+def test_the_transform_render_roll_applies_puts_the_strip_in_the_printable_area(u, v):
+    """roll._place is what render_roll draws through: its matrix must agree
+    with page_point and put every corner a millimetre inside the printable area."""
+    c = _Ctm()
+    roll._place(c, R)
+    x, y = c.map(u, v)
+    assert (x, y) == pytest.approx(roll.page_point(R, u, v))
+    x0, y0, x1, y1 = R.printable
+    assert x0 + mm - 1e-6 <= x <= x1 - mm + 1e-6
+    assert y0 + mm - 1e-6 <= y <= y1 - mm + 1e-6
