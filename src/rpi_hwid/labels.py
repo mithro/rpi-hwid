@@ -2664,7 +2664,8 @@ def _main(ap, args, micro_kinds):
         if args.print_to:
             try:
                 state = roll.print_pdf(args.out.read_bytes(), args.print_to, on_roll,
-                                       "rpi-hwid labels %s" % args.out.name)
+                                       "rpi-hwid labels %s" % args.out.name,
+                                       stickers=stickers)
             except roll.PrintError as exc:
                 print(exc, file=sys.stderr)
                 return 1

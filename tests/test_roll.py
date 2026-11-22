@@ -205,8 +205,10 @@ def _size_member(x, y):
 
 
 def _queue(states, *, printer_state=3, sizes=((2786, 8890),), accepting=True,
-           message="", reasons=("none",)):
-    """A fake CUPS queue: printer attributes, a job id, then `states` in turn."""
+           message="", reasons=("none",), unsupported=None):
+    """A fake CUPS queue: printer attributes, a job id, then `states` in turn
+    (a job-state, a (job-state, job-impressions-completed) pair, or None:
+    hang up without an answer)."""
     seen = iter(states)
 
     def answer(msg):
@@ -219,10 +221,32 @@ def _queue(states, *, printer_state=3, sizes=((2786, 8890),), accepting=True,
                     _size_member(*(ipp.integer(d) if isinstance(d, int) else d for d in xy))
                     for xy in sizes]})
         if msg.code == ipp.PRINT_JOB:
-            return ok(ipp.JOB_GROUP, {"job-id": ipp.integer(77), "job-state": ipp.enum(3)})
-        return ok(ipp.JOB_GROUP, {"job-state": ipp.enum(next(seen)),
-                                  "job-state-reasons": [ipp.keyword(r) for r in reasons]})
+            groups = [(ipp.JOB_GROUP, {"job-id": ipp.integer(77), "job-state": ipp.enum(3)})]
+            if unsupported:
+                groups.append((ipp.UNSUPPORTED_GROUP, unsupported))
+            return 0, groups
+        now = next(seen)
+        if now is None:
+            return None
+        state, done = now if isinstance(now, tuple) else (now, None)
+        attrs = {"job-state": ipp.enum(state),
+                 "job-state-reasons": [ipp.keyword(r) for r in reasons]}
+        if done is not None:
+            attrs["job-impressions-completed"] = ipp.integer(done)
+        return ok(ipp.JOB_GROUP, attrs)
     return FakePrinter(answer)
+
+
+class _Clock:
+    """roll's monotonic and sleep, on a clock that moves only when it sleeps."""
+
+    def __init__(self, monkeypatch):
+        self.now = 0.0
+        monkeypatch.setattr(roll, "monotonic", lambda: self.now)
+        monkeypatch.setattr(roll, "sleep", self.sleep)
+
+    def sleep(self, s):
+        self.now += s
 
 
 def test_a_queue_name_is_the_local_cups_queue():
@@ -297,13 +321,87 @@ def test_a_job_that_does_not_complete_is_an_error_naming_why(state, name):
         p.close()
 
 
-def test_a_job_still_going_at_the_deadline_names_it_for_lpstat():
+def test_a_job_still_going_at_the_deadline_says_it_may_still_be_printing():
     p = _queue([5] * 1000)
     try:
-        with pytest.raises(roll.PrintError, match=r"job 77.*lpstat"):
+        with pytest.raises(roll.PrintError) as got:
             roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=0.01, wait=0.05)
+        msg = str(got.value)
+        assert "job 77" in msg
+        assert "may still be printing" in msg
+        # an ipp:// URI is not a queue name lpstat knows
+        assert "lpstat -W all -o ipp://" not in msg
     finally:
         p.close()
+
+
+def test_the_lpstat_hint_names_the_cups_queue_when_there_is_one():
+    assert "lpstat -W all -o LabelWriter-450" in roll.lpstat_hint("LabelWriter-450")
+    assert "lpstat -W all -o LabelWriter-450" in roll.lpstat_hint(
+        "ipp://localhost:631/printers/LabelWriter-450")
+    assert "lpstat" not in roll.lpstat_hint("ipp://10.1.20.9/ipp/print")
+
+
+def test_a_stuck_job_is_given_up_on_later_the_more_stickers_it_has(monkeypatch):
+    """A LabelWriter 450 does ~50 address labels a minute at 300 x 300 dpi,
+    about half that at 300 x 600: an 80-sticker roll must get minutes."""
+    clock = _Clock(monkeypatch)
+    gave_up = {}
+    for n in (1, 80):
+        p = _queue([5] * 100000)
+        try:
+            clock.now = 0.0
+            with pytest.raises(roll.PrintError, match="may still be printing"):
+                roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=5.0, stickers=n)
+            gave_up[n] = clock.now
+        finally:
+            p.close()
+    assert gave_up[80] > gave_up[1]
+    assert gave_up[80] >= 80 * 60 / 25
+
+
+def test_a_job_that_keeps_printing_is_waited_for_past_the_first_deadline(monkeypatch):
+    clock = _Clock(monkeypatch)
+    # each poll sees one more sticker done: 40 polls of 30 s, ten times the wait
+    p = _queue([(3, 0)] + [(5, i) for i in range(40)] + [(9, 40)])
+    try:
+        assert roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=30.0,
+                              wait=120.0) == "completed"
+        assert clock.now >= 40 * 30.0 > 120.0
+    finally:
+        p.close()
+
+
+def test_a_job_whose_state_moves_on_is_progress_too(monkeypatch):
+    _Clock(monkeypatch)
+    p = _queue([3, 3, 4, 4, 5, 5, 9])
+    try:
+        assert roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=30.0,
+                              wait=70.0) == "completed"
+    finally:
+        p.close()
+
+
+def test_losing_the_printer_after_sending_names_the_job_it_may_have():
+    p = _queue([5, None])
+    try:
+        with pytest.raises(roll.PrintError) as got:
+            roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=0.01)
+        msg = str(got.value)
+        assert "job 77" in msg
+        assert "may have the job" in msg
+        assert "\n" not in msg
+    finally:
+        p.close()
+
+
+def test_job_attributes_the_printer_ignored_are_a_warning(capsys):
+    p = _queue([9], unsupported={"DymoPrintQuality": ipp.keyword("Graphics")})
+    try:
+        assert roll.print_pdf(b"%PDF-roll", p.uri, R, "labels", poll=0.01) == "completed"
+    finally:
+        p.close()
+    assert "warning: the printer ignored DymoPrintQuality" in capsys.readouterr().err
 
 
 def test_an_unreachable_queue_is_an_error_naming_the_uri_tried():
@@ -317,15 +415,23 @@ def test_print_is_for_a_roll(data_dir):
         labels.main(["--data", str(data_dir), "--print", "LabelWriter-450"])
 
 
+@pytest.mark.parametrize("extra", [["--list"], ["--check"]])
+def test_print_with_list_or_check_is_refused_not_silently_skipped(data_dir, extra):
+    with pytest.raises(SystemExit) as got:
+        labels.main(["--data", str(data_dir), "--stock", "dymo-99010", *extra,
+                     "--print", "LabelWriter-450"])
+    assert got.value.code == 2
+
+
 def test_the_command_prints_the_roll_it_wrote(micro_data, tmp_path, monkeypatch, capsys):
     sent = []
     monkeypatch.setattr(roll, "print_pdf", lambda pdf, q, r, name, **k: (
-        sent.append((pdf[:5], q, r.name)), "completed")[1])
+        sent.append((pdf[:5], q, r.name, k.get("stickers"))), "completed")[1])
     out = tmp_path / "roll.pdf"
     only = [a for k in micro.kinds() for a in ("--only", k)]
     assert labels.main(["--data", str(micro_data), *only, "--stock", "dymo-99010",
                         "--out", str(out), "--print", "LabelWriter-450"]) == 0
-    assert sent == [(b"%PDF-", "LabelWriter-450", "dymo-99010")]
+    assert sent == [(b"%PDF-", "LabelWriter-450", "dymo-99010", 2)]
     assert "completed" in capsys.readouterr().out
 
 

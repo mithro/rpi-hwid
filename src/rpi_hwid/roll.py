@@ -4,8 +4,9 @@ queue (labels --stock ROLL [--print QUEUE])."""
 
 from __future__ import annotations
 
-import time
+import sys
 from collections.abc import Callable
+from time import monotonic, sleep
 from typing import IO, Any
 
 from reportlab.lib.colors import HexColor, black
@@ -115,6 +116,28 @@ def job_attributes(roll: labels.Roll) -> ipp.Attrs:
     }
 
 
+# A LabelWriter 450 prints ~50 address labels a minute at 300 x 300 dpi and
+# about half that at 300 x 600: allow twice that, after a minute to start.
+START_S = 60.0
+PER_STICKER_S = 2 * 60 / 25
+
+
+def job_wait(stickers: int) -> float:
+    """How long a job of `stickers` may go without visible progress."""
+    return START_S + PER_STICKER_S * max(stickers, 1)
+
+
+def lpstat_hint(queue: str) -> str:
+    """Where to look at the job: lpstat for a CUPS queue on this machine (a
+    name, or a /printers/NAME URI), the printer itself for any other URI."""
+    if "://" not in queue:
+        return f"see lpstat -W all -o {queue}"
+    path = queue.split("://", 1)[1].partition("/")[2]
+    if path.startswith("printers/") and path.count("/") == 1:
+        return f"see lpstat -W all -o {path.split('/')[1]}"
+    return "check the printer's queue"
+
+
 def _dim(d: Any) -> str:
     """A dimension in 1/100 mm, or an IPP range of them (lo, hi), in mm."""
     if isinstance(d, tuple):
@@ -148,14 +171,18 @@ def _queue_sizes(a: dict[str, list[Any]]) -> list[tuple[Any, Any]]:
 
 
 def print_pdf(pdf: bytes, queue: str, roll: labels.Roll, job_name: str,
-              poll: float = 1.0, wait: float = 120.0) -> str:
-    """Send `pdf` to `queue` and wait for the job to end; returns
-    "completed". Refuses, before sending, a queue that is unreachable,
-    stopped, not accepting jobs, or has no such roll size; raises PrintError
-    for a job that ends any other way or is still going after `wait`
-    seconds."""
+              poll: float = 1.0, wait: float | None = None, stickers: int = 1) -> str:
+    """Send `pdf` (`stickers` pages) to `queue` and wait for the job to end;
+    returns "completed". Refuses, before sending, a queue that is
+    unreachable, stopped, not accepting jobs, or has no such roll size;
+    raises PrintError for a job that ends any other way, that the printer
+    stops answering about, or that shows no progress (a new job-state or
+    more job-impressions-completed) for `wait` seconds -- job_wait(stickers)
+    unless given. A job attribute the printer ignored is a warning on stderr."""
     uri = queue_uri(queue)
     pr = ipp.Printer(uri)
+    if wait is None:
+        wait = job_wait(stickers)
     try:
         a = pr.attributes(["printer-state", "printer-state-message",
                            "printer-is-accepting-jobs", "media-size-supported"])
@@ -172,19 +199,31 @@ def print_pdf(pdf: bytes, queue: str, roll: labels.Roll, job_name: str,
                              f"({roll.ppd_size}); it supports {has}: is it on DYMO's driver, "
                              f"printer-driver-dymo's lw450.ppd?")
         job = pr.print_document(pdf, job_name, job_attributes(roll))
-        deadline = time.monotonic() + wait
-        while True:
-            j = pr.job(job.id)
-            state = (j.get("job-state") or [ipp.JOB_PENDING])[0]
-            if state in ipp.JOB_DONE:
-                break
-            if time.monotonic() >= deadline:
-                raise PrintError(f"{queue}: job {job.id} is still "
-                                 f"{ipp.JOB_STATES.get(state, state)} after {wait:g} s: "
-                                 f"see lpstat -W all -o {queue}")
-            time.sleep(poll)
     except ipp.IppError as exc:
         raise PrintError(f"{uri}: {exc}") from exc
+    if job.ignored:
+        print(f"warning: the printer ignored {', '.join(job.ignored)}", file=sys.stderr)
+    seen: tuple[Any, Any] = (job.state, None)
+    deadline = monotonic() + wait
+    while True:
+        try:
+            j = pr.job(job.id)
+        except ipp.IppError as exc:
+            raise PrintError(f"{queue}: job {job.id} was sent, then asking after it failed: "
+                             f"{exc}; the printer may have the job: {lpstat_hint(queue)} "
+                             f"before printing again") from exc
+        state = (j.get("job-state") or [ipp.JOB_PENDING])[0]
+        if state in ipp.JOB_DONE:
+            break
+        now = (state, (j.get("job-impressions-completed") or [None])[0])
+        if now != seen:
+            seen, deadline = now, monotonic() + wait
+        elif monotonic() >= deadline:
+            raise PrintError(f"{queue}: job {job.id} is still "
+                             f"{ipp.JOB_STATES.get(state, state)}, with no progress in "
+                             f"{wait:g} s; it may still be printing: {lpstat_hint(queue)} "
+                             f"before printing again")
+        sleep(poll)
     name = ipp.JOB_STATES.get(state, str(state))
     if state != ipp.JOB_COMPLETED:
         why = ", ".join(map(str, j.get("job-state-reasons", []))) or "no reason given"
