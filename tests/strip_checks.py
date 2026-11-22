@@ -14,7 +14,9 @@ checker cannot measure is reported rather than ignored."""
 from __future__ import annotations
 
 import contextlib
+import inspect
 import io
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from unittest import mock
@@ -44,6 +46,9 @@ class Text:
     font: str
     size: float
     box: Box
+    # the smallest size the helper that drew it allows: fit/captioned values
+    # their min_size, captions lb.CAPTION, everything else TEXT_FLOOR
+    floor: float = TEXT_FLOOR
 
 
 @dataclass
@@ -74,6 +79,23 @@ def _corners(x0: float, y0: float, x1: float, y1: float) -> list[tuple[float, fl
     return [(x0, y0), (x1, y1)]
 
 
+def _arc_pts(x0: float, y0: float, x1: float, y1: float, startAng: float = 0,  # noqa: N803
+             extent: float = 90, wedge: bool = False) -> list[tuple[float, float]]:
+    """Points on the swept arc of the ellipse inscribed in (x0,y0,x1,y1), from
+    startAng through extent degrees (the centre too for a wedge) -- not the
+    whole ellipse's box, which is bigger than the ink."""
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    rx, ry = abs(x1 - x0) / 2, abs(y1 - y0) / 2
+    lo, hi = sorted((startAng, startAng + extent))
+    angles = {lo, hi}
+    angles.update(range(math.ceil(lo), math.floor(hi) + 1))   # every whole degree
+    pts = [(cx + rx * math.cos(math.radians(a)), cy + ry * math.sin(math.radians(a)))
+           for a in angles]
+    if wedge:
+        pts.append((cx, cy))
+    return pts
+
+
 # Canvas calls measured as ink: name -> points (user space) from the arguments.
 _INK: dict[str, Callable[..., list[tuple[float, float]]]] = {
     "rect": lambda x, y, w, h, *_a, **_k: _corners(x, y, x + w, y + h),
@@ -81,8 +103,10 @@ _INK: dict[str, Callable[..., list[tuple[float, float]]]] = {
     "line": lambda x0, y0, x1, y1: _corners(x0, y0, x1, y1),
     "circle": lambda x, y, r, *_a, **_k: _corners(x - r, y - r, x + r, y + r),
     "ellipse": lambda x0, y0, x1, y1, *_a, **_k: _corners(x0, y0, x1, y1),
-    "arc": lambda x0, y0, x1, y1, *_a, **_k: _corners(x0, y0, x1, y1),
-    "wedge": lambda x0, y0, x1, y1, *_a, **_k: _corners(x0, y0, x1, y1),
+    "arc": lambda x0, y0, x1, y1, startAng=0, extent=90, **_k:  # noqa: N803
+        _arc_pts(x0, y0, x1, y1, startAng, extent),
+    "wedge": lambda x0, y0, x1, y1, startAng=0, extent=90, **_k:  # noqa: N803
+        _arc_pts(x0, y0, x1, y1, startAng, extent, wedge=True),
     "bezier": lambda *p: list(zip(p[0::2], p[1::2], strict=True)),
 }
 # Path-object calls measured the same way.
@@ -108,6 +132,26 @@ class _Recorder:
     def __init__(self) -> None:
         self.d = Drawn()
         self.inside = 0     # >0 while a recorded call is running: its inner calls are its own
+        self.min: float | None = None    # min_size of the fit/captioned call being run
+        self.queue: list[str] = []       # what the next Label.text calls are: "cap" or "val"
+
+    def floor_of(self, size: float) -> float:
+        """The floor of the string a Label.text call is about to draw."""
+        kind = self.queue.pop(0) if self.queue else None
+        if kind == "cap":
+            return lb.CAPTION
+        if self.min is not None:
+            return self.min
+        return lb.CAPTION if abs(size - lb.CAPTION) < 1e-9 else TEXT_FLOOR
+
+    @contextlib.contextmanager
+    def helper(self, min_size: float | None, queue: list[str]) -> Iterator[None]:
+        saved = (self.min, self.queue)
+        self.min, self.queue = min_size, queue
+        try:
+            yield
+        finally:
+            self.min, self.queue = saved
 
     @contextlib.contextmanager
     def within(self) -> Iterator[None]:
@@ -137,7 +181,8 @@ class _Recorder:
             w = self_.width(s, font, size)
             left = {"left": x, "right": x - w, "centre": x - w / 2}[align]
             x0, top = self_.pt(left, y)
-            d.texts.append(Text(s, font, size, (x0, top - size * 0.72, x0 + w, top)))
+            d.texts.append(Text(s, font, size, (x0, top - size * 0.72, x0 + w, top),
+                                self.floor_of(size)))
             return real_text(self_, x, y, s, font, size, align, color)
 
         def rotated(self_: Any, x: float, y: float, s: str, font: str, size: float,
@@ -145,7 +190,8 @@ class _Recorder:
             # y is the bottom of the run; the cap-height top is 0.72 em to its right
             w = self_.width(s, font, size)
             px, py = self_.pt(x, y)
-            d.texts.append(Text(s, font, size, (px, py, px + size * 0.72, py + w)))
+            d.texts.append(Text(s, font, size, (px, py, px + size * 0.72, py + w),
+                                self.floor_of(size)))
             return real_rot(self_, x, y, s, font, size, color)
 
         def qr(self_: Any, x: float, y: float, size: float, content: str, error: str = "m") -> Any:
@@ -161,7 +207,28 @@ class _Recorder:
             d.marks.append((x0, top - height, x0 + w, top))
             return w
 
+        def helper_patch(name: str, queue: list[str], keeps_min: bool = True) -> Any:
+            """Label.fit / captioned / captioned_after / no_code: their text
+            calls carry the helper's own floor (min_size, or the caption's)."""
+            real = getattr(lb.Label, name)
+            sig = inspect.signature(real)
+
+            def call(*a: Any, **k: Any) -> Any:
+                bound = sig.bind(*a, **k)
+                bound.apply_defaults()
+                min_size = bound.arguments.get("min_size") if keeps_min else None
+                # a fit inside captioned/captioned_after keeps its caller's queue
+                if name == "fit" and self.queue:
+                    return real(*a, **k)
+                with self.helper(min_size, list(queue)):
+                    return real(*a, **k)
+            return mock.patch.object(lb.Label, name, call)
+
         out: list[Any] = [
+            helper_patch("fit", []),
+            helper_patch("captioned", ["cap", "val"]),
+            helper_patch("captioned_after", ["val", "cap"]),
+            helper_patch("no_code", ["cap"], keeps_min=False),
             mock.patch.object(lb.Label, "text", self.wrap(text)),
             mock.patch.object(lb.Label, "rotated", self.wrap(rotated)),
             mock.patch.object(lb.Label, "qr", self.wrap(qr)),
@@ -257,6 +324,8 @@ def problems(d: Drawn, w: float, h: float) -> list[str]:
     for t in d.texts:
         if t.size < TEXT_FLOOR - 1e-9:
             found.append(f"text {t.s!r} at {t.size:.1f} pt, under {TEXT_FLOOR} pt")
+        elif t.size < t.floor - 1e-9:
+            found.append(f"text {t.s!r} at {t.size:.1f} pt, under its floor {t.floor} pt")
         if t.s.strip() and out(t.box):
             found.append(f"text {t.s!r} outside the strip: {t.box}")
     for q in d.qrs:
@@ -280,6 +349,15 @@ def missing_facts(full_d: Drawn, strip_d: Drawn) -> list[str]:
     gone = [f"text {t.s!r}" for t in full_d.texts
             if t.s.strip() and not t.s.endswith("…") and t.s not in joined]
     gone += [f"QR {q.payload!r}" for q in full_d.qrs if q.payload not in payloads]
+    # and not set smaller than the full label's own floor for it: the largest
+    # strip string that contains it must be at least as big as that floor
+    for t in full_d.texts:
+        if not t.s.strip() or t.s.endswith("…") or t.s not in joined:
+            continue
+        best = max(u.size for u in strip_d.texts if t.s in u.s)
+        if best < t.floor - 1e-9:
+            gone.append(f"text {t.s!r} at {best:.1f} pt on the strip, "
+                        f"under its full-label floor {t.floor} pt")
     return gone
 
 

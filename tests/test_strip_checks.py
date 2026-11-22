@@ -260,3 +260,133 @@ def test_the_patches_are_removed_afterwards():
     with pytest.raises(RuntimeError):
         sc.on_strip(boom, None)
     assert (lb.Label.text, canvas.Canvas.drawString, canvas.Canvas.rect) == before
+
+
+# --- per-element floors: captions at 6 pt, values at their own min_size ------
+
+
+def test_a_caption_under_6_pt_is_a_problem():
+    def d(lab, _r):
+        lab.captioned(1 * mm, 20 * mm, 10 * mm, "cap", "value", lb.MONO, 8, 20 * mm,
+                      cap_size=5)
+
+    r = sc.on_strip(d, None)
+    assert [(t.s, t.floor) for t in r.texts] == [("cap", 6), ("value", 5.5)]
+    assert any("'cap' at 5.0 pt" in p and "floor 6" in p for p in sc.problems(r, *sc.STRIP))
+
+
+def test_captioned_after_and_no_code_captions_have_the_caption_floor():
+    def d(lab, _r):
+        lab.captioned_after(1 * mm, 40 * mm, 10 * mm, "cap", "val", lb.MONO, 8, min_size=5)
+        lab.no_code(50 * mm, 1 * mm, 8 * mm)
+
+    assert [(t.s, t.floor) for t in sc.on_strip(d, None).texts] == [
+        ("val", 5), ("cap", 6), ("no id", 6)]
+
+
+def test_a_plain_string_at_exactly_caption_size_is_a_caption():
+    def d(lab, _r):
+        lab.text(1 * mm, 1 * mm, "plain", lb.SANS, 5)
+        lab.text(1 * mm, 6 * mm, "capt", lb.SANS, lb.CAPTION)
+
+    assert [t.floor for t in sc.on_strip(d, None).texts] == [4.5, 6]
+
+
+def test_a_fitted_value_under_its_min_size_is_a_problem():
+    def d(lab, _r):
+        lab.fit(1 * mm, 1 * mm, "a value that must shrink to fit", lb.SANS, 8, 15 * mm,
+                min_size=5.5)
+        lab.fit(1 * mm, 9 * mm, "a value that must shrink to fit", lb.SANS, 8, 15 * mm,
+                min_size=4.5)
+
+    r = sc.on_strip(d, None)
+    assert [t.floor for t in r.texts] == [5.5, 4.5]
+    assert sc.problems(r, *sc.STRIP) == []          # both at or above their floors
+    r.texts[0].size = 5.0                           # ... and one pushed under
+    assert any("under its floor 5.5 pt" in p for p in sc.problems(r, *sc.STRIP))
+
+
+def test_grey_captions_at_the_swatch_floor_are_not_captions_by_colour():
+    def d(lab, _r):
+        lab.fit(1 * mm, 1 * mm, "swatch name", lb.SANS, lb.CAPTION, 30 * mm,
+                min_size=4.5, color=lb.GREY)
+
+    r = sc.on_strip(d, None)
+    assert r.texts[0].floor == 4.5
+    assert sc.problems(r, *sc.STRIP) == []
+
+
+def test_a_strip_value_under_the_full_labels_floor_is_named():
+    def full_d(lab, _r):
+        lab.fit(1 * mm, 1 * mm, "VALUE", lb.SANS, 8, 60 * mm, min_size=5.5)
+        lab.captioned(1 * mm, 20 * mm, 10 * mm, "Cap", "other", lb.SANS, 8, 30 * mm)
+
+    def small(lab, _r):
+        lab.text(1 * mm, 1 * mm, "VALUE", lb.SANS, 5)
+        lab.text(1 * mm, 9 * mm, "Cap", lb.SANS, 6)
+        lab.text(1 * mm, 15 * mm, "other", lb.SANS, 5.5)
+
+    def right(lab, _r):
+        lab.text(1 * mm, 1 * mm, "VALUE", lb.SANS, 5.5)
+        lab.text(1 * mm, 9 * mm, "Cap", lb.SANS, 6)
+        lab.text(1 * mm, 15 * mm, "other", lb.SANS, 5.5)
+
+    def tiny_cap(lab, _r):
+        lab.text(1 * mm, 1 * mm, "VALUE", lb.SANS, 5.5)
+        lab.text(1 * mm, 9 * mm, "Cap", lb.SANS, 5)
+        lab.text(1 * mm, 15 * mm, "other", lb.SANS, 5.5)
+
+    f = sc.full(full_d, None)
+    assert sc.missing_facts(f, f) == []
+    assert sc.missing_facts(f, sc.on_strip(right, None)) == []
+    assert sc.missing_facts(f, sc.on_strip(small, None)) == [
+        "text 'VALUE' at 5.0 pt on the strip, under its full-label floor 5.5 pt"]
+    assert sc.missing_facts(f, sc.on_strip(tiny_cap, None)) == [
+        "text 'Cap' at 5.0 pt on the strip, under its full-label floor 6 pt"]
+
+
+def test_the_largest_containing_strip_string_is_the_one_judged():
+    def full_d(lab, _r):
+        lab.fit(1 * mm, 1 * mm, "abc", lb.SANS, 8, 60 * mm, min_size=5.5)
+
+    def strip_d(lab, _r):
+        lab.text(1 * mm, 1 * mm, "abc", lb.SANS, 5)
+        lab.text(1 * mm, 9 * mm, "abcdef", lb.SANS, 6)
+
+    assert sc.missing_facts(sc.full(full_d, None), sc.on_strip(strip_d, None)) == []
+
+
+# --- arcs: only the swept arc is ink ----------------------------------------
+
+
+def test_an_arc_is_boxed_by_its_swept_part_not_its_whole_ellipse():
+    """mark_wifi's 45-135 degree arcs near the strip's bottom edge: the upper
+    cap of a circle whose centre and lower half would be off the strip."""
+    def d(lab, _r):
+        lab.c.arc(10, 1, 30, 21, 45, 90)        # circle centre (20, 11), r 10
+
+    (box,) = sc.on_strip(d, None).marks
+    assert box[1] == pytest.approx(11 + 10 * 0.5 ** 0.5)
+    assert box[3] == pytest.approx(21)
+    assert box[0] == pytest.approx(20 - 10 * 0.5 ** 0.5)
+    assert sc.problems(sc.on_strip(d, None), *sc.STRIP) == []
+
+    def real_wifi(lab, _r):
+        lb.mark_wifi(lab, 1 * mm, lab.h - 6 * mm, 5 * mm)
+
+    assert sc.problems(sc.on_strip(real_wifi, None), *sc.STRIP) == []
+
+
+def test_an_arc_whose_swept_part_leaves_the_strip_is_still_caught():
+    def d(lab, _r):
+        lab.c.arc(10, -10, 30, 10, 225, 90)     # the bottom of the circle, below y = 0
+
+    assert any("mark outside" in p for p in sc.problems(sc.on_strip(d, None), *sc.STRIP))
+
+
+def test_a_wedge_includes_its_centre():
+    def d(lab, _r):
+        lab.c.wedge(10, -4, 30, 16, 45, 90)     # centre (20, 6), arc above it
+
+    (box,) = sc.on_strip(d, None).marks
+    assert box[1] == pytest.approx(6)
