@@ -44,10 +44,14 @@ Made while writing this spec (each may be overturned in review):
 5. **One roll only: `dymo-99010`.** Other DYMO stock (99014 54 x 101 mm,
    11354 57 x 32 mm, ...) is not designed for now. The roll's geometry lives
    in one `Roll` record, so another is a record and a test, not a redesign.
-6. **The strip box is the driver's printable area, less 1 mm.** Strip
-   layouts draw into a 79.5 x 23.3 mm box: the 99010 printable area
-   (below) less a 1.0 mm pad, because the sticker's corners are rounded and
-   the measured registration is good to about ±1 mm.
+6. **The strip box is the driver's printable area, less 1 mm, moved by the
+   feed offset.** Strip layouts draw into a 79.5 x 23.3 mm box: the 99010
+   printable area (below) less a 1.0 mm pad, because the sticker's corners
+   are rounded. *Amended 2026-11-23:* the box keeps that size but is moved up
+   the page (+y) by `Roll.feed_offset`, 5.5 mm for the 99010, because paper
+   showed the printer puts the page 5.5 mm further along the sticker than
+   the driver's page says; so on the sticker the box lands where the
+   printable area says (see "Confirmed on paper").
 7. **The smallest sizes are the full labels' smallest.** Each element of a
    strip may shrink no further than the same element may on the full label
    (the `min_size` the full layout passes for it), and nothing anywhere goes
@@ -73,7 +77,7 @@ driver (`printer-driver-dymo` 1.4.0, `lw450.ppd`, filter `raster2dymolw`):
 | sticker | 28 x 89 mm, 130 per roll | DYMO 99010; Farnell/AOS listings |
 | driver page size | `w79h252.2` "99010 Standard Address", 79 x 252 pt (`PaperDimension` 78.96 x 252.00) | `lw450.ppd` |
 | printable area | `ImageableArea` 4.32 4.32 76.08 235.44 pt, i.e. 25.3 x 81.5 mm; margins 1.5 mm, except 1.0 mm on the x = W side and 5.8 mm at the y = H end | `lw450.ppd` |
-| registration | the page lands on the sticker to within ~1 mm, every edge's loss equal to the driver's margin | a mm-ladder test label, photographed |
+| registration | *Amended 2026-11-23:* the page top lands 5.5 mm into the sticker (the whole page is printed 5.5 mm further along it, toward its trailing end; the page's bottom ~5 mm falls off the sticker). The 2026-11-21 reading, "within ~1 mm", came from another machine and disagrees; the offset may differ between printers | a mm-ladder test label, photographed (2026-11-21); `docs/examples/dymo_calibrate.py` on ten64 (2026-11-23) |
 | resolution | 300 x 300 dpi (`DymoPrintQuality=Text`), 300 x 600 dpi (`Graphics`) | `lw450.ppd` |
 | as IPP sees it | `media-size-supported` has `{x-dimension: 2786, y-dimension: 8890}` (1/100 mm); `media-supported` names it `custom_27.86x88.9mm_27.86x88.9mm`; `media-col-database` gives it margins 152 / 102 / 152 / 584 (left / right / bottom / top); `printer-resolution-supported` 300x300 and 300x600 dpi; no `DymoPrintQuality` attribute; `media-default` `unknown` | Get-Printer-Attributes on `ipp://localhost:631/printers/LabelWriter-450`, 2026-11-22 |
 
@@ -203,8 +207,9 @@ not to collide. `render(...)` hands a roll to `roll.render_roll(docs, out,
 roll, only, outline, pinned_names, order, invariant)`, which writes one page
 per sticker:
 whole labels first, host by host, exactly in `all_labels` order, then the
-micro pairs. Each page: the `Strip` placed centred in the printable area and
-rotated 90° onto the portrait page.
+micro pairs. Each page: the `Strip` placed in the strip box (the printable area less 1
+mm, moved up the page by the feed offset; amended 2026-11-23) and rotated 90°
+onto the portrait page.
 
 `--outline` on a roll draws the sticker's edge and the strip box, for a
 plain-paper proof. `--start` has no meaning on a roll and is refused; so are
@@ -275,8 +280,10 @@ printed.
 ## Testing
 
 - **Geometry** (`tests/test_stock.py`): the roll's page is the driver's
-  page; the strip box, placed and rotated, lies inside the printable area on
-  every edge; two micro labels and their cut line fit the strip box.
+  page; the strip box, placed and rotated, lies 1 mm inside the printable
+  area as the printer puts it (the printable area shifted by the feed
+  offset; amended 2026-11-23) and inside the page, and its size is still
+  the printable area less 1 mm; two micro labels and their cut line fit the strip box.
 - **Full labels unchanged**: the existing sheets render byte-identical
   before and after the `Label` refactor (golden hashes taken first).
 - **Every strip, every fixture**: each record in `tests/data` that makes a
@@ -308,6 +315,25 @@ The gallery gains a strip of each kind (`docs/examples/render.py`).
 - `rpi-hwid-sheet` printing to the roll.
 - A strip form of `render_label` for the fpgas.online site.
 - Strip labels on sheets (no sheet stock has 28 x 89 mm stickers here).
+
+## Confirmed on paper (2026-11-23)
+
+Printed on ten64, LabelWriter 450, DYMO's own driver, 19 stickers:
+
+- CUPS honoured `printer-resolution` 300x600 and `DymoPrintQuality=Graphics`
+  (Get-Job-Attributes on the job).
+- 19 stickers printed in 86 s, 4.5 s per sticker, inside `job_wait`'s 4.8 s
+  per sticker.
+- The strips came out cut off at their x = 0 end and with ~11 mm blank at the
+  other where the PDF has 6.8 mm. The CUPS raster and the byte stream
+  `raster2dymolw` sends (label length 2100 lines = 88.9 mm at 600 dpi,
+  leading blank lines as `ESC f` skips, no trimming) keep the PDF's
+  positions exactly. A calibration sticker (`docs/examples/dymo_calibrate.py`,
+  a mm scale numbered from the page top) showed the page top landing 5.5 mm
+  into the sticker (measured 5.56) and the sticker's trailing edge at ~84.0
+  mm from the page top. The whole page is printed 5.5 mm further along the
+  sticker, so the strip box moved up the page by 5.5 mm (`Roll.feed_offset`,
+  decision 6). The 28 mm (cross) axis was right.
 
 ## To confirm on the first printed roll
 

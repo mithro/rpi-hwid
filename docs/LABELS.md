@@ -120,7 +120,18 @@ across off the sticker, and no setting moves it. The LabelWriter cannot say
 what roll is loaded, so the queue is told: `PageSize=w79h252.2` is the 99010.
 The driver's printable area (`*ImageableArea` 4.32 4.32 76.08 235.44 pt on
 the 79 x 252 pt page) leaves 1.5 mm and 1.0 mm unprinted across the sticker,
-and 1.5 mm and 5.8 mm along it; the strips keep 1 mm inside that area.
+and 1.5 mm and 5.8 mm along it. The strip box is that printable area less
+1 mm all round, moved by the measured feed offset: on DYMO's driver the
+LabelWriter 450 puts the page 5.5 mm further along the sticker than the page
+says (`Roll.feed_offset`, 2026-11-23), so the box sits 5.5 mm higher on the
+page. Another printer may differ. To measure one, print the calibration
+sticker (a mm scale numbered from the page top, the printable area dashed, the
+strip box solid):
+
+    uv run docs/examples/dymo_calibrate.py --out dymo-calibrate.pdf
+    lp -d LabelWriter-450 -o PageSize=w79h252.2 -o print-scaling=none dymo-calibrate.pdf
+
+and read which mm mark sits at the sticker's leading edge: that is the offset.
 
 The images below are the strips as rendered, with `--outline` drawn: the
 sticker's edge and the strip's box.
