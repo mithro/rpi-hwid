@@ -50,14 +50,29 @@ def test_the_99010_roll_is_the_dymo_drivers_page():
     assert R.media_size == (2786, 8890)
 
 
-def test_the_strip_box_is_the_printable_area_less_a_millimetre():
+def test_the_strip_box_is_the_printable_area_less_a_millimetre_moved_by_the_feed_offset():
     x, y, w, h = R.strip_box
     x0, y0, x1, y1 = R.printable
-    assert (x - x0, y - y0, x1 - x - w, y1 - y - h) == pytest.approx((mm,) * 4)
+    assert (x - x0, y - y0 - R.feed_offset, x1 - x - w, y1 - y + R.feed_offset - h) \
+        == pytest.approx((mm,) * 4)
+    assert (x, y, w, h) == pytest.approx(
+        (4.32 + mm, 4.32 + mm + 5.5 * mm, 76.08 - 4.32 - 2 * mm, 235.44 - 4.32 - 2 * mm))
+    assert y + h <= R.page[1]
     # the strip is the box turned a quarter: its length runs up the page
     assert pytest.approx((h, w)) == (strip.STRIP_W, strip.STRIP_H)
     assert strip.STRIP_W / mm == pytest.approx(79.5, abs=0.05)
     assert strip.STRIP_H / mm == pytest.approx(23.3, abs=0.05)
+
+
+def test_the_99010_feed_offset_is_the_5_5_mm_measured_on_paper():
+    """2026-11-23, ten64, LabelWriter 450: the page top lands 5.5 mm into the
+    sticker. Moving the box must not resize the strip."""
+    assert R.feed_offset == pytest.approx(5.5 * mm)
+    _, _, w, h = R.strip_box
+    x0, y0, x1, y1 = R.printable
+    assert w / mm == pytest.approx((x1 - x0) / mm - 2, abs=0.01)
+    assert h / mm == pytest.approx((y1 - y0) / mm - 2, abs=0.01)
+    assert (w / mm, h / mm) == pytest.approx((23.3, 79.5), abs=0.05)
 
 
 @pytest.mark.parametrize("u", [0, strip.STRIP_W])
@@ -66,7 +81,10 @@ def test_every_corner_of_the_strip_lands_in_the_printable_area(u, v):
     x, y = roll.page_point(R, u, v)
     x0, y0, x1, y1 = R.printable
     assert x0 + mm - 1e-6 <= x <= x1 - mm + 1e-6
-    assert y0 + mm - 1e-6 <= y <= y1 - mm + 1e-6
+    # the printer puts the page feed_offset further along the sticker, so the
+    # printable area is, on the page, that much higher
+    assert y0 + R.feed_offset + mm - 1e-6 <= y <= y1 + R.feed_offset - mm + 1e-6
+    assert 0 <= y <= R.page[1]
 
 
 def test_two_micro_labels_fit_a_strip():
@@ -202,7 +220,10 @@ def test_the_transform_render_roll_applies_puts_the_strip_in_the_printable_area(
     assert (x, y) == pytest.approx(roll.page_point(R, u, v))
     x0, y0, x1, y1 = R.printable
     assert x0 + mm - 1e-6 <= x <= x1 - mm + 1e-6
-    assert y0 + mm - 1e-6 <= y <= y1 - mm + 1e-6
+    # the printer puts the page feed_offset further along the sticker, so the
+    # printable area is, on the page, that much higher
+    assert y0 + R.feed_offset + mm - 1e-6 <= y <= y1 + R.feed_offset - mm + 1e-6
+    assert 0 <= y <= R.page[1]
 
 
 def test_the_library_api_gets_the_roll_through_render_sheet(data_dir):

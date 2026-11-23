@@ -166,10 +166,14 @@ class Roll:
     the size (`ppd_size`, for lp and the docs) and IPP's (`media_size`,
     hundredths of a millimetre, which is how CUPS lists a PPD size). Labels
     on a roll are strips (rpi_hwid.strip), drawn in `strip_box` turned a
-    quarter so they run along the sticker."""
+    quarter so they run along the sticker. `feed_offset` (points) is how
+    much further along the sticker than the driver's page says the printer
+    puts the page, toward the page's bottom (low y); `strip_box` is moved up
+    the page by it, so the strip lands where the printable area says."""
     name: str
     page: tuple[float, float]
     printable: tuple[float, float, float, float]
+    feed_offset: float
     ppd_size: str
     media_size: tuple[int, int]
     note: str
@@ -177,21 +181,34 @@ class Roll:
     @property
     def strip_box(self):
         """(x, y, w, h) on the page, points: the printable area less 1 mm
-        all round (the sticker's corners are rounded, and the print lands
-        on it to about a millimetre)."""
+        all round (the sticker's corners are rounded), moved up the page by
+        `feed_offset` because the printer puts the page that much further
+        along the sticker. The size is the printable area's less 2 mm
+        either way; the box must stay inside the page."""
         x0, y0, x1, y1 = self.printable
-        return x0 + mm, y0 + mm, x1 - x0 - 2 * mm, y1 - y0 - 2 * mm
+        box = (x0 + mm, y0 + mm + self.feed_offset,
+               x1 - x0 - 2 * mm, y1 - y0 - 2 * mm)
+        assert box[1] + box[3] <= self.page[1], "the feed offset pushes the strip box off the page"
+        return box
 
 
 # dymo-99010: DYMO 99010 address labels, 28 x 89 mm, in a LabelWriter 450
 # with DYMO's own CUPS driver (printer-driver-dymo 1.4.0, lw450.ppd, filter
 # raster2dymolw): its *PageSize w79h252.2 "99010 Standard Address" and that
-# size's *ImageableArea. Measured with a mm-ladder label on 2026-11-21: the
-# page lands on the sticker to within ~1 mm. CUPS's generic sample.drv DYMO
-# driver puts it ~4.5 mm along and ~1.5 mm across off the sticker, and no PPD
-# setting can move it (docs/superpowers/specs/2026-11-22-dymo-strip-labels-design.md).
+# size's *ImageableArea. CUPS's generic sample.drv DYMO driver puts the page
+# ~4.5 mm along and ~1.5 mm across off the sticker, and no PPD setting can
+# move it (docs/superpowers/specs/2026-11-22-dymo-strip-labels-design.md).
+# feed_offset: a mm-ladder label measured on another machine on 2026-11-21
+# said the page lands on the sticker to within ~1 mm. The 2026-11-23
+# calibration on ten64 (docs/examples/dymo_calibrate.py, DYMO's own
+# raster2dymolw, whose byte stream was checked to keep the page's positions)
+# disagrees: the page top lands 5.5 mm into the sticker, so the whole page
+# is printed 5.5 mm further along it. The offset may differ between
+# printers. To measure one, print the calibration sticker and read which mm
+# mark (numbered from the page top) sits at the sticker's leading edge.
 ROLLS = {r.name: r for r in (
-    Roll("dymo-99010", (79.0, 252.0), (4.32, 4.32, 76.08, 235.44), "w79h252.2",
+    Roll("dymo-99010", (79.0, 252.0), (4.32, 4.32, 76.08, 235.44), 5.5 * mm,
+         "w79h252.2",
          (2786, 8890),
          note="DYMO 99010 (28 x 89 mm) in a LabelWriter 450 on DYMO's own driver "
               "(printer-driver-dymo, lw450.ppd)"),
