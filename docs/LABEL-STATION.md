@@ -240,8 +240,9 @@ in the manual feed, top edge first.
 
 **"the probe could not tell whether the CAMERA camera has a focus motor".**
 The lens did not answer, so the label is refused rather than printed claiming
-fixed focus. Read it again with the camera streaming, and if it still will not
-answer, see "A field nothing could read" below.
+fixed focus; the read's `camera:` evidence line says what stopped it. Collect
+the board again, and if it still will not answer, see "A field nothing could
+read" below. There is nothing to put right in the read itself.
 
 **The sheet id is not found.** See below: a sheet lives on the machine that
 started it.
