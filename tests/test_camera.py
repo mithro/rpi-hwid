@@ -119,7 +119,8 @@ class Host:
             return ""
         if probe.LENS_READER in args:
             if not module.exists():
-                return f"ERROR=cannot open /dev/i2c-{args[-2]}"
+                bus = args[args.index(probe.LENS_READER) + 1]
+                return f"ERROR=cannot open /dev/i2c-{bus}"
             return f"LENS={self.lens}" if self.lens else ""
         return ""
 
@@ -158,6 +159,32 @@ def test_a_fixed_focus_camera_is_named_by_its_sensor(host):
     assert cams[0]["lens_probe"] == {"addr": "0x0c", "result": "nak", "power": "active"}
 
 
+def test_an_inferred_silence_is_kept_apart_in_the_document(host):
+    """An EIO the empty references gave alike settles the field like a NAK on
+    a powered sensor -- and the document and the evidence line both say it was
+    read from an EIO rather than heard from the address."""
+    v1(host)
+    host.lens = "nak-eio"
+    cam, = probe.collect_cameras()
+    assert cam["lens_probe"] == {"addr": "0x0c", "result": "nak-eio", "power": "active"}
+    assert probe.camera_summary([cam])[0]["autofocus"] is False
+    line = probe.camera_evidence(cam)
+    assert "no lens driver at 0x0c" in line
+    assert "0x0d and 0x0e" in line
+
+
+def test_an_inferred_silence_from_an_unpowered_sensor_settles_nothing(host, monkeypatch):
+    """The guard that stands behind the inference: no powered sensor, no
+    field, however the silence was read. An idle sensor is held on now, so
+    the unpowered read left is the one on a sensor that could not be."""
+    v1(host, power="suspended")
+    refuse_power(host, monkeypatch)
+    host.lens = "nak-eio"
+    cam, = probe.collect_cameras()
+    assert probe.camera_summary([cam])[0]["autofocus"] is None
+    assert "could not be held on for the read" in probe.camera_evidence(cam)
+
+
 def test_an_unbound_lens_chip_beside_the_sensor_is_autofocus(host):
     """pi-sw2-p47: nothing in the kernel knows the lens, but its driver chip
     answers on the camera's bus."""
@@ -165,8 +192,9 @@ def test_an_unbound_lens_chip_beside_the_sensor_is_autofocus(host):
     host.lens = "ack"
     assert probe.camera_summary(probe.collect_cameras()) == [
         {"sensor": "ov5647", "variant": None, "autofocus": True, "lens": "0x0c"}]
-    # asked on the sensor's own bus, at the lens address, and nowhere else
-    assert [a[-2:] for a in host.reads()] == [["10", "0x0c"]]
+    # asked on the sensor's own bus, at the lens address, with the two empty
+    # addresses an EIO there is compared with, and nowhere else
+    assert [a[-4:] for a in host.reads()] == [["10", "0x0c", "0x0d", "0x0e"]]
 
 
 def test_an_idle_sensor_is_held_powered_for_the_lens_read(host):
@@ -261,7 +289,8 @@ def test_a_read_that_could_not_be_made_settles_nothing(host):
 
 
 def run_reader(monkeypatch, capsys, error):
-    """The root reader itself, with the read failing with `error`."""
+    """The root reader itself, with every address failing with `error` -- a
+    whole bus that will not answer -- and the argv lens_chip_probe builds."""
     import errno
     import fcntl
 
@@ -270,7 +299,7 @@ def run_reader(monkeypatch, capsys, error):
     monkeypatch.setattr(os, "open", lambda path, flags: 99)
     monkeypatch.setattr(os, "close", lambda fd: None)
     monkeypatch.setattr(fcntl, "ioctl", ioctl)
-    monkeypatch.setattr("sys.argv", ["-c", "10", "0x0c"])
+    monkeypatch.setattr("sys.argv", ["-c", "10", "0x0c", "0x0d", "0x0e"])
     exec(probe.LENS_READER, {})
     return capsys.readouterr().out.strip()
 
@@ -280,13 +309,78 @@ def test_only_an_address_nak_is_silence(monkeypatch, capsys, error):
     assert run_reader(monkeypatch, capsys, error) == "LENS=nak"
 
 
-@pytest.mark.parametrize("error", ["ETIMEDOUT", "EAGAIN", "EIO"])
+@pytest.mark.parametrize("error", ["ETIMEDOUT", "EAGAIN"])
 def test_a_bus_fault_is_not_silence(monkeypatch, capsys, error):
-    """A timeout or a stuck bus says nothing about the lens: unread, so a
-    powered camera's autofocus stays unknown rather than false."""
+    """A timeout says nothing about the lens: unread, so a powered camera's
+    autofocus stays unknown rather than false."""
     out = run_reader(monkeypatch, capsys, error)
     assert out.startswith("ERROR=")
     assert os.strerror(getattr(__import__("errno"), error)) in out
+
+
+def test_a_bus_that_eios_at_every_address_cannot_be_told_from_an_empty_one(
+        monkeypatch, capsys):
+    """What the references cannot do: a bus something is holding fails with
+    EIO at the empty addresses too, exactly as an empty address does on this
+    adapter, so the reader says "nak-eio" for it. The field is settled on that
+    only where the sensor was powered for the read, which a bus nothing can
+    drive would not have managed -- and the document keeps the two apart."""
+    assert run_reader(monkeypatch, capsys, "EIO") == "LENS=nak-eio"
+
+
+def run_reader_at(monkeypatch, capsys, errors):
+    """The root reader with the two empty references, each address failing
+    with the errno name `errors` gives it (None: it answers)."""
+    import errno
+    import fcntl
+
+    at = {}
+
+    def ioctl(fd, request, arg):
+        at["addr"] = arg
+
+    def read(fd, n):
+        name = errors.get(at["addr"])
+        if name:
+            raise OSError(getattr(errno, name), os.strerror(getattr(errno, name)))
+        return b"\0"
+    monkeypatch.setattr(os, "open", lambda path, flags: 99)
+    monkeypatch.setattr(os, "close", lambda fd: None)
+    monkeypatch.setattr(os, "read", read)
+    monkeypatch.setattr(fcntl, "ioctl", ioctl)
+    monkeypatch.setattr("sys.argv", ["-c", "10", "0x0c", "0x0d", "0x0e"])
+    exec(probe.LENS_READER, {})
+    return capsys.readouterr().out.strip()
+
+
+def test_eio_is_silence_where_the_empty_addresses_say_it_alike(monkeypatch, capsys):
+    """pi-sw2-p48's camera bus (bcm2835 behind the i2c mux) says an empty
+    address with EIO: 0x0c, 0x0d and 0x0e all EIO, the sensor answering."""
+    assert run_reader_at(monkeypatch, capsys,
+                         {0x0C: "EIO", 0x0D: "EIO", 0x0E: "EIO"}) == "LENS=nak-eio"
+
+
+@pytest.mark.parametrize("refs", [{0x0D: None, 0x0E: "EIO"}, {0x0D: "EIO", 0x0E: "ETIMEDOUT"}])
+def test_eio_where_the_empty_addresses_differ_is_not_silence(monkeypatch, capsys, refs):
+    """Where a reference answers, or fails otherwise, EIO at the lens says
+    nothing settled about it: unread, as before."""
+    out = run_reader_at(monkeypatch, capsys, {**refs, 0x0C: "EIO"})
+    assert out.startswith("ERROR=")
+    # the reference that disagreed is named: it, not the lens, is why
+    odd = [a for a, e in refs.items() if e != "EIO"]
+    assert all(f"0x{a:02x}" in out for a in odd)
+
+
+def test_a_reference_a_driver_owns_leaves_the_lens_unread(monkeypatch, capsys):
+    """EBUSY comes from the I2C_SLAVE ioctl, before anything reaches the wire:
+    a reference the kernel will not let us have settles nothing."""
+    out = run_reader_at(monkeypatch, capsys, {0x0C: "EIO", 0x0D: "EBUSY", 0x0E: "EIO"})
+    assert out.startswith("ERROR=")
+    assert "0x0d" in out
+
+
+def test_an_answer_at_the_lens_address_is_still_autofocus(monkeypatch, capsys):
+    assert run_reader_at(monkeypatch, capsys, {0x0D: "EIO", 0x0E: "EIO"}) == "LENS=ack"
 
 
 def test_an_owned_address_is_not_silence(monkeypatch, capsys):
