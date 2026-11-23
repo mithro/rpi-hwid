@@ -4,6 +4,7 @@ finds them."""
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -484,7 +485,7 @@ def test_a_sensor_without_runtime_pm_is_not_said_to_have_been_held_on(host):
     assert probe.camera_summary([cam])[0]["autofocus"] is None
     line = probe.camera_evidence(cam)
     assert "no runtime PM to hold it on with" in line
-    assert "None" not in line.replace("(None)", "")
+    assert "None" not in line
 
 
 def test_a_sensor_slow_to_power_up_is_waited_for(host, monkeypatch):
@@ -573,3 +574,131 @@ def test_a_lens_read_not_put_back_inside_the_hold_is_said_once(host, monkeypatch
     assert msg.count(probe.NOT_AS_FOUND) == 1
     assert 'writing "on" to' in msg
     assert "it will not unload" in msg
+
+
+# --- what the probe may claim, and what it may blame a host for ----------------
+
+
+def test_a_running_sensor_that_suspends_during_the_read_settles_nothing(host, monkeypatch):
+    """Found "active", a sensor is read as it stands -- nothing holds it on,
+    and the read is not instant. One that autosuspends before the lens is
+    asked was not powered for it, whatever it said a moment earlier, and must
+    not come out as a fixed-focus camera."""
+    v1(host)
+    real = host.sh
+
+    def suspends(args, timeout=15):
+        if probe.LENS_READER in args:
+            (host.root / POWER / "runtime_status").write_text("suspended\n")
+        return real(args, timeout)
+    monkeypatch.setattr(probe, "sh", suspends)
+    cam, = probe.collect_cameras()
+    assert cam["lens_probe"]["power"] == "active, then suspended"
+    assert probe.camera_summary([cam])[0]["autofocus"] is None
+    assert "did not stay powered through the read" in probe.camera_evidence(cam)
+    assert host.writes() == []          # a running sensor is still not written to
+
+
+def test_a_sensor_something_else_holds_by_then_is_not_the_probes_to_put_back(
+        host, monkeypatch):
+    """A stream started while the probe read: the control is back where it
+    was, and the sensor stays up because its new user holds it. The probe's
+    own change is undone, so this is not a host it failed to put back -- and
+    aborting here would abort the document on the very hosts that run a
+    camera."""
+    v1(host, power="suspended")
+    real = host.sh
+
+    def taken(args, timeout=15):
+        out = real(args, timeout)
+        if probe.POWER_WRITER in args and args[-1] == "auto":
+            (host.root / POWER / "runtime_status").write_text("active\n")
+            (host.root / POWER / "runtime_usage").write_text("1\n")
+        return out
+    monkeypatch.setattr(probe, "sh", taken)
+    cam, = probe.collect_cameras()
+    assert probe.camera_summary([cam])[0]["autofocus"] is False
+    assert (host.root / POWER / "control").read_text().strip() == "auto"
+
+
+def test_a_sensor_found_mid_resume_is_back_wherever_it_lands(host, monkeypatch):
+    """"resuming" is a moment, not a state to be put back to: a sensor caught
+    in it cannot be asked to be found there again."""
+    v1(host, power="resuming")
+    real = host.sh
+
+    def lands(args, timeout=15):
+        out = real(args, timeout)
+        if probe.POWER_WRITER in args and args[-1] == "auto":
+            (host.root / POWER / "runtime_status").write_text("suspended\n")
+        return out
+    monkeypatch.setattr(probe, "sh", lands)
+    probe.collect_cameras()
+
+
+def test_a_driver_with_no_runtime_pm_says_so_and_is_not_written_to(host):
+    """Every i2c client has the power/ attributes, so the control being there
+    settles nothing: a driver with no runtime PM says "unsupported" in its
+    status, and writing "on" to it would change a host for no read at all."""
+    v1(host, power="unsupported")
+    cam, = probe.collect_cameras()
+    assert host.writes() == []
+    assert cam["lens_probe"]["power"] == "no runtime PM"
+    assert probe.camera_summary([cam])[0]["autofocus"] is None
+    line = probe.camera_evidence(cam)
+    assert "no runtime PM to hold it on with" in line
+    assert "None" not in line
+
+
+def test_a_sensor_that_could_not_suspend_again_is_not_held_on(host):
+    """A negative autosuspend_delay_ms prevents runtime suspends: resumed, it
+    would stay up, and putting it back would be beyond the probe. It is left
+    as it is and the lens asked unpowered, as for a sudo that said no."""
+    v1(host, power="suspended")
+    (host.root / POWER / "autosuspend_delay_ms").write_text("-1\n")
+    cam, = probe.collect_cameras()
+    assert host.writes() == []
+    assert cam["lens_probe"]["power"].startswith("unread: could not hold it on")
+    assert probe.camera_summary([cam])[0]["autofocus"] is None
+    assert "could not be held on for the read" in probe.camera_evidence(cam)
+
+
+def test_the_wait_for_a_sensor_to_go_back_down_is_capped(host, monkeypatch):
+    """However long the sensor's own autosuspend delay is, a collect does not
+    hang on it: it says the sensor is still up instead."""
+    v1(host, power="suspended")
+    (host.root / POWER / "autosuspend_delay_ms").write_text("600000\n")
+    monkeypatch.setattr(probe, "SENSOR_BACK_S", 0.2)
+    real = host.sh
+
+    def stays_up(args, timeout=15):
+        out = real(args, timeout)
+        if probe.POWER_WRITER in args and args[-1] == "auto":
+            (host.root / POWER / "runtime_status").write_text("active\n")
+        return out
+    monkeypatch.setattr(probe, "sh", stays_up)
+    began = time.monotonic()
+    with pytest.raises(probe.HostNotAsFoundError):
+        probe.collect_cameras()
+    assert time.monotonic() - began < 5
+
+
+def test_a_hold_that_failed_and_landed_anyway_says_why_without_the_script(
+        host, monkeypatch):
+    """The write failed and took effect regardless (a timeout whose kernel-side
+    write lands). The host is not as it was found, and the reason is given
+    without the script `python -c` was passed."""
+    v1(host, power="suspended")
+
+    def lands_then_fails(args, timeout=15):
+        if probe.POWER_WRITER in args and args[-1] == "on":
+            (host.root / POWER / "control").write_text("on\n")
+            raise probe.CommandFailedError(
+                f"`{' '.join(args)}` did not finish within 15 s")
+        return probe.sh(args, timeout)
+    monkeypatch.setattr(probe, "sh_checked", lands_then_fails)
+    with pytest.raises(probe.HostNotAsFoundError) as e:
+        probe.collect_cameras()
+    msg = str(e.value)
+    assert "did not finish within 15 s" in msg
+    assert "import sys" not in msg
