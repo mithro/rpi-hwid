@@ -1723,31 +1723,77 @@ def put_pins_back(label, bus, before, cause=None):
 SENSOR_DRIVER = re.compile(r"^(arducam|(ov|imx|s5k|gc|hm|og|ar|mt9[a-z])[0-9])")
 LENS_DRIVER = re.compile(r"^(ad5398|dw97|dw98|ak73|lc898)")
 LENS_ADDR = 0x0C
+# Addresses no Pi camera module puts anything at, read beside LENS_ADDR when
+# it fails with EIO: on the camera buses (i2c-10 on a Pi 4 or 3B+) an empty
+# address comes back EIO, not ENXIO or EREMOTEIO. pi-sw2-p48, 2026-10-18:
+# 0x0c, 0x0d, 0x0e and 0x40 all EIO, the ov5647 at 0x36 answering; pi-sw2-p35
+# (#94): 0x0c answering while the empty addresses gave that same EIO.
+#
+# What the adapter means by EIO is not "nobody acked": in i2c-bcm2835 a NAK is
+# EREMOTEIO and EIO is what is left after the clock-stretch timeout, so a bus
+# something is holding reads the same way as an empty address. The references
+# cannot tell those two apart -- a held bus fails at every address, which is
+# what they test for. So an EIO they give alike is read as silence but kept
+# apart from a NAK, as "nak-eio", and a field settled that way says so in the
+# document and in the evidence line. What keeps it honest is the sensor: only
+# a camera powered for the read settles anything (camera_autofocus), and a bus
+# nothing can drive is one its sensor could not have resumed on.
+LENS_EMPTY_REFS = (0x0D, 0x0E)
+# what the reader says when nothing answered: heard (a NAK), or inferred from
+# an EIO the empty references gave alike
+LENS_SILENT = ("nak", "nak-eio")
 
 # Run as root, like the other readers that need a device node a login cannot
-# open: one byte read from one address, which is what `i2cdetect -r` does and
+# open: one byte read from the lens address -- and, where that fails with EIO,
+# one from each of LENS_EMPTY_REFS -- which is what `i2cdetect -r` does and
 # cannot disturb a lens driver, whose only register is the position it is
-# already holding. Never a write, and never an address a driver owns.
+# already holding. Never a write, and never an address a driver owns: the
+# I2C_SLAVE ioctl refuses an address a driver holds, with EBUSY, before
+# anything of ours reaches the wire.
 LENS_READER = r'''
 import fcntl, os, sys
 bus, addr = int(sys.argv[1]), int(sys.argv[2], 16)
+refs = [int(a, 16) for a in sys.argv[3:]]
 try:
     fd = os.open("/dev/i2c-%d" % bus, os.O_RDWR)
 except OSError as e:
     print("ERROR=cannot open /dev/i2c-%d: %s" % (bus, e.strerror)); sys.exit(0)
+def errno_at(a):
+    try:
+        fcntl.ioctl(fd, 0x0703, a)
+        os.read(fd, 1)
+        return 0
+    except (OSError, IOError) as e:
+        return e.errno
+def said(e):
+    if e == 0:
+        return "answered"
+    return os.strerror(e) if e else "failed with no errno"
 try:
-    fcntl.ioctl(fd, 0x0703, addr)
-    os.read(fd, 1)
-    print("LENS=ack")
-except (OSError, IOError) as e:
-    # only a NAK (ENXIO, EREMOTEIO) is silence; a timeout or a stuck bus
-    # says nothing about the lens
-    if e.errno in (6, 121):
+    err = errno_at(addr)
+    # only a NAK (ENXIO, EREMOTEIO) is heard silence; a timeout or a stuck bus
+    # says nothing about the lens. An EIO is the adapter's own error, which on
+    # these camera buses is also what an empty address gives: one the addresses
+    # known to be empty give alike is read as silence, as "nak-eio", which the
+    # reader of the document can tell from an address that said so itself.
+    if err == 0:
+        print("LENS=ack")
+    elif err in (6, 121):
         print("LENS=nak")
-    elif e.errno == 16:
+    elif err == 16:
         print("ERROR=address owned by a kernel driver")
+    elif err == 5 and refs:
+        odd = [(a, errno_at(a)) for a in refs]
+        odd = [(a, e) for a, e in odd if e != 5]
+        if odd:
+            # name the reference that disagreed: it, not the lens, is why
+            # this read settled nothing
+            print("ERROR=%s, but %s" % (said(err), ", ".join(
+                "0x%02x %s" % (a, said(e)) for a, e in odd)))
+        else:
+            print("LENS=nak-eio")
     else:
-        print("ERROR=%s" % e.strerror)
+        print("ERROR=%s" % said(err))
 finally:
     os.close(fd)
 '''
@@ -1787,8 +1833,10 @@ def v4l_subdevs():
 
 def lens_chip_probe(bus):
     """Whether anything answers at the lens address on `bus`: "ack", "nak",
-    or "unread: why". Loads i2c-dev for the read where it is not loaded, and
-    takes it out again; the kernel's i2c modules and nodes are compared
+    "nak-eio" (nothing there, read from an EIO the empty references gave
+    alike, not heard as a NAK), or "unread: why". Loads i2c-dev for the read
+    where it is not loaded, and takes it out again; the kernel's i2c modules
+    and nodes are compared
     before and after, whether or not it loaded anything, and a host not left
     as it was found raises HostNotAsFoundError (HostChanges). The reader
     itself only reads, and what it could not read is said as "unread"."""
@@ -1802,12 +1850,12 @@ def lens_chip_probe(bus):
             adapter = os.path.exists(ROOT + "/sys/bus/i2c/devices/i2c-%d" % bus)
             wait_for(ROOT + "/dev/i2c-%d" % bus, BUS_SETTLE_S if adapter else 0)
         out = sh(["sudo", sys.executable or "python3", "-c", LENS_READER,
-                  str(bus), "0x%02x" % LENS_ADDR])
+                  str(bus), "0x%02x" % LENS_ADDR] + ["0x%02x" % a for a in LENS_EMPTY_REFS])
     except BaseException as e:
         changes.put_back(e)
         raise
     changes.put_back()
-    m = re.search(r"LENS=(ack|nak)", out)
+    m = re.search(r"LENS=(ack|nak-eio|nak)", out)
     if m:
         return m.group(1)
     err = re.search(r"ERROR=(.*)", out)
@@ -1851,8 +1899,9 @@ def camera_autofocus(cam):
     if result == "ack":
         return True, cam["lens_probe"]["addr"]
     # A lens driver fed from the sensor's supply is off while the sensor is,
-    # so silence means "no lens driver" only on a sensor that is running.
-    if result == "nak" and cam["power"] == "active":
+    # so silence means "no lens driver" only on a sensor that is running --
+    # which is also what says the bus was working under an inferred silence.
+    if result in LENS_SILENT and cam["power"] == "active":
         return False, None
     return None, None
 
@@ -1865,9 +1914,13 @@ def camera_evidence(cam):
         why = "lens driver %s bound" % cam["lens_driver"]
     elif result == "ack":
         why = "a lens driver chip answers at %s, with no kernel driver" % lens["addr"]
-    elif result == "nak" and cam["power"] == "active":
+    elif result in LENS_SILENT and cam["power"] == "active":
         why = "no lens driver at %s" % lens["addr"]
-    elif result == "nak":
+        if result == "nak-eio":
+            why += (" (EIO there, and at %s alike, which is an empty address on this "
+                    "adapter and not a NAK it answered with)" % " and ".join(
+                        "0x%02x" % a for a in LENS_EMPTY_REFS))
+    elif result in LENS_SILENT:
         why = ("nothing at %s, but the sensor is not powered (%s), so a lens driver "
                "could not have answered" % (lens["addr"], cam["power"]))
     else:
