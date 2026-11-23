@@ -140,7 +140,9 @@ Autofocus is settled in this order:
    to the chip, so this shows what the boot config says, not that a chip
    answered.
 2. **A chip answering at `0x0c`** with no driver, which is where every lens
-   driver the Pi overlays know sits. One byte is read, as root, never written;
+   driver the Pi overlays know sits. One byte is read, as root, never written
+   (and, where that read fails with `EIO`, one byte from each of `0x0d` and
+   `0x0e` as well -- see step 3);
    `i2c-dev` is loaded for the read where it is not loaded, and unloaded after;
    the loaded i2c modules and `/dev/i2c-*` nodes are compared before and after,
    and a module that will not unload, or anything else left different, stops
@@ -150,6 +152,24 @@ Autofocus is settled in this order:
    (its runtime status is `active`, as it is while a stream runs). A lens
    driver fed from the sensor's supply is off when the sensor is, so silence
    from an idle camera is `null`.
+   - Silence is a NAK (`ENXIO` or `EREMOTEIO`): the bus carried the question
+     and the address said nothing is there. On the Pi camera buses an empty
+     address comes back `EIO` instead, so an `EIO` at `0x0c` is read as silence
+     where `0x0d` and `0x0e` -- addresses no camera module uses -- fail with
+     the very same `EIO`. Those two are read only once `0x0c` has failed that
+     way, and an address a driver owns is refused by the `I2C_SLAVE` ioctl
+     before anything reaches the wire.
+   - That silence is inferred rather than heard, and the document keeps it
+     apart: the result is `nak-eio`, not `nak`, and the evidence line names the
+     two references. It cannot be told apart from a bus something is holding --
+     in `i2c-bcm2835` a NAK is `EREMOTEIO` and `EIO` is what is left after the
+     clock-stretch timeout, which fails at every address alike. What keeps it
+     honest is the sensor: the field is settled only on a camera powered for
+     the read, and a bus nothing can drive is one its sensor could not have
+     resumed on.
+   - Anything else leaves the lens unread: a timeout, or a reference that
+     answers or fails differently, and the message names the reference that
+     disagreed.
 
 Which lens driver chip it is cannot be read either: the common ones (AD5398,
 DW9714) have no ID register.
