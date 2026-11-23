@@ -829,8 +829,12 @@ class HostChanges(object):
             return
         why = []
         if cause is not None:
-            # a read that was itself a host not as found says so once
-            why.append("the read failed: %s" % failure(cause).replace(NOT_AS_FOUND, "", 1))
+            # a read that was itself a host not as found says so once; a
+            # command's own reason is taken without the argv it quotes, which
+            # for a -c script is the whole script (self.ran names what ran)
+            said = (command_failure(cause) if isinstance(cause, CommandFailedError)
+                    else failure(cause))
+            why.append("the read failed: %s" % said.replace(NOT_AS_FOUND, "", 1))
         if failed is not None:
             why.append("putting it back failed: %s" % failed[0])
             if failed[1]:
@@ -1784,6 +1788,10 @@ with open(sys.argv[1], "w") as f:
 # lens driver chip is then given to come up (a VCM driver wants a few ms)
 SENSOR_POWER_S = 2.0
 LENS_POWER_SETTLE_S = 0.1
+# the longest the probe waits for a sensor to go back down once its control is
+# back, however long its own autosuspend delay is: a collect that hangs on a
+# camera is worse than one that says the sensor is still up
+SENSOR_BACK_S = 10.0
 
 
 def i2c_clients():
@@ -1857,6 +1865,41 @@ def suspended(status):
     return status in ("suspended", "suspending")
 
 
+def running_lens_probe(slot, bus):
+    """(lens_chip_probe(bus), the sensor's runtime status through the read)
+    for a sensor found running, which is read as it stands: nothing holds it
+    on, and the read is not instant -- i2c-dev may be loaded and its node
+    waited for first -- so an idle camera can autosuspend in between. The
+    status is read again afterwards, and only a sensor active on both sides
+    is recorded as active; "active, then suspended" settles nothing, as an
+    unpowered read does."""
+    result = lens_chip_probe(bus)
+    after = read(ROOT + "/sys/bus/i2c/devices/%s/power/runtime_status" % slot)
+    return result, "active" if after == "active" else "active, then %s" % after
+
+
+def autosuspend_delay(base):
+    """How long a sensor waits before suspending itself, in seconds -- or
+    None where its autosuspend_delay_ms is negative, which prevents runtime
+    suspends: resumed then, it could not go back down at all."""
+    try:
+        ms = int(read(base + "autosuspend_delay_ms") or 0)
+    except ValueError:
+        return 0.0
+    return None if ms < 0 else ms / 1000.0
+
+
+def held_by_someone(base):
+    """Whether something holds the sensor now. The probe gives its own hold
+    back before this is asked, so a runtime PM user left is someone else's --
+    a stream started while the probe read, say -- and the power state is
+    theirs to set, not a host the probe failed to put back."""
+    try:
+        return int(read(base + "runtime_usage") or 0) > 0
+    except ValueError:
+        return False
+
+
 def powered_lens_probe(slot, bus):
     """(lens_chip_probe(bus), the sensor's runtime status during it), with
     the sensor at `slot` held on for the read where it was idle. The status
@@ -1868,15 +1911,27 @@ def powered_lens_probe(slot, bus):
     host left with the sensor held on raises HostNotAsFoundError, as does
     one whose sensor does not go back to the status it was found in --
     writing the control back only lets it suspend, so that is waited for,
-    for its autosuspend delay and SENSOR_POWER_S more."""
+    for its autosuspend delay and SENSOR_POWER_S more, SENSOR_BACK_S at the
+    most. A sensor something else holds by then (a stream started while the
+    probe read) is that other user's to power, and is not one the probe
+    failed to put back."""
     base = ROOT + "/sys/bus/i2c/devices/%s/power/" % slot
     control = read(base + "control")
     found = read(base + "runtime_status")
-    if control is None:
+    if control is None or found in (None, "unsupported"):
+        # every i2c client has the power/ attributes, so the control being
+        # there says nothing: a driver with no runtime PM says "unsupported",
+        # and writing "on" to it would change a host for no read at all
         return lens_chip_probe(bus), "no runtime PM"
     if control == "on":
         # held on already, by someone else: read as it is, and left so
         return lens_chip_probe(bus), found
+    delay = autosuspend_delay(base)
+    if delay is None:
+        # it would come up and stay up: not ours to resume
+        return lens_chip_probe(bus), ("unread: could not hold it on: its "
+                                      "autosuspend_delay_ms prevents the suspend that "
+                                      "would put it back")
     where = base[len(ROOT):] + "control"
     changes = HostChanges("holding the sensor at %s on" % slot, watch=[base + "control"])
     changes.begin()
@@ -1901,17 +1956,13 @@ def powered_lens_probe(slot, bus):
         changes.put_back(e)
         raise
     changes.put_back()
-    try:
-        delay = max(0, int(read(base + "autosuspend_delay_ms") or 0)) / 1000.0
-    except ValueError:
-        delay = 0
-    wait = delay + SENSOR_POWER_S
+    wait = min(delay + SENSOR_POWER_S, SENSOR_BACK_S)
     deadline = time.monotonic() + wait
     now = read(base + "runtime_status")
     while not settled(now, found) and time.monotonic() < deadline:
         time.sleep(0.05)
         now = read(base + "runtime_status")
-    if not settled(now, found):
+    if not settled(now, found) and not held_by_someone(base):
         raise HostNotAsFoundError(NOT_AS_FOUND + "after holding the sensor at %s on: its "
                                   "control is back to %s, but it is %s, not %s as it was "
                                   "found, %.1f s later" % (slot, json.dumps(control),
@@ -1922,7 +1973,11 @@ def powered_lens_probe(slot, bus):
 
 def settled(now, found):
     """Whether a sensor is back as it was found: suspending and suspended
-    are one state here, a moment apart."""
+    are one state here, a moment apart. One found mid-resume had no settled
+    state to be put back to, so any it reaches is as good as the one it was
+    caught in."""
+    if found == "resuming":
+        return True
     return suspended(now) if suspended(found) else now == found
 
 
@@ -1951,7 +2006,7 @@ def collect_cameras():
             # an idle sensor is held on for it, since its lens chip shares
             # its supply
             if c["power"] == "active":
-                result, power = lens_chip_probe(bus), "active"
+                result, power = running_lens_probe(c["slot"], bus)
             else:
                 result, power = powered_lens_probe(c["slot"], bus)
             cam["lens_probe"] = {"addr": "0x%02x" % LENS_ADDR, "result": result, "power": power}
@@ -1996,7 +2051,12 @@ def camera_evidence(cam):
             why += " (the sensor, %s, held powered for the read)" % cam["power"]
     elif result == "nak" and lens.get("power") == "no runtime PM":
         why = ("nothing at %s, but the sensor (%s) has no runtime PM to hold it on with, "
-               "so a lens driver may not have been powered" % (lens["addr"], cam["power"]))
+               "so a lens driver may not have been powered" % (
+                   lens["addr"], cam["power"] or "no runtime status"))
+    elif result == "nak" and str(lens.get("power")).startswith("active, then "):
+        why = ("nothing at %s, but the sensor did not stay powered through the read "
+               "(%s), so a lens driver may not have answered" % (lens["addr"],
+                                                                 lens["power"]))
     elif result == "nak" and str(lens.get("power")).startswith("unread"):
         why = ("nothing at %s, but the sensor (%s) could not be held on for the read (%s), "
                "so a lens driver could not have answered" % (
