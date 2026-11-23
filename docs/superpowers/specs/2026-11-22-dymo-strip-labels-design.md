@@ -77,7 +77,7 @@ driver (`printer-driver-dymo` 1.4.0, `lw450.ppd`, filter `raster2dymolw`):
 | sticker | 28 x 89 mm, 130 per roll | DYMO 99010; Farnell/AOS listings |
 | driver page size | `w79h252.2` "99010 Standard Address", 79 x 252 pt (`PaperDimension` 78.96 x 252.00) | `lw450.ppd` |
 | printable area | `ImageableArea` 4.32 4.32 76.08 235.44 pt, i.e. 25.3 x 81.5 mm; margins 1.5 mm, except 1.0 mm on the x = W side and 5.8 mm at the y = H end | `lw450.ppd` |
-| registration | *Amended 2026-11-23:* the page top lands 5.5 mm into the sticker (the whole page is printed 5.5 mm further along it, toward its trailing end; the page's bottom ~5 mm falls off the sticker). The 2026-11-21 reading, "within ~1 mm", came from another machine and disagrees; the offset may differ between printers | a mm-ladder test label, photographed (2026-11-21); `docs/examples/dymo_calibrate.py` on ten64 (2026-11-23) |
+| registration | *Amended 2026-11-23:* the page top lands 5.5 mm into the sticker (the whole page is printed 5.5 mm further along it, toward its trailing end; the page's bottom ~5 mm falls off the sticker). The 2026-11-21 reading, "within ~1 mm", was taken on the previous host computer (the docs do not record whether it was the same LabelWriter) and disagrees; the 2026-11-23 one was on ten64 with raster2dymolw. The difference may come from the printer or from the host chain: re-measure with the calibration sticker when either changes | a mm-ladder test label, photographed (2026-11-21); `docs/examples/dymo_calibrate.py` on ten64 (2026-11-23) |
 | resolution | 300 x 300 dpi (`DymoPrintQuality=Text`), 300 x 600 dpi (`Graphics`) | `lw450.ppd` |
 | as IPP sees it | `media-size-supported` has `{x-dimension: 2786, y-dimension: 8890}` (1/100 mm); `media-supported` names it `custom_27.86x88.9mm_27.86x88.9mm`; `media-col-database` gives it margins 152 / 102 / 152 / 584 (left / right / bottom / top); `printer-resolution-supported` 300x300 and 300x600 dpi; no `DymoPrintQuality` attribute; `media-default` `unknown` | Get-Printer-Attributes on `ipp://localhost:631/printers/LabelWriter-450`, 2026-11-22 |
 
@@ -337,7 +337,15 @@ Printed on ten64, LabelWriter 450, DYMO's own driver, 19 stickers:
 
 ## To confirm on the first printed roll
 
+Settled by the 2026-11-23 print: the quality attributes were honoured; 4.5 s
+per sticker; the feed offset (5.5 mm); and the strips read the right way
+round (the cut was at the strip's left end, and the text was upright and not
+mirrored).
+
+Still open, awaiting a check of the reprinted roll:
+
 - Which end of the sticker comes out of the printer first, so the strip
   reads the right way up as it is peeled (the rotation is one constant).
+- That QR codes scan.
 - That 5.5 pt type and 0.31 mm modules are crisp on this thermal head at
   `Graphics` quality; if not, the minimums move up and the layouts with them.

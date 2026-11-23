@@ -75,7 +75,10 @@ def render_roll(docs: Any, out: str | IO[bytes], roll: labels.Roll, only: set[st
         if outline:
             c.setStrokeColor(HexColor("#bbbbbb"))
             c.setLineWidth(0.3)
-            c.rect(0, 0, *roll.page, stroke=1, fill=0)
+            # The sticker is the page moved up the page by feed_offset (the
+            # printer puts the page that much further along it); its top
+            # edge is beyond the page, so the PDF clips it.
+            c.rect(0, roll.feed_offset, *roll.page, stroke=1, fill=0)
             c.setStrokeColor(black)
         c.saveState()
         _place(c, roll)

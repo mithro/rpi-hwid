@@ -1,11 +1,17 @@
 """One calibration sticker for a DYMO LabelWriter roll: a millimetre scale
 along the page, numbered in mm from the PAGE TOP (raster line 0, the first
-line the printer receives), so the mark at the sticker's leading edge says how
-far along the sticker the printer puts the page. Also outlines the driver's
+line the printer receives). The page top lands INSIDE the sticker, so the 0
+mark is not at its edge: measure with a ruler from the sticker's leading
+edge to the 0 mark; that distance is the feed offset. Cross-check: read the
+mark T at the trailing edge; the offset is about the sticker's length (89 mm)
+minus T (about 0.5 mm uncertainty). Also outlines the driver's
 ImageableArea (dashed) and the roll's strip box (solid).
 
     uv run docs/examples/dymo_calibrate.py [ROLL] [--out dymo-calibrate.pdf]
     lp -d QUEUE -o PageSize=w79h252.2 -o print-scaling=none dymo-calibrate.pdf
+
+Nothing prints before the 0 mark, so a line of text beside it says where to
+measure from.
 
 For dymo-99010 on a LabelWriter 450 the page top landed 5.5 mm into the
 sticker (2026-11-23): Roll.feed_offset.
@@ -52,6 +58,13 @@ def main() -> None:
             c.drawCentredString(0, -2.2 * mm, str(n))
             c.restoreState()
         n += 1
+    # Nothing prints before the 0 mark, so say where to measure from.
+    c.saveState()
+    c.setFont("Helvetica", 4.5)
+    c.translate(spine - 6 * mm, ph - 1 * mm)
+    c.rotate(-90)
+    c.drawString(0, 0, "0 = page top: measure from the sticker's leading edge to here")
+    c.restoreState()
     # Half-mm ticks on the other side, near both ends (first and last 15 mm).
     for k in range(int(ph / mm * 2) + 1):
         d = k * 0.5

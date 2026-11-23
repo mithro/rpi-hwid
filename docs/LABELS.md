@@ -131,10 +131,25 @@ strip box solid):
     uv run docs/examples/dymo_calibrate.py --out dymo-calibrate.pdf
     lp -d LabelWriter-450 -o PageSize=w79h252.2 -o print-scaling=none dymo-calibrate.pdf
 
-and read which mm mark sits at the sticker's leading edge: that is the offset.
+and measure with a ruler from the sticker's leading edge to the 0 mark (the
+page top lands inside the sticker, so nothing prints before it; a line of text
+beside the mark says so): that distance is the offset. Cross-check: read the
+mark T at the trailing edge; the offset is about the sticker's length (89 mm)
+minus T. On 2026-11-23 T read 84.0 to 84.3, i.e. 4.7 to 5.0 mm, against 5.56
+measured directly: allow about 0.5 mm. The 2026-11-21 reading ("within ~1
+mm") was taken on the previous host computer, and the docs do not record
+whether it was the same LabelWriter; the difference may come from the printer
+or from the host chain, so re-measure when either changes.
 
-The images below are the strips as rendered, with `--outline` drawn: the
-sticker's edge and the strip's box.
+The box therefore extends about 4.5 mm past the PPD's ImageableArea top. It
+relies on the driver printing outside its ImageableArea, which the
+2026-11-23 calibration showed it does (raster line 0 printed); the roll job
+sends `print-scaling=none`.
+
+The images below are the strips as the printer puts them on the sticker (the
+page moved along it by the feed offset, so the page's bottom 5.5 mm is
+dropped and 5.5 mm of blank sticker is added at the top), with the sticker's
+edge and the strip's box drawn.
 
 | | |
 |---|---|
@@ -147,7 +162,9 @@ Other options on a roll:
 - `--list` prints one line per sticker: `sticker N  host  kind  title`
   (a micro sticker names both its labels).
 - `--outline` draws the sticker's edge and the strip's box on each page, for
-  a proof on plain paper laid against a sticker.
+  a proof on plain paper laid against a sticker. The sticker's edge is the
+  page moved up by the feed offset, where the printer puts it; its top edge
+  is beyond the page, so it is clipped.
 - `--only` selects kinds as for a sheet. An empty selection is refused ("no
   labels selected: nothing to put on the roll"), so no blank sticker is
   written or printed.

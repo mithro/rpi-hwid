@@ -503,3 +503,19 @@ def test_a_roll_with_no_labels_is_refused_before_writing_or_printing(
     assert len(err.strip().splitlines()) == 1
     assert "no labels" in err
     assert not out.exists()
+
+
+def test_the_strip_box_runs_past_the_printable_top_but_stays_on_the_page():
+    """The box relies on the driver printing outside its ImageableArea (raster
+    line 0 printed, 2026-11-23)."""
+    _, y, _, h = R.strip_box
+    assert y + h > R.printable[3]
+    assert y >= 0
+    assert y + h <= R.page[1]
+
+
+def test_a_feed_offset_that_pushes_the_box_off_the_page_is_refused():
+    import dataclasses
+    for off in (-10 * mm, 20 * mm):
+        with pytest.raises(ValueError, match="off the page"):
+            _ = dataclasses.replace(R, feed_offset=off).strip_box

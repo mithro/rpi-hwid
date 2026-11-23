@@ -184,11 +184,15 @@ class Roll:
         all round (the sticker's corners are rounded), moved up the page by
         `feed_offset` because the printer puts the page that much further
         along the sticker. The size is the printable area's less 2 mm
-        either way; the box must stay inside the page."""
+        either way; the box must stay inside the page. The box now extends
+        about 4.5 mm past the PPD's ImageableArea top: it relies on the
+        driver printing outside its ImageableArea, which the 2026-11-23
+        calibration showed it does (raster line 0 printed)."""
         x0, y0, x1, y1 = self.printable
         box = (x0 + mm, y0 + mm + self.feed_offset,
                x1 - x0 - 2 * mm, y1 - y0 - 2 * mm)
-        assert box[1] + box[3] <= self.page[1], "the feed offset pushes the strip box off the page"
+        if box[1] < 0 or box[1] + box[3] > self.page[1]:
+            raise ValueError(f"{self.name}: the feed offset puts the strip box off the page")
         return box
 
 
@@ -198,14 +202,20 @@ class Roll:
 # size's *ImageableArea. CUPS's generic sample.drv DYMO driver puts the page
 # ~4.5 mm along and ~1.5 mm across off the sticker, and no PPD setting can
 # move it (docs/superpowers/specs/2026-11-22-dymo-strip-labels-design.md).
-# feed_offset: a mm-ladder label measured on another machine on 2026-11-21
-# said the page lands on the sticker to within ~1 mm. The 2026-11-23
-# calibration on ten64 (docs/examples/dymo_calibrate.py, DYMO's own
-# raster2dymolw, whose byte stream was checked to keep the page's positions)
-# disagrees: the page top lands 5.5 mm into the sticker, so the whole page
-# is printed 5.5 mm further along it. The offset may differ between
-# printers. To measure one, print the calibration sticker and read which mm
-# mark (numbered from the page top) sits at the sticker's leading edge.
+# feed_offset: two readings disagree. A mm-ladder label on 2026-11-21 said
+# the page lands on the sticker to within ~1 mm; it was taken on the
+# previous host computer, and the docs do not record whether it was the same
+# LabelWriter. The 2026-11-23 calibration (docs/examples/dymo_calibrate.py)
+# was on ten64 with DYMO's own raster2dymolw, whose byte stream was checked
+# to keep the page's positions: the page top lands 5.5 mm into the sticker,
+# so the whole page is printed 5.5 mm further along it. The difference may
+# come from the printer or from the host chain; re-measure with the
+# calibration sticker when either changes. To measure: print it and, with a
+# ruler, measure from the sticker's leading edge to the 0 mark (page top):
+# that is the offset. Cross-check: read the mark T at the trailing edge; the
+# offset is about the sticker's length (89 mm) minus T (on 2026-11-23 T was
+# 84.0-84.3, i.e. 4.7-5.0 mm, against 5.56 measured directly: ~0.5 mm
+# uncertainty).
 ROLLS = {r.name: r for r in (
     Roll("dymo-99010", (79.0, 252.0), (4.32, 4.32, 76.08, 235.44), 5.5 * mm,
          "w79h252.2",

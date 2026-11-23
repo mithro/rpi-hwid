@@ -6,9 +6,12 @@
 The documents are the ones render.py uses (tests/conftest.py, and the radios'
 hosts in tests/sdr_fixtures), rendered with stock="dymo-99010": one 28 x 89 mm
 sticker per page. Each page is turned a quarter clockwise so the strip reads
-left to right, and the crop is the whole sticker at render.py's 200 dpi, with
-the sticker's edge and the strip's box drawn (--outline) so the image shows
-where the print lands. The micro pair uses render_micro.py's synthetic labels
+left to right, then shown as the printer puts it on the sticker: the page
+lands Roll.feed_offset further along the sticker, so the page's bottom
+feed_offset is dropped, feed_offset of white is added at the page-top end,
+and the sticker's edge is drawn round the result (the strip's box comes from
+--outline). The crop is the whole sticker at render.py's 200 dpi.
+The micro pair uses render_micro.py's synthetic labels
 (no fixture document carries one), at 400 dpi like its sticker because the
 type is half the size. Needs pdftoppm (poppler-utils).
 """
@@ -20,7 +23,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 from reportlab.lib.colors import HexColor, black
 from reportlab.pdfgen import canvas
 
@@ -58,6 +61,19 @@ def pages(pdf: Path, dpi: int, scratch: str) -> list[Image.Image]:
             for p in sorted(Path(scratch).glob("page*.png"))]
 
 
+def as_printed(img: Image.Image, dpi: int, feed_offset: float) -> Image.Image:
+    """The turned page as it lands on the sticker: the page is printed
+    `feed_offset` (points) further along it, so drop the page's bottom (the
+    left of the turned image), pad the page-top end (the right) with white,
+    and draw the sticker's edge, all four sides."""
+    px = round(feed_offset / 72 * dpi)
+    w, h = img.size
+    out = Image.new("RGB", (w, h), "white")
+    out.paste(img.convert("RGB").crop((px, 0, w, h)), (0, 0))
+    ImageDraw.Draw(out).rectangle((0, 0, w - 1, h - 1), outline="#bbbbbb")
+    return out
+
+
 def main() -> None:
     docs = {n: ProbeDocument.from_dict(n, raw) for n, raw in conftest.RAW.items()}
     docs.update(sdr_fixtures.sdr_docs())
@@ -75,8 +91,9 @@ def main() -> None:
             hits = [i for i, r in enumerate(rows) if r[1] == kind and needle in r[2]]
             if len(hits) != 1:
                 raise SystemExit(f"{len(hits)} fixture labels match {kind} {needle!r}, want one")
-            sheet[hits[0]].save(HERE / f"{name}.png")
-            sizes.add(sheet[hits[0]].size)
+            shown = as_printed(sheet[hits[0]], DPI, the_roll.feed_offset)
+            shown.save(HERE / f"{name}.png")
+            sizes.add(shown.size)
             print(name, "<-", rows[hits[0]][2])
 
         # The micro pair: two of render_micro's labels, end to end on a
@@ -85,7 +102,7 @@ def main() -> None:
         c = canvas.Canvas(str(mpdf), pagesize=the_roll.page)
         c.setStrokeColor(HexColor("#bbbbbb"))
         c.setLineWidth(0.3)
-        c.rect(0, 0, *the_roll.page, stroke=1, fill=0)
+        c.rect(0, the_roll.feed_offset, *the_roll.page, stroke=1, fill=0)
         c.setStrokeColor(black)
         c.saveState()
         roll._place(c, the_roll)
@@ -97,7 +114,7 @@ def main() -> None:
         c.save()
         Path(tmp, "pair").mkdir()
         (pair,) = pages(mpdf, MICRO_DPI, tmp + "/pair")
-        pair.save(HERE / "strip-micro-pair.png")
+        as_printed(pair, MICRO_DPI, the_roll.feed_offset).save(HERE / "strip-micro-pair.png")
         print("strip-micro-pair <- two micro labels")
     print(f"{len(EXAMPLES) + 1} strips, sizes {sorted(sizes)}")
 
