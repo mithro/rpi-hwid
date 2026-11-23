@@ -162,10 +162,20 @@ Autofocus is settled in this order:
      asked unpowered and the rest of the probe goes on: an answer still
      counts, silence is `null`, and the evidence says the sensor could not be
      held on, and why.
-   - A sensor with no `power/control` has no runtime PM to hold it on with,
-     and one that never reaches `active` was not powered: silence from
-     either is `null`, and the evidence says which.
+   - A sensor with no runtime PM has none to hold it on with -- its status
+     reads `unsupported`, and nothing is written to it -- and one that never
+     reaches `active` was not powered: silence from either is `null`, and the
+     evidence says which. So is a sensor whose `autosuspend_delay_ms` is
+     negative, which prevents the suspend that would put it back: it is not
+     resumed at all, and the lens is asked as it stands.
    - A control someone already set to `on` is read as it is and left so.
+   - A sensor found `active` is read as it stands, and its status is read
+     again after: one that autosuspended between the two (the read is not
+     instant -- `i2c-dev` may be loaded and its node waited for first) settles
+     nothing, rather than counting as a powered read.
+   - A sensor still up when the wait runs out, but held by something else by
+     then (a stream started while the probe read), is that user's to power and
+     stops nothing.
 
 Which lens driver chip it is cannot be read either: the common ones (AD5398,
 DW9714) have no ID register.
